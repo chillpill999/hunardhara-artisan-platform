@@ -444,12 +444,36 @@ export async function synthesizeSpeech(
 }
 
 /**
- * Chat with Hunar Saathi Indic LLM (Sarvam 105B).
+ * Chat with Hunar Saathi using free Cloudflare Workers AI (Llama 3.2),
+ * with fallback to Sarvam 105B and offline rule engine.
  */
 export async function chatWithHunarSaathi(
   message: string,
   context?: string
-): Promise<{ success: boolean; reply: string; model?: string }> {
+): Promise<{ success: boolean; reply: string; model?: string; provider?: string }> {
+  // 1. First priority: Free Edge Cloudflare Workers AI
+  try {
+    const edgeRes = await fetch("/api/edge/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, context })
+    });
+    if (edgeRes.ok) {
+      const data = await edgeRes.json();
+      if (data.success && data.reply) {
+        return {
+          success: true,
+          reply: data.reply,
+          model: data.model || "@cf/meta/llama-3.2-3b-instruct",
+          provider: "cloudflare_workers_ai"
+        };
+      }
+    }
+  } catch {
+    // Edge unavailable, try Render backend
+  }
+
+  // 2. Second priority: Sarvam 105B LLM on Render backend
   try {
     const res = await fetch(`${API_BASE}/voice/chat`, {
       method: "POST",
@@ -460,11 +484,20 @@ export async function chatWithHunarSaathi(
       })
     });
     if (res.ok) {
-      return await res.json();
+      const data = await res.json();
+      if (data.success && data.reply) {
+        return {
+          success: true,
+          reply: data.reply,
+          model: data.model || "sarvam-105b",
+          provider: "sarvam_ai"
+        };
+      }
     }
   } catch (e) {
-    console.warn("Hunar Saathi LLM query failed, falling back to rule engine:", e);
+    console.warn("Hunar Saathi LLM queries failed, falling back to rule engine:", e);
   }
+
   return {
     success: false,
     reply: "माफ़ कीजिये, अभी नेटवर्क में समस्या है। आप ऊपर दिए गए शॉर्टकट बटनों से उत्पाद या ऑर्डर की जानकारी देख सकते हैं।"

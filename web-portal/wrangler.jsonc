@@ -2,6 +2,9 @@
   "name": "hunardhara",
   "main": "./src/worker.ts",
   "compatibility_date": "2026-09-08",
+  "ai": {
+    "binding": "AI"
+  },
   "assets": {
     "directory": "./out",
     "binding": "ASSETS",
