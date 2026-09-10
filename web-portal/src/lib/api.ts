@@ -1,6 +1,6 @@
 import { CraftCluster, Product, B2BRFQRequest, B2BMatchResponse, ArtisanEarnings, ArtisanStudioDraft } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://hunardhara-artisan-platform.onrender.com/api/v1";
 
 // Fallback seed products for zero-downtime offline presentation
 export const SEED_PRODUCTS: Product[] = [
