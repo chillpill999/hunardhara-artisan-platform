@@ -1,0 +1,6 @@
+-- MoSJE Artisan Platform - Database Extensions Initialization
+-- Smart India Hackathon 2026 (SIH26090)
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "postgis";
+CREATE EXTENSION IF NOT EXISTS "vector";

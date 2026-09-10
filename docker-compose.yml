@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sih_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: artisan_platform
+      POSTGRES_USER: artisan_admin
+      POSTGRES_PASSWORD: artisan_secure_password_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/db/init_extensions.sql:/docker-entrypoint-initdb.d/01_init_extensions.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artisan_admin -d artisan_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: sih_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sih_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
+      - SYNC_DATABASE_URL=postgresql://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - OFFLINE_MODE=true
+      - MOCK_AI_SERVICES=true
+      - AADHAAR_PEPPER_KEY=mosje_sovereign_aadhaar_pepper_secret_2026
+      - SECRET_KEY=mosje_super_secret_jwt_key_sih2026_artisan_platform
+      - STATIC_DIR=/app/static
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/static
+    command: >
+      sh -c "python -m db.seeds.seed_craft_clusters &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sih_celery_worker
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
+      - SYNC_DATABASE_URL=postgresql://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - OFFLINE_MODE=true
+      - MOCK_AI_SERVICES=true
+      - AADHAAR_PEPPER_KEY=mosje_sovereign_aadhaar_pepper_secret_2026
+      - SECRET_KEY=mosje_super_secret_jwt_key_sih2026_artisan_platform
+      - STATIC_DIR=/app/static
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/static
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads_data:

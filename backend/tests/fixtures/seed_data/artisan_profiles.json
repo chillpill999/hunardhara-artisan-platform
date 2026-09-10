@@ -1,0 +1,86 @@
+[
+  {
+    "artisan_id": "artisan-bastar-001",
+    "name": "Sukhdev Baghel",
+    "cluster_id": "cluster-bastar-dhokra-02",
+    "craft_specialty": "Bastar Dhokra",
+    "monthly_capacity_units": 40,
+    "skilled_hourly_wage_inr": 125.0,
+    "average_wholesale_price_inr": 1250.0,
+    "aadhaar_masked": "XXXX-XXXX-9124",
+    "experience_years": 22,
+    "verified": true
+  },
+  {
+    "artisan_id": "artisan-bastar-002",
+    "name": "Mangal Ram Jhankar",
+    "cluster_id": "cluster-bastar-dhokra-02",
+    "craft_specialty": "Bastar Dhokra",
+    "monthly_capacity_units": 35,
+    "skilled_hourly_wage_inr": 125.0,
+    "average_wholesale_price_inr": 1300.0,
+    "aadhaar_masked": "XXXX-XXXX-4812",
+    "experience_years": 18,
+    "verified": true
+  },
+  {
+    "artisan_id": "artisan-bastar-003",
+    "name": "Dhaniram Ghadwa",
+    "cluster_id": "cluster-bastar-dhokra-02",
+    "craft_specialty": "Bastar Dhokra",
+    "monthly_capacity_units": 30,
+    "skilled_hourly_wage_inr": 125.0,
+    "average_wholesale_price_inr": 1200.0,
+    "aadhaar_masked": "XXXX-XXXX-3051",
+    "experience_years": 15,
+    "verified": true
+  },
+  {
+    "artisan_id": "artisan-varanasi-001",
+    "name": "Ramzan Ali Ansari",
+    "cluster_id": "cluster-varanasi-silk-01",
+    "craft_specialty": "Varanasi Silk",
+    "monthly_capacity_units": 15,
+    "skilled_hourly_wage_inr": 150.0,
+    "average_wholesale_price_inr": 24000.0,
+    "aadhaar_masked": "XXXX-XXXX-7103",
+    "experience_years": 28,
+    "verified": true
+  },
+  {
+    "artisan_id": "artisan-khurja-001",
+    "name": "Kailash Prajapati",
+    "cluster_id": "cluster-khurja-pottery-03",
+    "craft_specialty": "Khurja Pottery",
+    "monthly_capacity_units": 250,
+    "skilled_hourly_wage_inr": 110.0,
+    "average_wholesale_price_inr": 350.0,
+    "aadhaar_masked": "XXXX-XXXX-6294",
+    "experience_years": 20,
+    "verified": true
+  },
+  {
+    "artisan_id": "artisan-madhubani-001",
+    "name": "Sunita Devi Karn",
+    "cluster_id": "cluster-madhubani-painting-04",
+    "craft_specialty": "Madhubani Painting",
+    "monthly_capacity_units": 25,
+    "skilled_hourly_wage_inr": 130.0,
+    "average_wholesale_price_inr": 1800.0,
+    "aadhaar_masked": "XXXX-XXXX-8319",
+    "experience_years": 16,
+    "verified": true
+  },
+  {
+    "artisan_id": "artisan-channapatna-001",
+    "name": "Syed Basha",
+    "cluster_id": "cluster-channapatna-toys-05",
+    "craft_specialty": "Channapatna Toys",
+    "monthly_capacity_units": 180,
+    "skilled_hourly_wage_inr": 140.0,
+    "average_wholesale_price_inr": 280.0,
+    "aadhaar_masked": "XXXX-XXXX-1940",
+    "experience_years": 14,
+    "verified": true
+  }
+]

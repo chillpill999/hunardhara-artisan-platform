@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: hunardhara-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: OFFLINE_MODE
+        value: "true"
+      - key: MOCK_AI_SERVICES
+        value: "true"
+      - key: STATIC_DIR
+        value: /app/static
+      - key: SECRET_KEY
+        generateValue: true
+      - key: AADHAAR_PEPPER_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false

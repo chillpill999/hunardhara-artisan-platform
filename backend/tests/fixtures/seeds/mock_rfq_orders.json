@@ -1,0 +1,62 @@
+[
+  {
+    "rfq_id": "rfq-test-a3-canonical",
+    "buyer_id": "buyer-delhi-hotel-chain",
+    "buyer_name": "Imperial Palace Hotels New Delhi",
+    "craft_type": "Bastar Dhokra",
+    "quantity": 200,
+    "unit_budget": 1500.0,
+    "total_budget": 300000.0,
+    "deadline_days": 60,
+    "delivery_location": "New Delhi",
+    "delivery_latitude": 28.6139,
+    "delivery_longitude": 77.209,
+    "specifications": "200 units of traditional brass tribal horse/elephant figures, approx 500g each.",
+    "test_purpose": "Validates Acceptance Criterion A3: 200 units brass @ 1500 INR"
+  },
+  {
+    "rfq_id": "rfq-edge-impossible-capacity",
+    "buyer_id": "buyer-global-export-corp",
+    "buyer_name": "Indo-Craft Global Exporters",
+    "craft_type": "Bastar Dhokra",
+    "quantity": 50000,
+    "unit_budget": 1400.0,
+    "total_budget": 70000000.0,
+    "deadline_days": 7,
+    "delivery_location": "Mumbai",
+    "delivery_latitude": 18.922,
+    "delivery_longitude": 72.8347,
+    "specifications": "Massive bulk order testing capacity feasibility gate",
+    "test_purpose": "Validates capacity_feasibility: false on impossible lead time"
+  },
+  {
+    "rfq_id": "rfq-edge-subfloor-budget",
+    "buyer_id": "buyer-discount-retail",
+    "buyer_name": "Bargain Bazaar Ltd",
+    "craft_type": "Varanasi Silk",
+    "quantity": 500,
+    "unit_budget": 200.0,
+    "total_budget": 100000.0,
+    "deadline_days": 90,
+    "delivery_location": "Kolkata",
+    "delivery_latitude": 22.5726,
+    "delivery_longitude": 88.3639,
+    "specifications": "Unrealistic sub-floor predatory budget",
+    "test_purpose": "Validates price_feasibility_score == 0.0 and exploitation warning"
+  },
+  {
+    "rfq_id": "rfq-edge-zero-match-craft",
+    "buyer_id": "buyer-modern-art-gallery",
+    "buyer_name": "Avant-Garde Neon Studio",
+    "craft_type": "Blown Glass Neon Sculptures",
+    "quantity": 100,
+    "unit_budget": 5000.0,
+    "total_budget": 500000.0,
+    "deadline_days": 30,
+    "delivery_location": "Bengaluru",
+    "delivery_latitude": 12.9716,
+    "delivery_longitude": 77.5946,
+    "specifications": "Non-traditional craft outside of 5 seeded clusters",
+    "test_purpose": "Validates zero-match handling and empty results list"
+  }
+]

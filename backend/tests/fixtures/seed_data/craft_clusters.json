@@ -1,0 +1,102 @@
+[
+  {
+    "cluster_id": "cluster-varanasi-silk-01",
+    "name": "Varanasi Silk Cluster",
+    "state": "Uttar Pradesh",
+    "district": "Varanasi",
+    "location": {
+      "latitude": 25.3176,
+      "longitude": 82.9739
+    },
+    "primary_crafts": [
+      "Varanasi Silk",
+      "Brocade",
+      "Zari Embroidery"
+    ],
+    "skilled_hourly_wage_inr": 150.0,
+    "active_artisans_count": 1250,
+    "average_monthly_capacity_units": 1500,
+    "gi_certified": true,
+    "established_year": 1600
+  },
+  {
+    "cluster_id": "cluster-bastar-dhokra-02",
+    "name": "Bastar Dhokra Cluster",
+    "state": "Chhattisgarh",
+    "district": "Bastar (Jagdalpur)",
+    "location": {
+      "latitude": 19.0748,
+      "longitude": 82.0081
+    },
+    "primary_crafts": [
+      "Bastar Dhokra",
+      "Bell Metal Craft",
+      "Lost-Wax Brass Casting"
+    ],
+    "skilled_hourly_wage_inr": 125.0,
+    "active_artisans_count": 480,
+    "average_monthly_capacity_units": 800,
+    "gi_certified": true,
+    "established_year": 1750
+  },
+  {
+    "cluster_id": "cluster-khurja-pottery-03",
+    "name": "Khurja Pottery Cluster",
+    "state": "Uttar Pradesh",
+    "district": "Bulandshahr",
+    "location": {
+      "latitude": 28.2546,
+      "longitude": 77.8549
+    },
+    "primary_crafts": [
+      "Khurja Pottery",
+      "Ceramic Stoneware",
+      "Glazed Terracotta"
+    ],
+    "skilled_hourly_wage_inr": 110.0,
+    "active_artisans_count": 920,
+    "average_monthly_capacity_units": 6000,
+    "gi_certified": true,
+    "established_year": 1400
+  },
+  {
+    "cluster_id": "cluster-madhubani-painting-04",
+    "name": "Madhubani Painting Cluster",
+    "state": "Bihar",
+    "district": "Madhubani",
+    "location": {
+      "latitude": 26.3533,
+      "longitude": 86.0719
+    },
+    "primary_crafts": [
+      "Madhubani Painting",
+      "Mithila Folk Art",
+      "Natural Dye Canvas"
+    ],
+    "skilled_hourly_wage_inr": 130.0,
+    "active_artisans_count": 1800,
+    "average_monthly_capacity_units": 2200,
+    "gi_certified": true,
+    "established_year": 1200
+  },
+  {
+    "cluster_id": "cluster-channapatna-toys-05",
+    "name": "Channapatna Wooden Toys Cluster",
+    "state": "Karnataka",
+    "district": "Ramanagara",
+    "location": {
+      "latitude": 12.6518,
+      "longitude": 77.2089
+    },
+    "primary_crafts": [
+      "Channapatna Toys",
+      "Lacquered Woodware",
+      "Turned Wood Craft"
+    ],
+    "skilled_hourly_wage_inr": 140.0,
+    "active_artisans_count": 650,
+    "average_monthly_capacity_units": 4500,
+    "gi_certified": true,
+    "established_year": 1780
+  }
+]
