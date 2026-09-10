@@ -16,7 +16,7 @@ import {
   Volume2,
   VolumeX
 } from 'lucide-react';
-import { synthesizeSpeech } from '../lib/api';
+import { synthesizeSpeech, chatWithHunarSaathi } from '../lib/api';
 
 interface HunarSaathiProps {
   onNavigateTab?: (tab: 'studio' | 'products' | 'orders' | 'revenue') => void;
@@ -47,13 +47,14 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const [autoVoice, setAutoVoice] = useState(true);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isThinking]);
 
   const quickQuestions = [
     { label: '🎤 नया उत्पाद जोड़ना है', query: 'मुझे नया उत्पाद जोड़ना है' },
@@ -105,7 +106,7 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
     speakBrowserFallback(text);
   };
 
-  const handleSend = (textToSend?: string) => {
+  const handleSend = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
     if (!text) return;
 
@@ -117,44 +118,62 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
 
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
+    setIsThinking(true);
 
-    // Simulate intelligent, compassionate artisan responses
-    setTimeout(() => {
-      let replyText = '';
-      let replyAction: Message['action'] = undefined;
+    let replyText = '';
+    let replyAction: Message['action'] = undefined;
 
+    try {
+      // Query Sarvam 105B Indic LLM
+      const res = await chatWithHunarSaathi(text, 'Artisan Workspace - Dashboard');
+      if (res.success && res.reply) {
+        replyText = res.reply;
+      }
+    } catch (err) {
+      console.warn('Sarvam chat query error:', err);
+    }
+
+    // Fallback if LLM unavailable
+    if (!replyText) {
       const lower = text.toLowerCase();
-
       if (lower.includes('उत्पाद') || lower.includes('जोड़ना') || lower.includes('add') || lower.includes('product')) {
         replyText = 'नया उत्पाद जोड़ना बहुत आसान है! बस अपने शिल्प की एक साफ फोटो लें और 10 सेकंड बोलकर बताएं। हमारी AI अपने आप विवरण और उचित मूल्य तैयार कर देगी।';
-        replyAction = { label: '➕ अभी उत्पाद जोड़ें (Add Product)', tab: 'studio' };
       } else if (lower.includes('ऑर्डर') || lower.includes('order')) {
         replyText = 'आपके पास वर्तमान में 3 सक्रिय ऑर्डर हैं। 2 ऑर्डर तैयार होकर डिलीवरी के लिए प्रस्थान कर चुके हैं, और 1 नया ऑर्डर (कतान सिल्क दुपट्टा) आज प्राप्त हुआ है।';
-        replyAction = { label: '📋 ऑर्डर की सूची देखें (View Orders)', tab: 'orders' };
       } else if (lower.includes('कीमत') || lower.includes('मूल्य') || lower.includes('price')) {
         replyText = 'हुनरधारा का नियम है कि आपकी मजदूरी कम से कम ₹650 प्रति दिन मिले। कच्ची सामग्री की लागत + निर्माण दिनों की मजदूरी को जोड़कर हम उचित मूल्य तय करते हैं। आप स्टूडियो में दिन और सामग्री भरें, AI सही कीमत बताएगा।';
-        replyAction = { label: '🧮 मूल्य कैलकुलेटर खोलें', tab: 'studio' };
       } else if (lower.includes('बिक्री') || lower.includes('कमाई') || lower.includes('sales') || lower.includes('revenue')) {
         replyText = 'बधाई हो! इस महीने आपके हुनर ने ₹42,500 की सीधी बिक्री की है। बिचौलियों के न होने से आपने ₹14,875 की अतिरिक्त बचत अपने परिवार के लिए की है।';
-        replyAction = { label: '💰 कमाई का पूरा हिसाब देखें', tab: 'revenue' };
       } else {
         replyText = 'मैं समझ गया। आप निश्चिंत रहें, आपका हुनर अनमोल है। आप चाहें तो ऊपर दिए गए बटन दबाकर उत्पाद जोड़ सकते हैं या अपनी बिक्री की जानकारी ले सकते हैं।';
       }
+    }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}`,
-          sender: 'assistant',
-          text: replyText,
-          action: replyAction,
-        },
-      ]);
+    // Determine relevant action button
+    const combined = (text + ' ' + replyText).toLowerCase();
+    if (combined.includes('उत्पाद') || combined.includes('studio') || combined.includes('जोड़') || combined.includes('product')) {
+      replyAction = { label: '➕ अभी उत्पाद जोड़ें (Add Product)', tab: 'studio' };
+    } else if (combined.includes('ऑर्डर') || combined.includes('order')) {
+      replyAction = { label: '📋 ऑर्डर की सूची देखें (View Orders)', tab: 'orders' };
+    } else if (combined.includes('कमाई') || combined.includes('बिक्री') || combined.includes('revenue') || combined.includes('sales')) {
+      replyAction = { label: '💰 कमाई का पूरा हिसाब देखें', tab: 'revenue' };
+    }
 
-      if (autoVoice) {
-        playVoiceResponse(replyText);
-      }
-    }, 600);
+    setIsThinking(false);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `a-${Date.now()}`,
+        sender: 'assistant',
+        text: replyText,
+        action: replyAction,
+      },
+    ]);
+
+    if (autoVoice) {
+      playVoiceResponse(replyText);
+    }
   };
 
 
@@ -281,6 +300,19 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
             </div>
           </div>
         ))}
+
+        {isThinking && (
+          <div className="flex gap-2.5 justify-start animate-fade-in">
+            <div className="w-7 h-7 rounded-full bg-[#1b4332] text-white flex items-center justify-center text-xs shrink-0 mt-1">
+              🌾
+            </div>
+            <div className="bg-white border border-[#e6ded3] rounded-2xl rounded-bl-none px-4 py-3 shadow-xs flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#c85a32] animate-ping" />
+              <span className="text-xs text-[#5c554e] font-medium">हुनर साथी सोच रहे हैं...</span>
+            </div>
+          </div>
+        )}
+
         <div ref={chatBottomRef} />
       </div>
 

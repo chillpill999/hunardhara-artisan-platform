@@ -443,3 +443,57 @@ export async function synthesizeSpeech(
   return { success: false, source: "browser_fallback" };
 }
 
+/**
+ * Chat with Hunar Saathi Indic LLM (Sarvam 105B).
+ */
+export async function chatWithHunarSaathi(
+  message: string,
+  context?: string
+): Promise<{ success: boolean; reply: string; model?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/voice/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        context
+      })
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn("Hunar Saathi LLM query failed, falling back to rule engine:", e);
+  }
+  return {
+    success: false,
+    reply: "माफ़ कीजिये, अभी नेटवर्क में समस्या है। आप ऊपर दिए गए शॉर्टकट बटनों से उत्पाद या ऑर्डर की जानकारी देख सकते हैं।"
+  };
+}
+
+/**
+ * Transcribe recorded voice audio to Indic text via Sarvam Saarika ASR.
+ */
+export async function transcribeAudio(
+  audioBlob: Blob,
+  languageCode: string = "hi-IN"
+): Promise<{ success: boolean; transcript: string; language_code?: string }> {
+  try {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "artisan_audio.wav");
+    formData.append("language_code", languageCode);
+
+    const res = await fetch(`${API_BASE}/voice/transcribe`, {
+      method: "POST",
+      body: formData
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn("Audio transcription failed:", e);
+  }
+  return { success: false, transcript: "" };
+}
+
+

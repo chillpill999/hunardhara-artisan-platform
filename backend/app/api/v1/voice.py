@@ -40,6 +40,81 @@ def synthesize_indic_speech(req: TTSRequest):
     )
 
 
+class ChatRequest(BaseModel):
+    message: str = Field(..., description="Artisan question or voice transcript")
+    context: Optional[str] = Field(None, description="Current page or artisan context")
+    system_prompt: Optional[str] = Field(None, description="Optional custom system prompt")
+
+
+class ChatResponse(BaseModel):
+    success: bool
+    reply: str
+    model: Optional[str] = None
+    error: Optional[str] = None
+
+
+class TranscribeResponse(BaseModel):
+    success: bool
+    transcript: str
+    language_code: Optional[str] = None
+    source: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/chat", response_model=ChatResponse, summary="Hunar Saathi Conversational AI (Sarvam 105B)")
+def hunar_saathi_chat(req: ChatRequest):
+    """
+    Conversational assistant for rural artisans using sovereign Sarvam 105B Indic LLM.
+    Answers pricing, scheme, catalog, and platform questions in warm, culturally resonant Hindi.
+    """
+    res = sarvam_service.chat_completion(
+        user_message=req.message,
+        system_prompt=req.system_prompt,
+        context=req.context
+    )
+    if not res.get("success"):
+        # Graceful fallback response if API is unreachable
+        return ChatResponse(
+            success=True,
+            reply="मैं समझ गया। आप निश्चिंत रहें, आपका हुनर अनमोल है। आप चाहें तो ऊपर दिए गए बटन दबाकर उत्पाद जोड़ सकते हैं या अपनी बिक्री की जानकारी ले सकते हैं।",
+            model="offline_fallback",
+            error=res.get("error")
+        )
+    return ChatResponse(
+        success=True,
+        reply=res.get("reply", ""),
+        model=res.get("model", "sarvam-105b-conversations")
+    )
+
+
+from fastapi import File, UploadFile, Form
+
+@router.post("/transcribe", response_model=TranscribeResponse, summary="Transcribe Indic Audio (Sarvam Saarika ASR)")
+async def transcribe_audio(
+    audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a)"),
+    language_code: str = Form("hi-IN", description="Language code e.g. hi-IN")
+):
+    """
+    Transcribes audio recording in Hindi/Indic languages to Devanagari text using Sarvam Saarika.
+    """
+    audio_bytes = await audio.read()
+    if not audio_bytes or len(audio_bytes) < 10:
+        return TranscribeResponse(success=False, transcript="", error="Audio file empty")
+
+    res = sarvam_service.transcribe_speech(
+        audio_bytes=audio_bytes,
+        filename=audio.filename or "recording.wav",
+        language_code=language_code
+    )
+    return TranscribeResponse(
+        success=res.get("success", False),
+        transcript=res.get("transcript", ""),
+        language_code=res.get("language_code", language_code),
+        source=res.get("source", "sarvam_saarika"),
+        error=res.get("error")
+    )
+
+
 @router.get("/speakers", summary="List available Sarvam AI Indic speakers")
 def list_indic_speakers():
     """
@@ -54,3 +129,4 @@ def list_indic_speakers():
         ],
         "default": "shubh"
     }
+
