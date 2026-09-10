@@ -415,3 +415,31 @@ export const STUDIO_PRESETS = [
   }
 ];
 
+/**
+ * Synthesize Indic speech via Sarvam AI Bulbul (with browser Web Speech fallback).
+ */
+export async function synthesizeSpeech(
+  text: string,
+  languageCode: string = "hi-IN",
+  speaker: string = "shubh"
+): Promise<{ success: boolean; audio_base64?: string; format?: string; source?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/voice/tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        language_code: languageCode,
+        speaker,
+        model: "bulbul:v3"
+      })
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn("Server TTS synthesis failed, falling back to client-side speech:", e);
+  }
+  return { success: false, source: "browser_fallback" };
+}
+

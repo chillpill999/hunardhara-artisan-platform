@@ -13,8 +13,10 @@ import {
   ShoppingBag,
   TrendingUp,
   PlusCircle,
-  Volume2
+  Volume2,
+  VolumeX
 } from 'lucide-react';
+import { synthesizeSpeech } from '../lib/api';
 
 interface HunarSaathiProps {
   onNavigateTab?: (tab: 'studio' | 'products' | 'orders' | 'revenue') => void;
@@ -30,6 +32,7 @@ interface Message {
     label: string;
     tab: 'studio' | 'products' | 'orders' | 'revenue';
   };
+  audioBase64?: string;
 }
 
 export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaathiProps) {
@@ -44,6 +47,8 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [autoVoice, setAutoVoice] = useState(true);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -56,6 +61,49 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
     { label: '💰 सही कीमत क्या रखूं?', query: 'इस उत्पाद की कीमत क्या रखूं?' },
     { label: '📈 मेरी बिक्री कैसी चल रही है?', query: 'मेरी बिक्री कैसी चल रही है?' },
   ];
+
+  const speakBrowserFallback = (text: string) => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'hi-IN';
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setIsSpeaking(false);
+    }
+  };
+
+  const playVoiceResponse = async (text: string) => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    setIsSpeaking(true);
+
+    try {
+      const res = await synthesizeSpeech(text, 'hi-IN', 'shubh');
+      if (res.success && res.audio_base64) {
+        const audio = new Audio(`data:audio/wav;base64,${res.audio_base64}`);
+        currentAudioRef.current = audio;
+        audio.onended = () => setIsSpeaking(false);
+        audio.onerror = () => {
+          setIsSpeaking(false);
+          speakBrowserFallback(text);
+        };
+        await audio.play();
+        return;
+      }
+    } catch (err) {
+      console.warn('Sarvam audio playback error:', err);
+    }
+
+    speakBrowserFallback(text);
+  };
 
   const handleSend = (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
@@ -102,8 +150,13 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
           action: replyAction,
         },
       ]);
+
+      if (autoVoice) {
+        playVoiceResponse(replyText);
+      }
     }, 600);
   };
+
 
   const startVoiceInput = () => {
     if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
@@ -157,14 +210,28 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
           </div>
         </div>
 
-        {onClose && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+            type="button"
+            onClick={() => setAutoVoice(!autoVoice)}
+            className={`px-2.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all ${
+              autoVoice ? 'bg-[#e9a83a] text-[#1b4332]' : 'bg-white/15 text-white'
+            }`}
+            title={autoVoice ? "आवाज़ चालू है (Voice Active)" : "आवाज़ बंद है (Voice Muted)"}
           >
-            <X className="w-4 h-4" />
+            {autoVoice ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline text-[11px]">{autoVoice ? "आवाज़ ऑन" : "आवाज़ म्यूट"}</span>
           </button>
-        )}
+
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Messages Container */}
@@ -180,14 +247,26 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
               </div>
             )}
             <div className="max-w-[85%] space-y-2">
-              <div
-                className={`p-3.5 sm:p-4 rounded-2xl text-sm leading-relaxed ${
-                  m.sender === 'user'
-                    ? 'bg-[#c85a32] text-white rounded-br-none font-medium'
-                    : 'bg-white text-[#231f1e] border border-[#e6ded3] rounded-bl-none shadow-xs'
-                }`}
-              >
-                {m.text}
+              <div className="flex items-start gap-1.5">
+                <div
+                  className={`p-3.5 sm:p-4 rounded-2xl text-sm leading-relaxed ${
+                    m.sender === 'user'
+                      ? 'bg-[#c85a32] text-white rounded-br-none font-medium'
+                      : 'bg-white text-[#231f1e] border border-[#e6ded3] rounded-bl-none shadow-xs'
+                  }`}
+                >
+                  {m.text}
+                </div>
+                {m.sender === 'assistant' && (
+                  <button
+                    type="button"
+                    onClick={() => playVoiceResponse(m.text)}
+                    className="p-1.5 rounded-full text-[#1b4332] hover:bg-[#e8f5e9] bg-white border border-[#e6ded3] shadow-xs transition-colors shrink-0 mt-1"
+                    title="बोलकर सुनें (Listen with Sarvam Voice)"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {m.action && onNavigateTab && (
@@ -204,6 +283,26 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
         ))}
         <div ref={chatBottomRef} />
       </div>
+
+      {/* Speaking Indicator */}
+      {isSpeaking && (
+        <div className="bg-[#e8f5e9] border-t border-[#c8e6c9] px-4 py-1.5 flex items-center justify-between text-xs text-[#1b4332] font-semibold animate-fade-in">
+          <div className="flex items-center gap-2">
+            <Volume2 className="w-3.5 h-3.5 animate-pulse text-[#2d6a4f]" />
+            <span>हुनर साथी बोल रहे हैं... (Sarvam AI Bulbul Voice)</span>
+          </div>
+          <button
+            onClick={() => {
+              if (currentAudioRef.current) currentAudioRef.current.pause();
+              if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+              setIsSpeaking(false);
+            }}
+            className="text-[11px] underline hover:text-[#c85a32]"
+          >
+            रोकें (Stop)
+          </button>
+        </div>
+      )}
 
       {/* Quick Suggestions Chips */}
       <div className="p-2.5 bg-white border-t border-[#e6ded3] overflow-x-auto no-scrollbar flex items-center gap-2">

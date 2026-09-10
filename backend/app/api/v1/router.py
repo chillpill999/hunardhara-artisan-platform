@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import health, clusters, products, pricing, compliance, b2b, orders, earnings, applications
+from app.api.v1 import health, clusters, products, pricing, compliance, b2b, orders, earnings, applications, voice
 
 api_router = APIRouter()
 
@@ -11,6 +11,7 @@ api_router.include_router(clusters.router)
 api_router.include_router(products.router)
 api_router.include_router(pricing.router)
 api_router.include_router(compliance.router)
+api_router.include_router(voice.router)
 
 # Register B2B matchmaker endpoints for Milestone M3
 api_router.include_router(b2b.router)
@@ -19,4 +20,5 @@ api_router.include_router(b2b.router)
 api_router.include_router(orders.router)
 api_router.include_router(earnings.router)
 api_router.include_router(applications.router)
+
 

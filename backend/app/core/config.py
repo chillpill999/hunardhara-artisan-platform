@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     BHASHINI_USER_ID: Optional[str] = None
     BHASHINI_PIPELINE_ID: Optional[str] = None
 
+    # Sarvam AI API Credentials
+    SARVAM_API_KEY: Optional[str] = os.getenv("SARVAM_API_KEY", None)
+
     # Storage & File Uploads
     STATIC_DIR: str = os.getenv("STATIC_DIR", "./static")
     UPLOAD_MAX_SIZE_MB: int = 15
