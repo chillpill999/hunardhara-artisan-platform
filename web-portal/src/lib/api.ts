@@ -138,7 +138,7 @@ export const SEED_PRODUCTS: Product[] = [
 
 export async function fetchProducts(): Promise<Product[]> {
   try {
-    const res = await fetch(`${API_BASE}/products`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/products`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) return data;
@@ -151,7 +151,7 @@ export async function fetchProducts(): Promise<Product[]> {
 
 export async function fetchProductById(id: string): Promise<Product | null> {
   try {
-    const res = await fetch(`${API_BASE}/products/${id}`);
+    const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) return await res.json();
   } catch {
     // Fallback
@@ -161,7 +161,7 @@ export async function fetchProductById(id: string): Promise<Product | null> {
 
 export async function fetchClusters(): Promise<CraftCluster[]> {
   try {
-    const res = await fetch(`${API_BASE}/clusters`);
+    const res = await fetch(`${API_BASE}/clusters`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) return await res.json();
   } catch {
     // Fallback

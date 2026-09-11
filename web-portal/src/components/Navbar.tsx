@@ -187,7 +187,7 @@ export default function Navbar() {
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               <Link
                 href="/login?redirect=/artisan"
                 className="bg-[#c85a32] hover:bg-[#b84e28] text-white font-bold text-xs sm:text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded-full transition-all shadow-xs flex items-center gap-1.5"
