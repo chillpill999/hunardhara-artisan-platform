@@ -86,28 +86,30 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start">
         {/* Left Column: Visual Presentation */}
         <div className="space-y-4">
-          <div className="relative aspect-square w-full rounded-3xl bg-[#faf7f2] border border-[#e6ded3] overflow-hidden p-6 sm:p-8 flex flex-col items-center justify-center text-center bento-shadow">
-            <div className={`w-full h-full rounded-2xl flex flex-col items-center justify-center p-6 sm:p-8 transition-all duration-500 ${showOriginal ? 'bg-[#f4ede4]' : 'bg-white'}`}>
-              <div className="w-36 h-36 sm:w-44 sm:h-44 rounded-3xl bg-[#faf7f2] border border-[#e6ded3] flex items-center justify-center p-4 shadow-xs mb-4 overflow-hidden">
-                <img
-                  src="/logo.png"
-                  alt={product.title_en}
-                  className={`w-full h-full object-contain transition-all duration-500 ${showOriginal ? 'filter contrast-95' : 'drop-shadow-md'}`}
-                />
+          <div className="relative aspect-square w-full rounded-3xl bg-[#faf7f2] border border-[#e6ded3] overflow-hidden p-4 sm:p-6 flex items-center justify-center bento-shadow">
+            <div className={`w-full h-full rounded-2xl flex items-center justify-center p-3 transition-all duration-500 relative overflow-hidden ${showOriginal ? 'bg-[#f4ede4]' : 'bg-white'}`}>
+              <img
+                src={product.studio_image_url || '/logo.png'}
+                alt={product.title_en}
+                className={`max-w-full max-h-full object-contain rounded-xl transition-all duration-500 ${
+                  showOriginal ? 'filter sepia-[0.25] contrast-[0.95] brightness-[0.95]' : 'drop-shadow-md'
+                }`}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = '/logo.png';
+                }}
+              />
+
+              {/* View Perspective Badge */}
+              <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-xs text-[#231f1e] border border-[#e6ded3] text-[11px] font-semibold px-3 py-1 rounded-full shadow-xs">
+                {showOriginal ? 'कार्यशाला दृश्य (Workshop View)' : 'स्टूडियो प्रस्तुति (Studio Presentation)'}
               </div>
-              <span className="font-sans font-bold text-base text-[#231f1e]">
-                {showOriginal ? 'कार्यशाला का वास्तविक दृश्य (Workshop View)' : 'स्टूडियो प्रस्तुति (Studio Presentation)'}
-              </span>
-              <span className="text-xs text-[#6f5f58] mt-1 max-w-xs">
-                {showOriginal ? 'कार्यशाला का प्राकृतिक बैकग्राउंड व प्रकाश' : 'साफ व अलग किया गया ई-कॉमर्स कैनवास'}
-              </span>
             </div>
 
             {/* Subtle GI Provenance Badge */}
             {product.gi_certified && (
-              <div className="absolute top-5 left-5 bg-white text-[#1b4332] border border-[#e6ded3] text-[11px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
+              <div className="absolute top-5 left-5 bg-white/95 backdrop-blur-xs text-[#1b4332] border border-[#e6ded3] text-[11px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
                 <Award className="w-3.5 h-3.5 text-[#c85a32]" />
-                <span>GI Heritage Verified [Sample]</span>
+                <span>GI Heritage Verified</span>
               </div>
             )}
           </div>

@@ -12,19 +12,34 @@ export default function CraftCard({ product }: CraftCardProps) {
   return (
     <div className="group bg-white rounded-3xl border border-[#e6ded3] bento-shadow hover:border-[#c85a32] transition-all duration-300 flex flex-col overflow-hidden">
       {/* Product Image */}
-      <Link href={`/craft/${product.id}`} className="block relative aspect-square w-full bg-[#faf7f2] overflow-hidden p-6 border-b border-[#e6ded3]">
-        <div className="w-full h-full rounded-2xl bg-white flex flex-col items-center justify-center relative p-4 text-center group-hover:scale-105 transition-transform duration-300 border border-[#e6ded3]">
-          <div className="w-28 h-28 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] flex items-center justify-center p-3 shadow-2xs mb-2 overflow-hidden">
-            <img
-              src="/logo.png"
-              alt={product.craft_type}
-              className="w-full h-full object-contain"
-            />
-          </div>
-          <span className="text-[10px] font-bold text-[#1b4332] uppercase tracking-wider bg-[#faf7f2] px-2.5 py-0.5 rounded-full border border-[#e6ded3]">
+      <Link
+        href={`/craft/${product.id}`}
+        className="block relative aspect-square w-full bg-[#faf7f2] overflow-hidden border-b border-[#e6ded3]"
+      >
+        <img
+          src={product.studio_image_url || '/logo.png'}
+          alt={product.title_en}
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = '/logo.png';
+          }}
+        />
+
+        {/* Craft Badge */}
+        <div className="absolute top-3.5 left-3.5">
+          <span className="text-[10px] font-bold text-[#1b4332] uppercase tracking-wider bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-full border border-[#e6ded3] shadow-xs">
             {product.craft_type}
           </span>
         </div>
+
+        {/* GI Tag Badge if certified */}
+        {product.gi_certified && (
+          <div className="absolute top-3.5 right-3.5">
+            <span className="text-[10px] font-bold text-[#c85a32] uppercase tracking-wider bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-full border border-[#e6ded3] shadow-xs">
+              GI Tagged
+            </span>
+          </div>
+        )}
       </Link>
 
       {/* Card Content - Clean & Focused */}

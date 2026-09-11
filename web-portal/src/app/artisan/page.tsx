@@ -39,7 +39,7 @@ export default function ArtisanPortalPage() {
       status: 'Live',
       days: 10,
       ordersCount: 4,
-      image: '/logo.png',
+      image: '/static/studio/varanasi_silk.jpg',
     },
     {
       id: 'prod-002',
@@ -49,7 +49,7 @@ export default function ArtisanPortalPage() {
       status: 'Live',
       days: 4,
       ordersCount: 7,
-      image: '/logo.png',
+      image: '/static/studio/bastar_dhokra.jpg',
     },
   ];
 
@@ -274,8 +274,8 @@ export default function ArtisanPortalPage() {
                     className="p-3.5 bg-[#faf7f2] rounded-2xl border border-[#e6ded3] flex items-center justify-between gap-3"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-xl bg-white border border-[#e6ded3] overflow-hidden p-1 shrink-0">
-                        <img src={p.image} alt={p.title} className="w-full h-full object-contain" />
+                      <div className="w-12 h-12 rounded-xl bg-white border border-[#e6ded3] overflow-hidden shrink-0">
+                        <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
                       </div>
                       <div>
                         <h4 className="font-sans font-bold text-xs sm:text-sm text-[#231f1e] line-clamp-1">
@@ -367,8 +367,8 @@ export default function ArtisanPortalPage() {
                   className="bg-white rounded-3xl border border-[#e6ded3] p-4 bento-shadow space-y-3"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-16 h-16 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] overflow-hidden p-2 shrink-0">
-                      <img src={p.image} alt={p.title} className="w-full h-full object-contain" />
+                    <div className="w-16 h-16 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] overflow-hidden shrink-0">
+                      <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="font-sans font-bold text-sm text-[#231f1e] line-clamp-1">
