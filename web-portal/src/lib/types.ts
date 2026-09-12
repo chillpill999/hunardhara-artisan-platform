@@ -39,6 +39,7 @@ export interface Product {
   artisan_name?: string;
   artisan_state?: string;
   gi_certified?: boolean;
+  is_alias?: boolean;
 }
 
 export interface B2BRFQRequest {

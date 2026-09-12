@@ -2,8 +2,181 @@ import { CraftCluster, Product, B2BRFQRequest, B2BMatchResponse, ArtisanEarnings
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://hunardhara-artisan-platform.onrender.com/api/v1";
 
+// Bidirectional mapping between backend IDs and short demo IDs
+export const ID_ALIASES: Record<string, string> = {
+  'prod-001': 'prod-varanasi-001',
+  'prod-varanasi-001': 'prod-001',
+  'prod-002': 'prod-bastar-001',
+  'prod-bastar-001': 'prod-002',
+  'prod-003': 'prod-khurja-001',
+  'prod-khurja-001': 'prod-003',
+  'prod-004': 'prod-madhubani-001',
+  'prod-madhubani-001': 'prod-004',
+  'prod-005': 'prod-channapatna-001',
+  'prod-channapatna-001': 'prod-005',
+};
+
 // Fallback seed products for zero-downtime offline presentation
 export const SEED_PRODUCTS: Product[] = [
+  // Canonical Backend Primary Products
+  {
+    id: "prod-varanasi-001",
+    artisan_id: "art-varanasi-001",
+    cluster_id: "cluster-varanasi-silk",
+    title_en: "Varanasi Pure Katan Silk Brocade Saree",
+    title_hi: "वाराणसी शुद्ध कतान सिल्क बनारसी ब्रोकेड साड़ी",
+    craft_type: "Varanasi Silk",
+    materials: ["Pure Katan Mulberry Silk", "Pure Gold Zari Thread", "Silver Brocade Weft"],
+    dimensions: "5.5m x 1.2m",
+    production_time_days: 14,
+    technique: "Kadwa Jacquard Handloom Weaving",
+    color: "Imperial Crimson Red & Rich Antique Gold",
+    description_en: "Handwoven by Master Weaver Radheshyam Ansari on traditional pit looms of Varanasi. Features authentic Kadwa floral motifs where each gold brocade pattern is individually hand-threaded.",
+    description_hi: "वाराणसी के बुनकर राधेश्याम अंसारी द्वारा हथकरघे पर बुनी गई पारंपरिक कतान सिल्क साड़ी। कड़वा तकनीक में प्रत्येक बूटी को सोने की ज़री से अलग से बुना गया है।",
+    seo_tags: ["Varanasi Silk", "Banarasi Saree", "GI Craft", "Handloom", "Wedding"],
+    studio_image_url: "/static/studio/varanasi_silk.jpg",
+    floor_price: 6500,
+    recommended_retail_d2c: 12500,
+    wholesale_b2b: 8500,
+    available_stock: 6,
+    is_published: true,
+    created_at: "2026-09-08T10:00:00Z",
+    artisan_name: "Radheshyam Ansari",
+    artisan_state: "Uttar Pradesh",
+    gi_certified: true
+  },
+  {
+    id: "prod-bastar-001",
+    artisan_id: "art-bastar-001",
+    cluster_id: "cluster-bastar-dhokra",
+    title_en: "Handcrafted Bastar Dhokra Brass Bull Figurine",
+    title_hi: "बस्तर ढोकरा जनजातीय बेल मेटल नंदी प्रतिमा",
+    craft_type: "Bastar Dhokra",
+    materials: ["Bell Metal Brass", "Brass Scrap", "Natural Beeswax", "Indravati River Clay"],
+    dimensions: "18cm x 14cm x 8cm",
+    production_time_days: 5,
+    technique: "4000-Year-Old Lost-Wax Bell Metal Casting (Cire Perdue)",
+    color: "Antique Golden Brass & Earth Clay Patina",
+    description_en: "Authentic non-ferrous tribal casting hand-modeled in the forested heart of Bastar, Chhattisgarh by master artisan Rameshwar Baghel using ancient lost-wax technique.",
+    description_hi: "बस्तर के शिल्पकार रामेश्वर बघेल द्वारा 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से निर्मित पारंपरिक नंदी बैल। यह प्राचीन जनजातीय कला समृद्धि और शक्ति का प्रतीक है।",
+    seo_tags: ["Bastar Dhokra", "Tribal Art", "Bell Metal", "GI Tagged", "MoSJE Certified"],
+    studio_image_url: "/static/studio/bastar_dhokra.jpg",
+    floor_price: 1674,
+    recommended_retail_d2c: 2850,
+    wholesale_b2b: 2090,
+    available_stock: 12,
+    is_published: true,
+    created_at: "2026-09-08T11:00:00Z",
+    artisan_name: "Rameshwar Baghel",
+    artisan_state: "Chhattisgarh",
+    gi_certified: true
+  },
+  {
+    id: "prod-bastar-002",
+    artisan_id: "art-bastar-002",
+    cluster_id: "cluster-bastar-dhokra",
+    title_en: "Bastar Dhokra Tribal Musician Quintet Set",
+    title_hi: "बस्तर ढोकरा जनजातीय संगीतकार समूह (५ प्रतिमाएं)",
+    craft_type: "Bastar Dhokra",
+    materials: ["Bell Metal Brass", "Natural Beeswax", "River Silt Clay"],
+    dimensions: "25cm x 6cm x 18cm",
+    production_time_days: 7,
+    technique: "Lost-Wax Bell Metal Casting",
+    color: "Burnished Brass Gold & Rustic Charcoal Patina",
+    description_en: "A striking set of 5 tribal musicians playing traditional Bastar percussion and wind instruments. Each individual piece is uniquely sculpted with beeswax threads before brass pouring.",
+    description_hi: "बस्तर के लोक वाद्ययंत्र बजाते 5 संगीतकारों का अनूठा ढोकरा समूह। प्रत्येक आकृति को मोम के बारीक धागों से अलंकृत किया गया है।",
+    seo_tags: ["Dhokra Musicians", "Bastar Bell Metal", "Tribal Folk Art"],
+    studio_image_url: "/static/studio/bastar_dhokra.jpg",
+    floor_price: 3218,
+    recommended_retail_d2c: 5600,
+    wholesale_b2b: 4050,
+    available_stock: 6,
+    is_published: true,
+    created_at: "2026-09-08T12:00:00Z",
+    artisan_name: "Sukhdev Baghel",
+    artisan_state: "Chhattisgarh",
+    gi_certified: true
+  },
+  {
+    id: "prod-khurja-001",
+    artisan_id: "art-khurja-001",
+    cluster_id: "cluster-khurja-pottery",
+    title_en: "Mughal Floral Hand-Painted Ceramic Stoneware Vase",
+    title_hi: "खुर्जा हस्तनिर्मित मुग़ल फ्लोरल सिरेमिक फूलदान",
+    craft_type: "Khurja Pottery",
+    materials: ["Kaolin China Clay", "Cobalt Glaze Oxide", "Feldspar Stone Powder"],
+    dimensions: "32cm x 22cm x 22cm",
+    production_time_days: 3,
+    technique: "Wheel Throwing & 1200°C High-Fire Kiln Vitrification",
+    color: "Cobalt Blue, Persian Turquoise & Ivory White",
+    description_en: "Hand-thrown ceramic flower vase featuring intricate Persian-Mughal vine brushwork in cobalt blue by master potter Dinesh Prajapati in Khurja's historic ceramic district.",
+    description_hi: "खुर्जा के कुम्हार दिनेश प्रजापति द्वारा चाक पर निर्मित और कोबाल्ट नीले रंग से हस्तचित्रित चीनी मिट्टी का फूलदान। 1250 डिग्री पर पकाया गया।",
+    seo_tags: ["Khurja Pottery", "Ceramic Stoneware Vase", "Cobalt Hand Painted Pot", "GI Certified"],
+    studio_image_url: "/static/studio/khurja_pottery.jpg",
+    floor_price: 940,
+    recommended_retail_d2c: 1750,
+    wholesale_b2b: 1250,
+    available_stock: 25,
+    is_published: true,
+    created_at: "2026-09-09T09:00:00Z",
+    artisan_name: "Dinesh Prajapati",
+    artisan_state: "Uttar Pradesh",
+    gi_certified: true
+  },
+  {
+    id: "prod-madhubani-001",
+    artisan_id: "art-madhubani-001",
+    cluster_id: "cluster-madhubani-painting",
+    title_en: "Mithila Tree of Life Auspicious Folk Painting",
+    title_hi: "मिथिला जीवन वृक्ष हस्तचित्रित तुषार लोक चित्र",
+    craft_type: "Madhubani Painting",
+    materials: ["Handspun Tussar Silk", "Organic Plant & Mineral Dyes", "Bamboo Twig Nib"],
+    dimensions: "90cm x 60cm",
+    production_time_days: 8,
+    technique: "Mithila Kachni & Bharni Line Work with Bamboo Nib",
+    color: "Natural Ochre Yellow, Indigo Blue & Leaf Green",
+    description_en: "Sacred Mithila Tree of Life folk painting rendered entirely with natural plant pigments and fine bamboo stylus by award-winning artisan Sita Devi Paswan in Jitwarpur village, Bihar.",
+    description_hi: "बिहार के मधुबनी की लोक कलाकार सीता देवी पासवान द्वारा प्राकृतिक रंगों और बांस की कलम से चित्रित 'ट्री ऑफ लाइफ'। प्राकृतिक रंगों से निर्मित।",
+    seo_tags: ["Madhubani Painting", "Mithila Folk Art", "Tree of Life Canvas", "GI Bihar"],
+    studio_image_url: "/static/studio/madhubani_art.jpg",
+    floor_price: 1231,
+    recommended_retail_d2c: 2400,
+    wholesale_b2b: 1700,
+    available_stock: 8,
+    is_published: true,
+    created_at: "2026-09-09T14:30:00Z",
+    artisan_name: "Sita Devi Paswan",
+    artisan_state: "Bihar",
+    gi_certified: true
+  },
+  {
+    id: "prod-channapatna-001",
+    artisan_id: "art-channapatna-001",
+    cluster_id: "cluster-channapatna-toys",
+    title_en: "Channapatna Eco-Friendly Rainbow Stacking Ring Tower",
+    title_hi: "चन्नापटना पर्यावरण-अनुकूल सतरंगी लकड़ी का स्टैकिंग खिलौना",
+    craft_type: "Channapatna Wooden Toys",
+    materials: ["Hale Wood (Wrightia Tinctoria)", "Natural Non-Toxic Vegetable Lac"],
+    dimensions: "24cm x 10cm x 10cm",
+    production_time_days: 2,
+    technique: "Hand Lathe Turning & Friction Lacquering",
+    color: "Vibrant Turmeric Yellow, Vermilion & Leaf Green",
+    description_en: "100% child-safe Montessori wooden toy turned on traditional power lathes and polished with natural vegetable dyes by artisan B. Venkatesh in Channapatna, Karnataka.",
+    description_hi: "कर्नाटक के चन्नापटना में सुरक्षित आले की लकड़ी और प्राकृतिक लाख से बना हस्तनिर्मित खिलौना। बच्चों के लिए शत-प्रतिशत सुरक्षित।",
+    seo_tags: ["Channapatna Toys", "Wooden Toy", "Non-Toxic", "GI Karnataka", "Montessori"],
+    studio_image_url: "/static/studio/channapatna_toy.jpg",
+    floor_price: 520,
+    recommended_retail_d2c: 1250,
+    wholesale_b2b: 750,
+    available_stock: 30,
+    is_published: true,
+    created_at: "2026-09-10T08:00:00Z",
+    artisan_name: "B. Venkatesh",
+    artisan_state: "Karnataka",
+    gi_certified: true
+  },
+
+  // Seed Aliases for Backward Compatibility and Statically Exported Routes
   {
     id: "prod-001",
     artisan_id: "art-varanasi-01",
@@ -28,7 +201,8 @@ export const SEED_PRODUCTS: Product[] = [
     created_at: "2026-09-08T10:00:00Z",
     artisan_name: "Radheshyam Ansari",
     artisan_state: "Uttar Pradesh",
-    gi_certified: true
+    gi_certified: true,
+    is_alias: true
   },
   {
     id: "prod-002",
@@ -54,7 +228,8 @@ export const SEED_PRODUCTS: Product[] = [
     created_at: "2026-09-08T11:00:00Z",
     artisan_name: "Sukhdev Baghel",
     artisan_state: "Chhattisgarh",
-    gi_certified: true
+    gi_certified: true,
+    is_alias: true
   },
   {
     id: "prod-003",
@@ -80,7 +255,8 @@ export const SEED_PRODUCTS: Product[] = [
     created_at: "2026-09-09T09:00:00Z",
     artisan_name: "Mohammad Aslam",
     artisan_state: "Uttar Pradesh",
-    gi_certified: true
+    gi_certified: true,
+    is_alias: true
   },
   {
     id: "prod-004",
@@ -106,7 +282,8 @@ export const SEED_PRODUCTS: Product[] = [
     created_at: "2026-09-09T14:30:00Z",
     artisan_name: "Devi Bai",
     artisan_state: "Bihar",
-    gi_certified: true
+    gi_certified: true,
+    is_alias: true
   },
   {
     id: "prod-005",
@@ -132,7 +309,8 @@ export const SEED_PRODUCTS: Product[] = [
     created_at: "2026-09-10T08:00:00Z",
     artisan_name: "B. Venkatesh",
     artisan_state: "Karnataka",
-    gi_certified: true
+    gi_certified: true,
+    is_alias: true
   }
 ];
 
@@ -393,7 +571,8 @@ export async function fetchProducts(): Promise<Product[]> {
 
   if (allProducts.length === 0) {
     const ids = new Set(localUploaded.map(p => p.id));
-    allProducts = [...localUploaded, ...SEED_PRODUCTS.map(normalizeProduct).filter(p => !ids.has(p.id))];
+    const primarySeeds = SEED_PRODUCTS.filter(p => !p.is_alias);
+    allProducts = [...localUploaded, ...primarySeeds.map(normalizeProduct).filter(p => !ids.has(p.id))];
   }
 
   return allProducts.filter((p) => !removedIds.has(p.id));
@@ -407,16 +586,29 @@ export async function fetchProductById(id: string): Promise<Product | null> {
   const localFound = localUploaded.find((p) => p.id === id);
   if (localFound) return normalizeProduct(localFound);
 
+  const aliasId = ID_ALIASES[id];
+  if (aliasId) {
+    const aliasLocal = localUploaded.find((p) => p.id === aliasId);
+    if (aliasLocal) return normalizeProduct(aliasLocal);
+  }
+
   try {
     const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       if (data && !removedIds.has(data.id)) return normalizeProduct(data);
+    } else if (aliasId) {
+      const resAlias = await fetch(`${API_BASE}/products/${aliasId}`, { signal: AbortSignal.timeout(3000) });
+      if (resAlias.ok) {
+        const data = await resAlias.json();
+        if (data && !removedIds.has(data.id)) return normalizeProduct(data);
+      }
     }
   } catch {
     // Fallback
   }
-  const seedFound = SEED_PRODUCTS.find((p) => p.id === id);
+
+  const seedFound = SEED_PRODUCTS.find((p) => p.id === id) || (aliasId ? SEED_PRODUCTS.find((p) => p.id === aliasId) : undefined);
   if (seedFound && !removedIds.has(seedFound.id)) return normalizeProduct(seedFound);
   return null;
 }

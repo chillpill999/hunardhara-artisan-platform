@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { fetchProductById, removeProduct } from '@/lib/api';
+import { useRouter, useParams } from 'next/navigation';
+import { fetchProductById, removeProduct, ID_ALIASES } from '@/lib/api';
 import { Product } from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
 import CraftPassport from '@/components/CraftPassport';
@@ -30,24 +30,107 @@ interface CraftDetailClientProps {
 
 export default function CraftDetailClient({ initialProduct, id }: CraftDetailClientProps) {
   const router = useRouter();
+  const params = useParams();
   const { user, role } = useAuth();
-  const [product, setProduct] = useState<Product | null>(initialProduct);
+
+  // Helper to extract the actual craft ID requested in the browser URL
+  const getRequestedId = () => {
+    if (typeof window !== 'undefined') {
+      const parts = window.location.pathname.split('/');
+      const craftIdx = parts.indexOf('craft');
+      if (craftIdx !== -1 && parts[craftIdx + 1]) {
+        return parts[craftIdx + 1].replace(/\.html$/, '').split('?')[0].split('#')[0];
+      }
+    }
+    return (params?.id as string) || id;
+  };
+
+  const [activeId, setActiveId] = useState<string>(getRequestedId);
+
+  // Helper to verify if a loaded product matches the target route ID (or its alias)
+  const doesProductMatch = (prod: Product | null, targetId: string) => {
+    if (!prod || !targetId) return false;
+    if (prod.id === targetId) return true;
+    const alias = ID_ALIASES[targetId];
+    if (alias && prod.id === alias) return true;
+    return false;
+  };
+
+  // Only use initialProduct if it actually matches the requested URL ID
+  const initialMatches = doesProductMatch(initialProduct, activeId);
+  const [product, setProduct] = useState<Product | null>(initialMatches ? initialProduct : null);
+  const [loading, setLoading] = useState<boolean>(!initialMatches);
   const [showOriginal, setShowOriginal] = useState(false);
   const [orderSent, setOrderSent] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
 
+  // Sync activeId whenever route parameters or window pathname changes
   useEffect(() => {
-    if (!product) {
-      fetchProductById(id).then((data) => setProduct(data));
+    const currentUrlId = getRequestedId();
+    if (currentUrlId && currentUrlId !== activeId) {
+      setActiveId(currentUrlId);
     }
-  }, [id, product]);
+  }, [params, id]);
 
-  if (!product) {
+  // Fetch the correct product whenever activeId changes or when product doesn't match
+  useEffect(() => {
+    const targetId = activeId || id;
+    if (!targetId) return;
+
+    if (doesProductMatch(product, targetId)) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    let cancelled = false;
+
+    fetchProductById(targetId)
+      .then((data) => {
+        if (!cancelled) {
+          setProduct(data);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.error('Error fetching craft:', err);
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, id, product]);
+
+  if (loading) {
     return (
       <div className="max-w-4xl mx-auto py-28 px-4 text-center space-y-4">
         <div className="w-10 h-10 border-3 border-[#c85a32] border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-xs text-[#6f5f58]">कारीगर कार्यशाला से संपर्क हो रहा है...</p>
+        <p className="text-xs text-[#6f5f58]">कारीगर कार्यशाला से शिल्प विवरण लोड हो रहा है... (Loading craft details...)</p>
+      </div>
+    );
+  }
+
+  if (!product) {
+    return (
+      <div className="max-w-md mx-auto py-24 px-4 text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h2 className="text-xl font-bold text-[#231f1e]">Craft Listing Unavailable</h2>
+        <p className="text-xs text-[#6f5f58]">
+          यह शिल्प उत्पाद वर्तमान में उपलब्ध नहीं है या हटा दिया गया है। (This craft is not available or has been removed.)
+        </p>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#1b4332] text-white hover:bg-[#2d6a4f] transition-all"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>वापस बाज़ार जाएं (Return to Marketplace)</span>
+        </Link>
       </div>
     );
   }

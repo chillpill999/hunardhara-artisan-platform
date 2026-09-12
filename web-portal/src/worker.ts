@@ -397,7 +397,11 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
 
     // Dynamic craft detail routes (e.g. newly published products like /craft/prod-live-*)
     if (pathname.startsWith('/craft/') && !pathname.includes('.')) {
-      const res = await env.ASSETS.fetch(request);
+      let res = await env.ASSETS.fetch(request);
+      if (res.status === 404) {
+        const htmlReq = new Request(new URL(`${pathname}.html`, url.origin), request);
+        res = await env.ASSETS.fetch(htmlReq);
+      }
       if (res.status === 404) {
         const fallbackReq = new Request(new URL('/craft/prod-001.html', url.origin), request);
         return env.ASSETS.fetch(fallbackReq);
