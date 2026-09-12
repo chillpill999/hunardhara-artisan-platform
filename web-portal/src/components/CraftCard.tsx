@@ -88,7 +88,7 @@ export default function CraftCard({ product }: CraftCardProps) {
           {/* Product Name */}
           <Link href={`/craft/${product.id}`} className="block group-hover:text-[#c85a32] transition-colors">
             <h3 className="font-sans font-bold text-base text-[#231f1e] leading-snug line-clamp-1">
-              {product.title_en}
+              {product.title_en || (product as any).title || 'शिल्प कलाकृति'}
             </h3>
           </Link>
 
@@ -104,7 +104,7 @@ export default function CraftCard({ product }: CraftCardProps) {
           <div>
             <span className="text-[10px] uppercase font-bold text-[#6f5f58] block">सीधा मूल्य</span>
             <div className="font-sans text-xl font-extrabold text-[#c85a32]">
-              ₹{product.recommended_retail_d2c.toLocaleString('en-IN')}
+              ₹{Number(product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0).toLocaleString('en-IN')}
             </div>
           </div>
 

@@ -83,12 +83,18 @@ export default function AdminDashboardPage() {
   // Filtered Products
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      const q = searchQuery.toLowerCase();
+      if (!p) return false;
+      const q = (searchQuery || '').toLowerCase().trim();
+      const titleEn = (p.title_en || (p as any).title || '').toLowerCase();
+      const titleHi = (p.title_hi || (p as any).description_hindi || '').toLowerCase();
+      const craftType = (p.craft_type || '').toLowerCase();
+      const artisanName = (p.artisan_name || '').toLowerCase();
       return (
-        p.title_en.toLowerCase().includes(q) ||
-        (p.title_hi && p.title_hi.toLowerCase().includes(q)) ||
-        p.craft_type.toLowerCase().includes(q) ||
-        (p.artisan_name && p.artisan_name.toLowerCase().includes(q))
+        !q ||
+        titleEn.includes(q) ||
+        titleHi.includes(q) ||
+        craftType.includes(q) ||
+        artisanName.includes(q)
       );
     });
   }, [products, searchQuery]);

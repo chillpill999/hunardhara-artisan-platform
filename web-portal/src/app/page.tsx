@@ -56,13 +56,26 @@ export default function MarketplacePage() {
   ];
 
   const filteredProducts = useMemo(() => {
+    const q = (searchQuery || '').toLowerCase().trim();
     return products.filter((p) => {
+      if (!p) return false;
+      const titleEn = (p.title_en || (p as any).title || '').toLowerCase();
+      const descEn = (p.description_en || (p as any).description_english || '').toLowerCase();
+      const titleHi = (p.title_hi || (p as any).description_hindi || '').toLowerCase();
+      const craftType = (p.craft_type || '').toLowerCase();
+      const state = (p.artisan_state || '').toLowerCase();
+      const artisanName = (p.artisan_name || '').toLowerCase();
+      const materials = Array.isArray(p.materials) ? p.materials : [];
+
       const matchesSearch =
-        p.title_en.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description_en.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.title_hi && p.title_hi.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        p.materials.some((m) => m.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (p.artisan_state && p.artisan_state.toLowerCase().includes(searchQuery.toLowerCase()));
+        !q ||
+        titleEn.includes(q) ||
+        descEn.includes(q) ||
+        titleHi.includes(q) ||
+        craftType.includes(q) ||
+        state.includes(q) ||
+        artisanName.includes(q) ||
+        materials.some((m) => typeof m === 'string' && m.toLowerCase().includes(q));
 
       const matchesCraft = selectedCraft === 'ALL' || p.craft_type === selectedCraft;
 

@@ -167,12 +167,12 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
                   सीधा कारीगर मूल्य (Direct Price)
                 </span>
                 <div className="font-sans text-3xl font-extrabold text-[#c85a32] mt-0.5">
-                  ₹{product.recommended_retail_d2c.toLocaleString('en-IN')}
+                  ₹{Number(product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0).toLocaleString('en-IN')}
                 </div>
               </div>
               <div className="text-right flex flex-col items-end">
                 <span className="text-[10px] uppercase font-bold bg-[#faf7f2] text-[#1b4332] border border-[#e6ded3] px-2.5 py-1 rounded-md">
-                  थोक: ₹{product.wholesale_b2b.toLocaleString('en-IN')}
+                  थोक: ₹{Number(product.wholesale_b2b ?? (product as any).wholesale_b2b_price ?? 0).toLocaleString('en-IN')}
                 </span>
                 <button
                   type="button"
@@ -198,11 +198,11 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
               कारीगर कथा एवं शिल्प परिचय
             </h3>
             <p className="text-xs sm:text-sm text-[#231f1e] leading-relaxed bg-[#faf7f2] p-4 rounded-2xl border border-[#e6ded3]">
-              {product.description_en}
+              {product.description_en || (product as any).description_english || product.title_en}
             </p>
-            {product.description_hi && (
+            {(product.description_hi || (product as any).description_hindi) && (
               <p className="text-xs sm:text-sm text-[#6f5f58] leading-relaxed bg-[#faf7f2] p-4 rounded-2xl border border-[#e6ded3] font-serif italic">
-                &quot;{product.description_hi}&quot;
+                &quot;{product.description_hi || (product as any).description_hindi}&quot;
               </p>
             )}
           </div>
@@ -211,20 +211,26 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="bg-[#faf7f2] p-3.5 rounded-2xl border border-[#e6ded3]">
               <span className="text-[#6f5f58] block text-[10px] uppercase font-bold">सामग्री (Materials)</span>
-              <span className="font-semibold text-[#231f1e] mt-0.5 block">{product.materials.join(', ')}</span>
+              <span className="font-semibold text-[#231f1e] mt-0.5 block">
+                {(Array.isArray(product.materials) ? product.materials : []).join(', ') || 'पारंपरिक सामग्री'}
+              </span>
             </div>
 
             <div className="bg-[#faf7f2] p-3.5 rounded-2xl border border-[#e6ded3]">
               <span className="text-[#6f5f58] block text-[10px] uppercase font-bold">निर्माण समय (Duration)</span>
               <span className="font-semibold text-[#231f1e] mt-0.5 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-[#6f5f58]" />
-                {product.production_time_days} दिन की मेहनत
+                {product.production_time_days || 5} दिन की मेहनत
               </span>
             </div>
 
             <div className="bg-[#faf7f2] p-3.5 rounded-2xl border border-[#e6ded3]">
               <span className="text-[#6f5f58] block text-[10px] uppercase font-bold">माप (Dimensions)</span>
-              <span className="font-semibold text-[#231f1e] mt-0.5 block">{product.dimensions || 'पारंपरिक मानक'}</span>
+              <span className="font-semibold text-[#231f1e] mt-0.5 block">
+                {typeof product.dimensions === 'object' && product.dimensions !== null
+                  ? `${(product.dimensions as any).length || ''}×${(product.dimensions as any).width || ''} ${(product.dimensions as any).unit || 'cm'}`
+                  : (product.dimensions || 'पारंपरिक मानक')}
+              </span>
             </div>
 
             <div className="bg-[#faf7f2] p-3.5 rounded-2xl border border-[#e6ded3]">
@@ -270,7 +276,7 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
                   onClick={() => setOrderSent(true)}
                   className="flex-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-sm py-4 px-6 rounded-full transition-all shadow-xs flex items-center justify-center gap-2 active:scale-98"
                 >
-                  <span>कारीगर से सीधे खरीदें (₹{(product.recommended_retail_d2c * quantity).toLocaleString('en-IN')})</span>
+                  <span>कारीगर से सीधे खरीदें (₹{Number((product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0) * quantity).toLocaleString('en-IN')})</span>
                 </button>
 
                 <button

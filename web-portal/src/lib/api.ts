@@ -234,8 +234,146 @@ export function saveUploadedProduct(product: Product): void {
   }
 }
 
+/**
+ * Robust normalization function to map both FastAPI backend schemas and local product drafts
+ * into the standard frontend Product interface with 100% null-safety.
+ */
+export function normalizeProduct(raw: any): Product {
+  if (!raw) {
+    return {
+      id: `prod-${Date.now()}`,
+      artisan_id: '11111111-1111-1111-1111-111111111111',
+      title_en: 'Handcrafted Heritage Item',
+      title_hi: 'पारंपरिक हस्तशिल्प',
+      craft_type: 'Traditional Craft',
+      materials: ['Natural Handcrafted Materials'],
+      dimensions: 'Standard',
+      production_time_days: 5,
+      description_en: 'Authentic handcrafted heritage item.',
+      description_hi: 'प्रामाणिक हस्तशिल्प।',
+      seo_tags: ['Indian Craft'],
+      studio_image_url: '/logo.png',
+      floor_price: 1000,
+      recommended_retail_d2c: 2000,
+      wholesale_b2b: 1400,
+      available_stock: 5,
+      is_published: true,
+      created_at: new Date().toISOString(),
+      artisan_name: 'Master Artisan',
+      artisan_state: 'India',
+      gi_certified: true,
+    };
+  }
+
+  // Title handling
+  const titleEn = raw.title_en || raw.title || 'Handcrafted Heritage Item';
+  const titleHi = raw.title_hi || raw.description_hindi?.slice(0, 45) || titleEn;
+
+  // Description handling
+  const descEn = raw.description_en || raw.description_english || titleEn;
+  const descHi = raw.description_hi || raw.description_hindi || titleHi;
+
+  // Price handling
+  const floorPrice = Number(raw.floor_price) || 1200;
+  const recommendedRetail = Number(
+    raw.recommended_retail_d2c ?? raw.recommended_retail_price ?? raw.listing_price ?? Math.round(floorPrice * 1.6)
+  );
+  const wholesaleB2b = Number(
+    raw.wholesale_b2b ?? raw.wholesale_b2b_price ?? Math.round(recommendedRetail * 0.7)
+  );
+
+  // Dimensions handling (supports object from FastAPI or string)
+  let dimensionsStr = 'Standard';
+  if (typeof raw.dimensions === 'string' && raw.dimensions.trim()) {
+    dimensionsStr = raw.dimensions;
+  } else if (raw.dimensions && typeof raw.dimensions === 'object') {
+    const { length, width, height, unit } = raw.dimensions;
+    const parts = [length, width, height].filter((v) => v !== undefined && v !== null && v !== 0);
+    dimensionsStr = parts.length > 0 ? `${parts.join(' × ')} ${unit || 'cm'}` : 'Standard';
+  }
+
+  // Production time handling
+  const prodDays =
+    raw.production_time_days ??
+    (raw.production_time_hours ? Math.max(1, Math.round(raw.production_time_hours / 8)) : 5);
+
+  // Materials handling
+  const materials =
+    Array.isArray(raw.materials) && raw.materials.length > 0
+      ? raw.materials.filter((m: any) => typeof m === 'string')
+      : ['Natural Handcrafted Materials'];
+
+  // SEO tags
+  const seoTags =
+    Array.isArray(raw.seo_tags) && raw.seo_tags.length > 0
+      ? raw.seo_tags
+      : Array.isArray(raw.seo_tags_english)
+      ? raw.seo_tags_english
+      : [raw.craft_type || 'Indian Handicraft', 'MoSJE Verified'];
+
+  // Image handling
+  const studioImg = raw.studio_image_url || '/logo.png';
+
+  // Artisan & State attribution
+  const artisanName =
+    raw.artisan_name ||
+    (raw.craft_type?.includes('Silk')
+      ? 'Radheshyam Ansari'
+      : raw.craft_type?.includes('Dhokra')
+      ? 'Sukhdev Baghel'
+      : raw.craft_type?.includes('Pottery')
+      ? 'Mohammad Aslam'
+      : raw.craft_type?.includes('Madhubani')
+      ? 'Devi Bai'
+      : raw.craft_type?.includes('Channapatna')
+      ? 'B. Venkatesh'
+      : 'Master Artisan');
+
+  const artisanState =
+    raw.artisan_state ||
+    (raw.craft_type?.includes('Silk')
+      ? 'Uttar Pradesh'
+      : raw.craft_type?.includes('Dhokra')
+      ? 'Chhattisgarh'
+      : raw.craft_type?.includes('Pottery')
+      ? 'Uttar Pradesh'
+      : raw.craft_type?.includes('Madhubani')
+      ? 'Bihar'
+      : raw.craft_type?.includes('Channapatna')
+      ? 'Karnataka'
+      : 'India');
+
+  return {
+    id: String(raw.id || `prod-${Date.now()}`),
+    artisan_id: String(raw.artisan_id || '11111111-1111-1111-1111-111111111111'),
+    cluster_id: raw.cluster_id ? String(raw.cluster_id) : undefined,
+    title_en: titleEn,
+    title_hi: titleHi,
+    craft_type: String(raw.craft_type || 'Traditional Craft'),
+    materials,
+    dimensions: dimensionsStr,
+    production_time_days: Number(prodDays),
+    technique: raw.technique ? String(raw.technique) : undefined,
+    color: raw.color || (Array.isArray(raw.dominant_colors) ? raw.dominant_colors.join(', ') : undefined),
+    description_en: descEn,
+    description_hi: descHi,
+    seo_tags: seoTags,
+    studio_image_url: studioImg,
+    raw_image_url: raw.raw_photo_url || raw.raw_image_url,
+    floor_price: floorPrice,
+    recommended_retail_d2c: recommendedRetail,
+    wholesale_b2b: wholesaleB2b,
+    available_stock: Number(raw.available_stock ?? raw.stock_quantity ?? 5),
+    is_published: raw.is_published !== false && raw.is_active !== false,
+    created_at: raw.created_at ? String(raw.created_at) : new Date().toISOString(),
+    artisan_name: artisanName,
+    artisan_state: artisanState,
+    gi_certified: raw.gi_certified !== false,
+  };
+}
+
 export async function fetchProducts(): Promise<Product[]> {
-  const localUploaded = getUploadedProducts();
+  const localUploaded = getUploadedProducts().map(normalizeProduct);
   const removedIds = new Set(getRemovedProductIds());
 
   let allProducts: Product[] = [];
@@ -244,8 +382,9 @@ export async function fetchProducts(): Promise<Product[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
+        const normalized = data.map(normalizeProduct);
         const ids = new Set(localUploaded.map(p => p.id));
-        allProducts = [...localUploaded, ...data.filter((p: Product) => !ids.has(p.id))];
+        allProducts = [...localUploaded, ...normalized.filter((p: Product) => !ids.has(p.id))];
       }
     }
   } catch {
@@ -254,7 +393,7 @@ export async function fetchProducts(): Promise<Product[]> {
 
   if (allProducts.length === 0) {
     const ids = new Set(localUploaded.map(p => p.id));
-    allProducts = [...localUploaded, ...SEED_PRODUCTS.filter(p => !ids.has(p.id))];
+    allProducts = [...localUploaded, ...SEED_PRODUCTS.map(normalizeProduct).filter(p => !ids.has(p.id))];
   }
 
   return allProducts.filter((p) => !removedIds.has(p.id));
@@ -266,19 +405,19 @@ export async function fetchProductById(id: string): Promise<Product | null> {
 
   const localUploaded = getUploadedProducts();
   const localFound = localUploaded.find((p) => p.id === id);
-  if (localFound) return localFound;
+  if (localFound) return normalizeProduct(localFound);
 
   try {
     const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
-      if (data && !removedIds.has(data.id)) return data;
+      if (data && !removedIds.has(data.id)) return normalizeProduct(data);
     }
   } catch {
     // Fallback
   }
   const seedFound = SEED_PRODUCTS.find((p) => p.id === id);
-  if (seedFound && !removedIds.has(seedFound.id)) return seedFound;
+  if (seedFound && !removedIds.has(seedFound.id)) return normalizeProduct(seedFound);
   return null;
 }
 
