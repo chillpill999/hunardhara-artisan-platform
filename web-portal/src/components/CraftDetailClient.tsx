@@ -7,6 +7,7 @@ import { fetchProductById, removeProduct } from '@/lib/api';
 import { Product } from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
 import CraftPassport from '@/components/CraftPassport';
+import InquiryModal from '@/components/InquiryModal';
 import {
   ArrowLeft,
   Award,
@@ -18,7 +19,8 @@ import {
   Lock,
   MapPin,
   User,
-  Trash2
+  Trash2,
+  MessageSquareQuote
 } from 'lucide-react';
 
 interface CraftDetailClientProps {
@@ -33,6 +35,7 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
   const [showOriginal, setShowOriginal] = useState(false);
   const [orderSent, setOrderSent] = useState(false);
   const [quantity, setQuantity] = useState(1);
+  const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
 
   useEffect(() => {
     if (!product) {
@@ -167,10 +170,17 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
                   ₹{product.recommended_retail_d2c.toLocaleString('en-IN')}
                 </div>
               </div>
-              <div className="text-right">
+              <div className="text-right flex flex-col items-end">
                 <span className="text-[10px] uppercase font-bold bg-[#faf7f2] text-[#1b4332] border border-[#e6ded3] px-2.5 py-1 rounded-md">
                   थोक: ₹{product.wholesale_b2b.toLocaleString('en-IN')}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setIsInquiryModalOpen(true)}
+                  className="text-[10.5px] font-bold text-[#c85a32] hover:underline mt-1 cursor-pointer"
+                >
+                  थोक मांग पूछें →
+                </button>
               </div>
             </div>
 
@@ -265,13 +275,24 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
 
                 <button
                   onClick={() => alert('सत्यापित शिल्प लिंक कॉपी हो गया')}
-                  className="p-3.5 rounded-full border border-[#e6ded3] bg-white text-[#6f5f58] hover:bg-[#faf7f2] self-center sm:self-auto"
+                  className="p-3.5 rounded-full border border-[#e6ded3] bg-white text-[#6f5f58] hover:bg-[#faf7f2] self-center sm:self-auto cursor-pointer"
                   title="साझा करें"
                 >
                   <Share2 className="w-4 h-4" />
                 </button>
               </div>
             )}
+
+            {/* Direct Inquiry with Artisan CTA */}
+            <button
+              type="button"
+              onClick={() => setIsInquiryModalOpen(true)}
+              className="w-full bg-[#faf7f2] hover:bg-[#f4ede4] text-[#1b4332] border border-[#1b4332]/25 font-bold text-xs py-3 px-5 rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-98"
+            >
+              <MessageSquareQuote className="w-4 h-4 text-[#c85a32]" />
+              <span>कारीगर से सीधा सवाल पूछें (Ask Artisan / Inquire)</span>
+            </button>
+
             <p className="text-[11px] text-[#6f5f58] text-center flex items-center justify-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-[#2d6a4f]" /> 100% सुरक्षित एस्क्रो लिंकेज • सीधे कारीगर को भुगतान
             </p>
@@ -316,6 +337,19 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
       <section className="pt-6">
         <CraftPassport product={product} />
       </section>
+
+      {/* Direct Artisan Inquiry Modal */}
+      <InquiryModal
+        isOpen={isInquiryModalOpen}
+        onClose={() => setIsInquiryModalOpen(false)}
+        productId={product.id}
+        productTitle={product.title_en}
+        productTitleHi={product.title_hi}
+        productImage={product.studio_image_url || '/logo.png'}
+        artisanId={product.artisan_id || '11111111-1111-1111-1111-111111111111'}
+        artisanName={product.artisan_name || 'राधेश्याम अंसारी (Radheshyam Ansari)'}
+        artisanCluster={product.craft_type ? `${product.craft_type} • ${product.artisan_state || 'भारत'}` : undefined}
+      />
     </div>
   );
 }

@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { B2BMatchRecordItem } from "@/lib/types";
 import { CheckCircle2, Users, MapPin, ArrowRight } from "lucide-react";
+import InquiryModal from "@/components/InquiryModal";
 
 interface MatchResultCardProps {
   match: B2BMatchRecordItem;
@@ -9,6 +11,7 @@ interface MatchResultCardProps {
 }
 
 export default function MatchResultCard({ match, rank }: MatchResultCardProps) {
+  const [isInquiryOpen, setIsInquiryOpen] = useState(false);
   return (
     <div className="bg-white rounded-3xl border border-[#e7e2d9] p-6 sm:p-7 shadow-xs hover:shadow-md transition-shadow relative overflow-hidden">
       {/* Top Banner */}
@@ -82,11 +85,28 @@ export default function MatchResultCard({ match, rank }: MatchResultCardProps) {
       {/* Action CTA */}
       <div className="mt-5 pt-4 border-t border-[#f0ece3] flex items-center justify-between">
         <span className="text-xs text-[#78716c]">Direct workshop purchase agreement</span>
-        <button className="bg-[#9a3412] hover:bg-[#b45309] text-white font-medium text-xs px-5 py-2.5 rounded-full transition-colors flex items-center gap-1.5 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setIsInquiryOpen(true)}
+          className="bg-[#9a3412] hover:bg-[#b45309] text-white font-medium text-xs px-5 py-2.5 rounded-full transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-98"
+        >
           <span>Inquire with Artisan</span>
           <ArrowRight className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* B2B Direct Inquiry Modal */}
+      <InquiryModal
+        isOpen={isInquiryOpen}
+        onClose={() => setIsInquiryOpen(false)}
+        productId={`b2b-rfq-${match.artisan_id}`}
+        productTitle={`${match.cluster_name} Craft Inquiry`}
+        productImage="/logo.png"
+        artisanId={match.artisan_id}
+        artisanName={match.artisan_name}
+        artisanCluster={`${match.cluster_name}, ${match.state}`}
+        defaultType="bulk_order"
+      />
     </div>
   );
 }

@@ -7,6 +7,8 @@ import HunarSaathi from '@/components/HunarSaathi';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
 import { getUploadedProducts } from '@/lib/api';
+import { getInquiriesForArtisan, updateInquiryStatus, deleteInquiry } from '@/lib/inquiries';
+import { ArtisanInquiry } from '@/lib/types';
 import {
   Palette,
   TrendingUp,
@@ -21,14 +23,20 @@ import {
   Eye,
   Bot,
   User,
-  HeartHandshake
+  HeartHandshake,
+  MessageSquareQuote,
+  Phone,
+  Mail,
+  Trash2
 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function ArtisanPortalPage() {
   const { user, profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'home' | 'studio' | 'products' | 'orders' | 'revenue'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'studio' | 'products' | 'orders' | 'inquiries' | 'revenue'>('home');
   const [showAssistantModal, setShowAssistantModal] = useState(false);
+  const [inquiries, setInquiries] = useState<ArtisanInquiry[]>([]);
+  const [inquiryFilter, setInquiryFilter] = useState<'all' | 'new' | 'replied'>('all');
 
   // Default sample artisan products
   const defaultArtisanProducts = [
@@ -84,6 +92,34 @@ export default function ArtisanPortalPage() {
     window.addEventListener('hunardhara_product_published', syncArtisanProducts);
     return () => window.removeEventListener('hunardhara_product_published', syncArtisanProducts);
   }, []);
+
+  // Sync inquiries specifically addressed to this artisan
+  useEffect(() => {
+    const syncInquiries = () => {
+      try {
+        const artisanId = user?.id || user?.email || '11111111-1111-1111-1111-111111111111';
+        const inqs = getInquiriesForArtisan(artisanId);
+        setInquiries(inqs);
+      } catch (e) {
+        console.warn('Sync inquiries error:', e);
+      }
+    };
+
+    syncInquiries();
+    window.addEventListener('hunardhara_new_inquiry', syncInquiries);
+    window.addEventListener('hunardhara_inquiry_updated', syncInquiries);
+    return () => {
+      window.removeEventListener('hunardhara_new_inquiry', syncInquiries);
+      window.removeEventListener('hunardhara_inquiry_updated', syncInquiries);
+    };
+  }, [user]);
+
+  const newInquiriesCount = inquiries.filter((i) => i.status === 'new').length;
+  const filteredInquiries = inquiries.filter((i) => {
+    if (inquiryFilter === 'new') return i.status === 'new';
+    if (inquiryFilter === 'replied') return i.status === 'replied';
+    return true;
+  });
 
   // Sample active orders for "Orders" section
   const activeOrders = [
@@ -193,6 +229,24 @@ export default function ArtisanPortalPage() {
             ऑर्डर ({activeOrders.length})
           </button>
           <button
+            onClick={() => setActiveTab('inquiries')}
+            className={`flex-1 min-w-[75px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center whitespace-nowrap flex items-center justify-center gap-1 ${
+              activeTab === 'inquiries'
+                ? 'bg-white text-[#1b4332] shadow-xs'
+                : 'text-[#6f5f58] hover:text-[#231f1e]'
+            }`}
+          >
+            <MessageSquareQuote className="w-3.5 h-3.5" />
+            <span>पूछताछ</span>
+            {newInquiriesCount > 0 ? (
+              <span className="bg-[#c85a32] text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                {newInquiriesCount}
+              </span>
+            ) : (
+              <span className="text-[10px] text-[#6f5f58]">({inquiries.length})</span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('revenue')}
             className={`flex-1 min-w-[70px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center whitespace-nowrap ${
               activeTab === 'revenue'
@@ -246,7 +300,7 @@ export default function ArtisanPortalPage() {
             </div>
 
             {/* QUICK STATS STRIP (OPTIMISTIC & SIMPLE) */}
-            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               <div
                 onClick={() => setActiveTab('orders')}
                 className="bg-white rounded-2xl p-4 border border-[#e6ded3] bento-shadow cursor-pointer hover:border-[#1b4332] transition-colors"
@@ -264,8 +318,25 @@ export default function ArtisanPortalPage() {
               </div>
 
               <div
+                onClick={() => setActiveTab('inquiries')}
+                className="bg-white rounded-2xl p-4 border border-[#e6ded3] bento-shadow cursor-pointer hover:border-[#1b4332] transition-colors col-span-2 sm:col-span-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#6f5f58] uppercase">ग्राहक पूछताछ</span>
+                  <MessageSquareQuote className="w-4 h-4 text-[#c85a32]" />
+                </div>
+                <div className="font-sans text-2xl font-extrabold text-[#231f1e] mt-1 flex items-baseline gap-2">
+                  <span>{newInquiriesCount} नई</span>
+                  <span className="text-xs font-normal text-[#6f5f58]">/ {inquiries.length} कुल</span>
+                </div>
+                <span className="text-[11px] text-[#1b4332] font-semibold flex items-center gap-1 mt-1">
+                  सीधा उत्तर दें <ArrowRight className="w-3 h-3" />
+                </span>
+              </div>
+
+              <div
                 onClick={() => setActiveTab('revenue')}
-                className="bg-white rounded-2xl p-4 border border-[#e6ded3] bento-shadow cursor-pointer hover:border-[#1b4332] transition-colors"
+                className="bg-white rounded-2xl p-4 border border-[#e6ded3] bento-shadow cursor-pointer hover:border-[#1b4332] transition-colors col-span-2 sm:col-span-1"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-[#6f5f58] uppercase">कुल कमाई</span>
@@ -487,7 +558,256 @@ export default function ArtisanPortalPage() {
         )}
 
         {/* ===================================================================== */}
-        {/* TAB 5: EARNINGS & REVENUE LEDGER                                      */}
+        {/* TAB 5: ARTISAN DIRECT INQUIRIES & BUYER CONVERSATIONS                 */}
+        {/* ===================================================================== */}
+        {activeTab === 'inquiries' && (
+          <div className="space-y-6">
+            {/* Header / Intro Card */}
+            <div className="bg-white rounded-3xl border border-[#e6ded3] p-5 sm:p-6 bento-shadow space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#c85a32] uppercase tracking-wider">
+                    <MessageSquareQuote className="w-4 h-4" />
+                    <span>सीधी ग्राहक व खरीदार पूछताछ • Direct Inquiries</span>
+                  </div>
+                  <h3 className="font-sans font-extrabold text-xl text-[#231f1e] mt-1">
+                    कार्यशाला इनबॉक्स (Workshop Inquiry Inbox)
+                  </h3>
+                  <p className="text-xs text-[#6f5f58] mt-0.5">
+                    ग्राहकों और B2B खरीदारों द्वारा आपके शिल्पों के संबंध में पूछे गए प्रश्न — सीधे व्हाट्सएप या कॉल से उत्तर दें।
+                  </p>
+                </div>
+
+                {/* Filter Controls */}
+                <div className="flex items-center bg-[#faf7f2] p-1 rounded-xl border border-[#e6ded3] self-start sm:self-auto">
+                  <button
+                    onClick={() => setInquiryFilter('all')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      inquiryFilter === 'all'
+                        ? 'bg-white text-[#1b4332] shadow-xs'
+                        : 'text-[#6f5f58] hover:text-[#231f1e]'
+                    }`}
+                  >
+                    सभी ({inquiries.length})
+                  </button>
+                  <button
+                    onClick={() => setInquiryFilter('new')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      inquiryFilter === 'new'
+                        ? 'bg-[#c85a32] text-white shadow-xs'
+                        : 'text-[#6f5f58] hover:text-[#231f1e]'
+                    }`}
+                  >
+                    नई ({newInquiriesCount})
+                  </button>
+                  <button
+                    onClick={() => setInquiryFilter('replied')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      inquiryFilter === 'replied'
+                        ? 'bg-white text-[#1b4332] shadow-xs'
+                        : 'text-[#6f5f58] hover:text-[#231f1e]'
+                    }`}
+                  >
+                    उत्तर दिया ({inquiries.filter((i) => i.status === 'replied').length})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Inquiries List */}
+            {filteredInquiries.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-[#e6ded3] p-10 text-center space-y-3 bento-shadow">
+                <div className="w-14 h-14 rounded-full bg-[#faf7f2] text-[#6f5f58] flex items-center justify-center mx-auto border border-[#e6ded3]">
+                  <MessageSquareQuote className="w-7 h-7 text-[#c85a32]" />
+                </div>
+                <h4 className="font-bold text-base text-[#231f1e]">कोई पूछताछ नहीं मिली</h4>
+                <p className="text-xs text-[#6f5f58] max-w-sm mx-auto">
+                  {inquiryFilter === 'new'
+                    ? 'सभी पूछताछ का उत्तर दिया जा चुका है।'
+                    : 'जैसे ही कोई ग्राहक या B2B खरीदार आपके शिल्पों पर पूछताछ करेगा, वह सीधे यहाँ दिखाई देगी।'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {filteredInquiries.map((inq) => {
+                  const cleanPhone = (inq.customer_phone || '').replace(/[^0-9]/g, '');
+                  const waText = encodeURIComponent(
+                    `नमस्ते ${inq.customer_name} जी, मैं ${profile?.full_name || inq.artisan_name || 'कारीगर'} बोल रहा हूँ। हुनरधारा पर आपके द्वारा "${inq.product_title}" के लिए भेजी गई पूछताछ के संबंध में...`
+                  );
+                  const waUrl = cleanPhone ? `https://wa.me/${cleanPhone.startsWith('91') ? cleanPhone : '91' + cleanPhone}?text=${waText}` : null;
+
+                  return (
+                    <div
+                      key={inq.id}
+                      className="bg-white rounded-3xl border border-[#e6ded3] p-5 sm:p-6 bento-shadow space-y-4 transition-all hover:border-[#1b4332]/40"
+                    >
+                      {/* Top Meta Line: Category Badge + Status + Time */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#f4ede4] pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[11px] font-bold px-3 py-1 rounded-full ${
+                            inq.inquiry_type === 'customization'
+                              ? 'bg-purple-100 text-purple-800'
+                              : inq.inquiry_type === 'bulk_order'
+                              ? 'bg-amber-100 text-amber-800'
+                              : inq.inquiry_type === 'delivery_time'
+                              ? 'bg-blue-100 text-blue-800'
+                              : inq.inquiry_type === 'price'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-stone-100 text-stone-800'
+                          }`}>
+                            {inq.inquiry_type === 'customization' && '🎨 कस्टमाइज़ेशन (Customization)'}
+                            {inq.inquiry_type === 'bulk_order' && '📦 थोक ऑर्डर (B2B Bulk Order)'}
+                            {inq.inquiry_type === 'delivery_time' && '🚚 डिलीवरी समय (Delivery Timeline)'}
+                            {inq.inquiry_type === 'price' && '💰 मूल्य दर (Price Query)'}
+                            {inq.inquiry_type === 'general' && '❓ सामान्य प्रश्न (General)'}
+                          </span>
+
+                          {inq.quantity && inq.quantity > 0 && (
+                            <span className="text-[11px] font-bold bg-[#faf7f2] text-[#231f1e] border border-[#e6ded3] px-2.5 py-0.5 rounded-md">
+                              मांग: {inq.quantity} इकाई
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
+                            inq.status === 'new'
+                              ? 'bg-rose-100 text-rose-700 animate-pulse'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {inq.status === 'new' ? '🔴 नई पूछताछ' : '✓ उत्तर दिया गया'}
+                          </span>
+                          <span className="text-[10.5px] text-[#6f5f58] flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {new Date(inq.created_at).toLocaleDateString('hi-IN', {
+                              day: 'numeric',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Product & Buyer Context */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#faf7f2] p-3.5 rounded-2xl border border-[#e6ded3]">
+                        <div className="flex items-center gap-3">
+                          {inq.product_image && (
+                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-white border border-[#e6ded3] shrink-0 p-1 flex items-center justify-center">
+                              <img
+                                src={inq.product_image}
+                                alt={inq.product_title}
+                                className="w-full h-full object-contain rounded-lg"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).src = '/logo.png';
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-[#6f5f58]">उत्पाद (Craft)</span>
+                            <h5 className="font-sans font-bold text-xs sm:text-sm text-[#231f1e] line-clamp-1">
+                              {inq.product_title}
+                            </h5>
+                          </div>
+                        </div>
+
+                        <div className="text-left sm:text-right border-t sm:border-t-0 pt-2 sm:pt-0 border-[#e6ded3]">
+                          <span className="text-[10px] uppercase font-bold text-[#6f5f58]">ग्राहक (Customer / Buyer)</span>
+                          <div className="font-bold text-xs text-[#1b4332]">{inq.customer_name}</div>
+                          <div className="text-[11px] text-[#6f5f58]">{inq.customer_phone || inq.customer_email}</div>
+                        </div>
+                      </div>
+
+                      {/* Inquiry Message Bubble */}
+                      <div className="bg-[#fcfbf9] border border-[#e6ded3] rounded-2xl p-4 space-y-1.5">
+                        <span className="text-[10px] uppercase font-bold text-[#c85a32] flex items-center gap-1">
+                          <MessageSquareQuote className="w-3.5 h-3.5" />
+                          <span>ग्राहक का संदेश (Customer Message):</span>
+                        </span>
+                        <p className="text-xs sm:text-sm text-[#231f1e] leading-relaxed italic">
+                          &quot;{inq.message}&quot;
+                        </p>
+                      </div>
+
+                      {/* 1-Tap Action Buttons */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#f4ede4]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {waUrl && (
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => updateInquiryStatus(inq.id, 'replied')}
+                              className="inline-flex items-center gap-1.5 bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-xs py-2 px-3.5 rounded-xl transition-colors shadow-xs"
+                            >
+                              <span>🟢 व्हाट्सएप पर उत्तर दें (WhatsApp)</span>
+                            </a>
+                          )}
+
+                          {inq.customer_phone && (
+                            <a
+                              href={`tel:${inq.customer_phone}`}
+                              onClick={() => updateInquiryStatus(inq.id, 'replied')}
+                              className="inline-flex items-center gap-1.5 bg-[#faf7f2] hover:bg-white text-[#1b4332] border border-[#e6ded3] font-bold text-xs py-2 px-3.5 rounded-xl transition-colors shadow-xs"
+                            >
+                              <Phone className="w-3.5 h-3.5 text-[#1b4332]" />
+                              <span>फोन करें ({inq.customer_phone})</span>
+                            </a>
+                          )}
+
+                          {inq.customer_email && (
+                            <a
+                              href={`mailto:${inq.customer_email}?subject=${encodeURIComponent(`Re: ${inq.product_title} - HunarDhara`)}`}
+                              onClick={() => updateInquiryStatus(inq.id, 'replied')}
+                              className="inline-flex items-center gap-1.5 bg-[#faf7f2] hover:bg-white text-[#6f5f58] border border-[#e6ded3] font-medium text-xs py-2 px-3 rounded-xl transition-colors"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                              <span>ईमेल</span>
+                            </a>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newStatus = inq.status === 'new' ? 'replied' : 'new';
+                              updateInquiryStatus(inq.id, newStatus);
+                            }}
+                            className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                              inq.status === 'new'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                                : 'bg-[#faf7f2] text-[#6f5f58] border-[#e6ded3] hover:bg-white'
+                            }`}
+                          >
+                            {inq.status === 'new' ? '✓ उत्तर दे दिया चिह्नित करें' : 'नई चिह्नित करें'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm('क्या आप इस पूछताछ को हटाना चाहते हैं?')) {
+                                deleteInquiry(inq.id);
+                              }
+                            }}
+                            className="p-2 text-[#6f5f58] hover:text-red-600 rounded-xl hover:bg-red-50 transition-colors cursor-pointer"
+                            title="हटाएं"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* TAB 6: EARNINGS & REVENUE LEDGER                                      */}
         {/* ===================================================================== */}
         {activeTab === 'revenue' && <ArtisanRevenueLedger />}
 

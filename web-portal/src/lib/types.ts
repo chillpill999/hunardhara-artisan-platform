@@ -132,3 +132,21 @@ export interface ArtisanStudioDraft {
   description_hi: string;
   seo_tags: string[];
 }
+
+export interface ArtisanInquiry {
+  id: string;
+  product_id: string;
+  product_title: string;
+  product_image?: string;
+  artisan_id: string;
+  artisan_name?: string;
+  customer_name: string;
+  customer_phone?: string;
+  customer_email: string;
+  inquiry_type: 'customization' | 'bulk_order' | 'delivery_time' | 'price' | 'general';
+  message: string;
+  quantity?: number;
+  status: 'new' | 'replied' | 'in_progress' | 'closed';
+  created_at: string;
+}
+
