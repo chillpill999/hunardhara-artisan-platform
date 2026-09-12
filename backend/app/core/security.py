@@ -132,13 +132,13 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
             headers={"WWW-Authenticate": "Bearer"}
         )
 
-    # Resolve user role from user_metadata, app_metadata, or claims
-    role = (
-        payload.get("role") or
+    # Resolve user role from user_metadata, app_metadata, or claims (handles Supabase JWTs where role='authenticated')
+    meta_role = (
         payload.get("user_metadata", {}).get("role") or
-        payload.get("app_metadata", {}).get("role") or
-        "customer"
+        payload.get("app_metadata", {}).get("role")
     )
+    raw_role = payload.get("role")
+    role = meta_role or (raw_role if raw_role and raw_role != "authenticated" else "customer")
     email = payload.get("email") or payload.get("user_metadata", {}).get("email")
 
     return CurrentUser(id=user_id, email=email, role=str(role).lower())
@@ -159,12 +159,12 @@ def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Op
         user_id = str(payload.get("sub") or payload.get("id") or "")
         if not user_id:
             return None
-        role = (
-            payload.get("role") or
+        meta_role = (
             payload.get("user_metadata", {}).get("role") or
-            payload.get("app_metadata", {}).get("role") or
-            "customer"
+            payload.get("app_metadata", {}).get("role")
         )
+        raw_role = payload.get("role")
+        role = meta_role or (raw_role if raw_role and raw_role != "authenticated" else "customer")
         email = payload.get("email") or payload.get("user_metadata", {}).get("email")
         return CurrentUser(id=user_id, email=email, role=str(role).lower())
     except Exception:

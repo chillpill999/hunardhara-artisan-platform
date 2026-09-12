@@ -149,6 +149,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       );
       setRole(userRole);
       setProfile(userProfile);
+
+      // Persist browser cookie for Cloudflare Edge Worker validation
+      if (typeof document !== 'undefined') {
+        const maxAge = 60 * 60 * 24 * 7;
+        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
+        if (userRole === 'admin') {
+          setAdminAuthCookie(currentSession.user.email || '');
+        }
+      }
     } catch {
       setUser(null);
       setSession(null);
@@ -172,6 +181,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(null);
         setIsLoading(false);
 
+        // Clear edge cookies on signout
+        if (typeof document !== 'undefined') {
+          document.cookie = 'hunardhara_auth_token=; path=/; max-age=0; SameSite=Lax';
+          clearAdminAuthCookie();
+        }
+
         // If on protected page, redirect out
         if (pathname?.startsWith('/artisan') || pathname?.startsWith('/admin')) {
           router.push(`/login?redirect=${encodeURIComponent(pathname || '/')}`);
@@ -186,6 +201,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRole(userRole);
         setProfile(userProfile);
         setIsLoading(false);
+
+        // Keep edge cookies fresh on session refresh
+        if (typeof document !== 'undefined') {
+          const maxAge = 60 * 60 * 24 * 7;
+          document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
+          if (userRole === 'admin') {
+            setAdminAuthCookie(newSession.user.email || '');
+          }
+        }
       }
     });
 
@@ -212,6 +236,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { role: userRole, profile: userProfile } = await fetchProfile(data.user.id, data.user);
       setRole(userRole);
       setProfile(userProfile);
+
+      if (typeof document !== 'undefined') {
+        const maxAge = 60 * 60 * 24 * 7;
+        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
+        if (userRole === 'admin') {
+          setAdminAuthCookie(data.user.email || '');
+        }
+      }
     }
 
     setIsLoading(false);
@@ -266,6 +298,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { role: userRole, profile: userProfile } = await fetchProfile(data.user.id, data.user);
       setRole(userRole);
       setProfile(userProfile);
+
+      if (typeof document !== 'undefined') {
+        const maxAge = 60 * 60 * 24 * 7;
+        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
+        if (userRole === 'admin') {
+          setAdminAuthCookie(data.user.email || '');
+        }
+      }
     }
 
     setIsLoading(false);
@@ -300,11 +340,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (data.user) {
+      if (!data.session) {
+        // Auto-login to obtain full persistent browser session immediately
+        const signinResult = await signIn(email, password);
+        if (!signinResult.error) {
+          setIsLoading(false);
+          return { error: null };
+        }
+      }
+
       setUser(data.user);
       setSession(data.session);
       const { role: userRole, profile: userProfile } = await fetchProfile(data.user.id, data.user);
       setRole(userRole);
       setProfile(userProfile);
+
+      if (typeof document !== 'undefined') {
+        const maxAge = 60 * 60 * 24 * 7;
+        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
+        if (userRole === 'admin') {
+          setAdminAuthCookie(data.user.email || '');
+        }
+      }
     }
 
     setIsLoading(false);
