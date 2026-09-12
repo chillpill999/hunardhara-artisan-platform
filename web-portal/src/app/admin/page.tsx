@@ -11,6 +11,8 @@ import {
 } from '@/lib/api';
 import { CraftCluster, Product } from '@/lib/types';
 import AuthGuard from '@/components/AuthGuard';
+import { useAuth } from '@/context/AuthContext';
+import { isAuthorisedAdminEmail, PRIMARY_ADMIN_EMAIL } from '@/lib/adminAuth';
 import {
   ShieldCheck,
   Building2,
@@ -33,6 +35,7 @@ import {
 } from 'lucide-react';
 
 export default function AdminDashboardPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'clusters' | 'products'>('products');
   const [clusters, setClusters] = useState<CraftCluster[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -45,6 +48,9 @@ export default function AdminDashboardPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const loadData = async () => {
+    if (!isAuthorisedAdminEmail(user?.email)) {
+      return;
+    }
     try {
       const [clusterData, productData] = await Promise.all([
         fetchClusters(),
@@ -59,16 +65,20 @@ export default function AdminDashboardPage() {
   };
 
   useEffect(() => {
-    loadData();
+    if (isAuthorisedAdminEmail(user?.email)) {
+      loadData();
+    }
 
-    const handleUpdate = () => loadData();
+    const handleUpdate = () => {
+      if (isAuthorisedAdminEmail(user?.email)) loadData();
+    };
     window.addEventListener('hunardhara_product_published', handleUpdate);
     window.addEventListener('hunardhara_product_removed', handleUpdate);
     return () => {
       window.removeEventListener('hunardhara_product_published', handleUpdate);
       window.removeEventListener('hunardhara_product_removed', handleUpdate);
     };
-  }, []);
+  }, [user]);
 
   // Filtered Products
   const filteredProducts = useMemo(() => {
@@ -144,15 +154,14 @@ export default function AdminDashboardPage() {
           {/* Protection Badges */}
           <div className="bg-[#1c1917] p-5 rounded-2xl border border-[#2e2e30] text-xs space-y-2 shrink-0">
             <div className="flex items-center gap-2 text-[#34d399] font-bold">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Statutory Wage Protection</span>
+              <ShieldCheck className="w-4 h-4 text-[#34d399]" />
+              <span>प्रमाणित प्रशासक (Authorised Admin)</span>
             </div>
-            <div className="text-[11px] text-[#a1a1aa]">
-              Cost-Plus Floor Policy Engine [₹650/day Baseline]
+            <div className="text-[11px] font-mono text-[#F8C146] bg-black/40 px-2.5 py-1 rounded-lg border border-[#3e3e42] truncate max-w-xs">
+              {user?.email || PRIMARY_ADMIN_EMAIL}
             </div>
-            <div className="flex items-center gap-2 text-[#F8C146] font-bold pt-2 border-t border-[#2e2e30]">
-              <Award className="w-4 h-4" />
-              <span>GI Provenance Verification [Prototype]</span>
+            <div className="flex items-center gap-2 text-[#a1a1aa] text-[10px] pt-1.5 border-t border-[#2e2e30]">
+              <span>Direct Link Protected • Single-Email Whitelist</span>
             </div>
           </div>
         </div>

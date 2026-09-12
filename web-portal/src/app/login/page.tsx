@@ -8,6 +8,7 @@ import {
   Mail,
   UserCheck,
   ShieldCheck,
+  ShieldAlert,
   ShoppingBag,
   ArrowRight,
   AlertCircle,
@@ -18,6 +19,7 @@ import {
   Camera
 } from 'lucide-react';
 import Link from 'next/link';
+import { PRIMARY_ADMIN_EMAIL } from '@/lib/adminAuth';
 
 function maskEmailDisplay(raw: string): string {
   if (!raw || !raw.includes('@')) return 'your email';
@@ -41,8 +43,10 @@ function LoginFormContent() {
   const searchParams = useSearchParams();
 
   const redirectTarget = searchParams.get('redirect') || '/artisan';
-  const customMessage = searchParams.get('msg') ||
-    'Access your Artisan Studio, products, AI cataloging tools and earnings.';
+  const isBlockedDirectAccess = searchParams.get('blocked') === 'direct_admin_link' || searchParams.get('blocked') === 'direct_admin_access';
+  const customMessage = isBlockedDirectAccess
+    ? 'Direct access to the Admin Panel is blocked. Only the authorized administrator email can enter.'
+    : (searchParams.get('msg') || 'Access your Artisan Studio, products, AI cataloging tools and earnings.');
 
   const [mode, setMode] = useState<'magiclink' | 'password' | 'signup'>('magiclink');
   const [email, setEmail] = useState('');
@@ -231,6 +235,21 @@ function LoginFormContent() {
 
       {/* Main Form Card */}
       <div className="bg-white rounded-3xl border border-[#e4e4e7] p-6 sm:p-8 bento-shadow space-y-6">
+        {/* Direct Admin Access Blocked Security Banner */}
+        {isBlockedDirectAccess && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3 text-left">
+            <ShieldAlert className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs">
+              <span className="font-bold text-red-800 uppercase tracking-wider block">
+                प्रशासकीय लिंक अवरोधित • Direct Admin Access Blocked
+              </span>
+              <p className="text-red-700 leading-relaxed">
+                Direct URL navigation to the Admin Panel has been blocked. Only the verified administrator (<strong className="font-mono">{PRIMARY_ADMIN_EMAIL}</strong>) is authorized. Please sign in below with the authorized email.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 3-Way Mode Toggle */}
         <div className="grid grid-cols-3 bg-[#f4f4f5] p-1 rounded-2xl gap-1">
           <button
@@ -612,14 +631,14 @@ function LoginFormContent() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-[#b45309]">
                   <Crown className="w-4 h-4 text-[#d97706]" />
-                  <span>Lead Platform Administrator</span>
+                  <span>Lead Platform Administrator (Aryan)</span>
                 </div>
                 <span className="text-[9px] uppercase font-bold bg-[#F5A941] text-white px-2 py-0.5 rounded-full">
-                  Admin Access
+                  Authorised Admin
                 </span>
               </div>
-              <p className="text-[10px] text-[#71717a] mt-1">
-                Full platform governance, cluster monitoring, verified artisan oversight, and system security
+              <p className="text-[10px] text-[#71717a] mt-1 font-mono">
+                {PRIMARY_ADMIN_EMAIL} • Exclusive Admin Clearance
               </p>
             </button>
 

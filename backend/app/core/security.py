@@ -202,15 +202,27 @@ def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
     return user
 
 
+AUTHORIZED_ADMIN_EMAILS = {
+    "aryanrockstar2007@gmail.com",
+    "admin@hunardhara.gov.in"
+}
+
+
 def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
     """
     FastAPI dependency: Requires authenticated administrator.
+    Only authorized emails (aryanrockstar2007@gmail.com, admin@hunardhara.gov.in) are permitted.
     """
     user = get_current_user(authorization)
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN: Administrator privileges required."
+        )
+    if user.email and user.email.strip().lower() not in AUTHORIZED_ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"FORBIDDEN_UNAUTHORIZED_EMAIL: Account email '{user.email}' is not authorized for administrative governance."
         )
     return user
 

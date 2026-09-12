@@ -288,13 +288,79 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
     }
 
     // =========================================================================
-    // ROUTE PROTECTION & STATIC ASSET SERVING
+    // STRICT ADMIN ROUTE PROTECTION & DIRECT LINK BLOCKING
     // =========================================================================
-    const isProtectedRoute =
+    const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
+    if (isAdminRoute) {
+      const authHeader = request.headers.get('Authorization');
+      const cookieHeader = request.headers.get('Cookie') || '';
+      const isStaticAsset = pathname.includes('.') && !pathname.endsWith('.html');
+
+      if (!isStaticAsset) {
+        const adminEmailMatch = cookieHeader.match(/hunardhara_admin_email=([^;]+)/);
+        const adminEmail = adminEmailMatch ? decodeURIComponent(adminEmailMatch[1]).trim().toLowerCase() : '';
+
+        const AUTHORIZED_ADMIN_EMAILS = [
+          'aryanrockstar2007@gmail.com',
+        ];
+
+        const hasToken =
+          Boolean(authHeader && authHeader.startsWith('Bearer ')) ||
+          cookieHeader.includes('hunardhara_auth_token') ||
+          cookieHeader.includes('sb-access-token');
+
+        // 1. Block unauthenticated direct URL access
+        if (!hasToken || !adminEmail) {
+          const loginUrl = new URL('/login', url.origin);
+          loginUrl.searchParams.set('redirect', pathname);
+          loginUrl.searchParams.set('blocked', 'direct_admin_link');
+          loginUrl.searchParams.set(
+            'msg',
+            'प्रशासकीय लिंक अवरोधित: Direct admin link is blocked. Only aryanrockstar2007@gmail.com has access.'
+          );
+          return Response.redirect(loginUrl.toString(), 302);
+        }
+
+        // 2. Token present, but email is NOT authorized
+        if (!AUTHORIZED_ADMIN_EMAILS.includes(adminEmail)) {
+          return new Response(
+            `<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>403 Forbidden - HunarDhara Admin</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+    .card { background: #1e293b; border: 1px solid #ef4444; border-radius: 24px; max-width: 480px; width: 100%; padding: 32px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+    .badge { display: inline-block; background: #7f1d1d; color: #fca5a5; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 9999px; text-transform: uppercase; margin-bottom: 16px; }
+    h1 { font-size: 22px; font-weight: 800; margin: 0 0 12px; color: #f87171; }
+    p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin: 0 0 20px; }
+    .email { background: #0f172a; padding: 10px; border-radius: 12px; font-family: monospace; font-size: 13px; color: #f8fafc; margin-bottom: 24px; border: 1px solid #334155; }
+    .btn { display: inline-block; background: #c85a32; color: white; text-decoration: none; font-weight: 700; font-size: 13px; padding: 12px 24px; border-radius: 9999px; transition: 0.2s; }
+    .btn:hover { background: #b84e28; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">प्रशासकीय लिंक अवरोधित • Direct Admin Access Blocked</div>
+    <h1>403 Forbidden: Unauthorised Email</h1>
+    <p>Direct access to the HunarDhara Admin Panel is strictly restricted. Only <strong>aryanrockstar2007@gmail.com</strong> is authorized to access this route.</p>
+    <div class="email">Attempted Account: ${adminEmail || 'Unknown'}</div>
+    <a href="/" class="btn">बाज़ार पर वापस जाएं (Marketplace)</a>
+  </div>
+</body>
+</html>`,
+            { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+          );
+        }
+      }
+    }
+
+    // Standard protected routes (Artisan studio, earnings, orders, etc.)
+    const isOtherProtectedRoute =
       pathname === '/artisan' ||
       pathname.startsWith('/artisan/') ||
-      pathname === '/admin' ||
-      pathname.startsWith('/admin/') ||
       pathname === '/studio' ||
       pathname === '/earnings' ||
       pathname === '/dashboard' ||
@@ -307,7 +373,7 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       pathname === '/account' ||
       pathname.startsWith('/account/');
 
-    if (isProtectedRoute) {
+    if (isOtherProtectedRoute) {
       const authHeader = request.headers.get('Authorization');
       const cookieHeader = request.headers.get('Cookie') || '';
 
@@ -318,15 +384,12 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
 
       const isStaticAsset = pathname.includes('.') && !pathname.endsWith('.html');
 
-      // If user is unauthenticated and not requesting an underlying static sub-asset, redirect immediately at the edge
       if (!hasToken && !isStaticAsset) {
         const loginUrl = new URL('/login', url.origin);
         loginUrl.searchParams.set('redirect', pathname);
         loginUrl.searchParams.set(
           'msg',
-          pathname.startsWith('/admin')
-            ? 'Sign in as Administrator to access governance and cluster monitoring.'
-            : 'Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings.'
+          'Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings.'
         );
         return Response.redirect(loginUrl.toString(), 302);
       }
