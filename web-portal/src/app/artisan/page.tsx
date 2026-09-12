@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ArtisanStudio from '@/components/ArtisanStudio';
 import ArtisanRevenueLedger from '@/components/ArtisanRevenueLedger';
 import HunarSaathi from '@/components/HunarSaathi';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
+import { getUploadedProducts } from '@/lib/api';
 import {
   Palette,
   TrendingUp,
@@ -29,8 +30,8 @@ export default function ArtisanPortalPage() {
   const [activeTab, setActiveTab] = useState<'home' | 'studio' | 'products' | 'orders' | 'revenue'>('home');
   const [showAssistantModal, setShowAssistantModal] = useState(false);
 
-  // Sample artisan products for "My Products" section
-  const artisanProducts = [
+  // Default sample artisan products
+  const defaultArtisanProducts = [
     {
       id: 'prod-001',
       title: 'Varanasi Pure Katan Silk Saree',
@@ -52,6 +53,37 @@ export default function ArtisanPortalPage() {
       image: '/static/studio/bastar_dhokra.jpg',
     },
   ];
+
+  // Dynamic live artisan products state
+  const [artisanProducts, setArtisanProducts] = useState(defaultArtisanProducts);
+
+  useEffect(() => {
+    const syncArtisanProducts = () => {
+      try {
+        const uploaded = getUploadedProducts();
+        if (uploaded.length > 0) {
+          const mappedUploaded = uploaded.map((p) => ({
+            id: p.id,
+            title: p.title_en,
+            titleHi: p.title_hi || p.title_en,
+            price: p.recommended_retail_d2c || p.floor_price,
+            status: 'Live',
+            days: p.production_time_days || 7,
+            ordersCount: 0,
+            image: p.studio_image_url || '/logo.png',
+          }));
+          const existingIds = new Set(mappedUploaded.map(p => p.id));
+          setArtisanProducts([...mappedUploaded, ...defaultArtisanProducts.filter(p => !existingIds.has(p.id))]);
+        }
+      } catch (e) {
+        console.warn('Sync artisan products error:', e);
+      }
+    };
+
+    syncArtisanProducts();
+    window.addEventListener('hunardhara_product_published', syncArtisanProducts);
+    return () => window.removeEventListener('hunardhara_product_published', syncArtisanProducts);
+  }, []);
 
   // Sample active orders for "Orders" section
   const activeOrders = [

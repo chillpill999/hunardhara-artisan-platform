@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SIH 2026 - Technical Approach - Madhavas</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      width: 1920px;
+      height: 1080px;
+      background-color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1f2937;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* TOP HEADER */
+    .header {
+      height: 125px;
+      padding: 12px 50px 8px 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .team-badge {
+      width: 180px;
+      height: 82px;
+      border: 2.5px solid #4338ca;
+      border-radius: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: #fafafa;
+    }
+    .team-badge .name {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: #1e1b4b;
+    }
+    .team-badge .unit {
+      font-size: 14px;
+      font-weight: 700;
+      color: #4338ca;
+      margin-top: 2px;
+      letter-spacing: 1px;
+    }
+    .header-title {
+      font-family: "Times New Roman", Georgia, serif;
+      font-size: 56px;
+      font-weight: 800;
+      letter-spacing: 2.5px;
+      color: #111827;
+      text-transform: uppercase;
+    }
+    .sih-logo-box {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .sih-text {
+      text-align: right;
+    }
+    .sih-text .title {
+      font-size: 19px;
+      font-weight: 900;
+      color: #1e293b;
+      line-height: 1.15;
+      letter-spacing: 0.5px;
+    }
+    .sih-text .year {
+      font-size: 32px;
+      font-weight: 900;
+      color: #0f172a;
+      line-height: 1;
+      margin-top: 2px;
+    }
+
+    /* MAIN CONTENT LAYOUT */
+    .main-content {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 590px 1fr;
+      gap: 35px;
+      padding: 16px 50px 10px 50px;
+    }
+
+    /* LEFT COLUMN: TECHNOLOGY USED */
+    .tech-column {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 16px;
+      padding-right: 15px;
+    }
+    .tech-heading {
+      font-size: 36px;
+      font-weight: 800;
+      color: #1d4ed8;
+      text-decoration: underline;
+      text-underline-offset: 8px;
+      text-decoration-thickness: 3px;
+      margin-bottom: 8px;
+    }
+    .tech-list {
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+    .tech-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 19px;
+      line-height: 1.32;
+      color: #111827;
+    }
+    .tech-bullet {
+      color: #0f172a;
+      font-size: 20px;
+      line-height: 1.2;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .tech-label {
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .tech-desc {
+      font-weight: 500;
+      color: #334155;
+    }
+
+    .demo-box {
+      margin-top: 10px;
+      border: 2px solid #2563eb;
+      border-radius: 12px;
+      padding: 8px 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #eff6ff;
+      box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
+      align-self: flex-start;
+    }
+    .demo-label {
+      font-weight: 900;
+      color: #1e3a8a;
+      font-size: 19px;
+      margin-right: 8px;
+    }
+    .demo-url {
+      font-weight: 700;
+      color: #2563eb;
+      font-size: 18px;
+      text-decoration: underline;
+    }
+
+    /* RIGHT COLUMN: WORKFLOW & ARCHITECTURE */
+    .right-column {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    /* BLUE SECTION HEADER BANNER */
+    .section-banner {
+      background: #1d4ed8;
+      color: #ffffff;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 8px 15px;
+      border-radius: 4px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    /* 6-STAGE WORKFLOW ROW */
+    .workflow-container {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+      align-items: stretch;
+      position: relative;
+    }
+    .stage-card {
+      border-radius: 14px;
+      border: 1.5px solid #e2e8f0;
+      padding: 12px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      background: #ffffff;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      position: relative;
+    }
+    .stage-1 { border-color: #93c5fd; background: #f0f7ff; }
+    .stage-2 { border-color: #a7f3d0; background: #ecfdf5; }
+    .stage-3 { border-color: #fde68a; background: #fffbeb; }
+    .stage-4 { border-color: #ddd6fe; background: #f5f3ff; }
+    .stage-5 { border-color: #fbcfe8; background: #fdf2f8; }
+    .stage-6 { border-color: #fed7aa; background: #fff7ed; }
+
+    .stage-num-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      color: #ffffff;
+      font-weight: 900;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 6px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    }
+    .badge-1 { background: #2563eb; }
+    .badge-2 { background: #059669; }
+    .badge-3 { background: #d97706; }
+    .badge-4 { background: #7c3aed; }
+    .badge-5 { background: #db2777; }
+    .badge-6 { background: #ea580c; }
+
+    .stage-title {
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+      line-height: 1.2;
+    }
+    .title-1 { color: #1e40af; }
+    .title-2 { color: #065f46; }
+    .title-3 { color: #92400e; }
+    .title-4 { color: #5b21b6; }
+    .title-5 { color: #9d174d; }
+    .title-6 { color: #9a3412; }
+
+    .stage-actor {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
+
+    .stage-icon-pill {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 8px;
+      font-size: 18px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    .stage-bullets {
+      width: 100%;
+      background: #ffffff;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 6px 5px;
+      text-align: left;
+      font-size: 11px;
+      line-height: 1.35;
+      color: #334155;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .stage-bullets b {
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    /* SYSTEM ARCHITECTURE CONTAINER */
+    .arch-container {
+      background: #ffffff;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      min-height: 330px;
+      gap: 16px;
+    }
+
+    .arch-actors {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 170px;
+      flex-shrink: 0;
+    }
+    .actor-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #1e293b;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+    }
+    .actor-icon {
+      font-size: 20px;
+    }
+
+    .arch-box {
+      border: 1.5px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 14px;
+      background: #ffffff;
+      text-align: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+      position: relative;
+    }
+    .arch-box-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .arch-box-sub {
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      line-height: 1.35;
+    }
+
+    .client-box {
+      width: 190px;
+      border-color: #93c5fd;
+      background: #f8faff;
+    }
+    .center-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 250px;
+    }
+    .auth-box {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+    .backend-box {
+      border-color: #60a5fa;
+      background: #eff6ff;
+    }
+    .ai-box {
+      border-color: #f472b6;
+      background: #fdf2f8;
+    }
+    .data-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 240px;
+    }
+    .db-box {
+      border-color: #cbd5e1;
+      background: #f8fafc;
+    }
+    .sec-box {
+      border-color: #fed7aa;
+      background: #fff7ed;
+    }
+
+    .arrow {
+      font-size: 24px;
+      font-weight: 900;
+      color: #94a3b8;
+    }
+
+    /* BOTTOM BLUE BAR */
+    .footer-bar {
+      height: 28px;
+      background: #1d4ed8;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 35px;
+    }
+    .slide-num {
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 900;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP HEADER -->
+  <header class="header">
+    <div class="team-badge">
+      <div class="name">MADHAVAS</div>
+      <div class="unit">UNIT 6</div>
+    </div>
+
+    <h1 class="header-title">TECHNICAL APPROACH</h1>
+
+    <div class="sih-logo-box">
+      <!-- SIH Vector emblem -->
+      <svg width="65" height="65" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M50 10 C30 10 15 25 15 45 C15 60 25 72 38 78 L38 88 C38 90 40 92 42 92 L58 92 C60 92 62 90 62 88 L62 78 C75 72 85 60 85 45 C85 25 70 10 50 10 Z" fill="#F97316"/>
+        <path d="M50 10 C70 10 85 25 85 45 C85 60 75 72 62 78 L62 88 C62 90 60 92 58 92 L50 92 L50 10 Z" fill="#10B981"/>
+        <circle cx="50" cy="45" r="18" fill="#FFFFFF"/>
+        <text x="50" y="50" font-family="Arial, sans-serif" font-size="11" font-weight="900" fill="#1E293B" text-anchor="middle">SIH</text>
+        <circle cx="28" cy="35" r="3" fill="#FFFFFF"/>
+        <circle cx="72" cy="35" r="3" fill="#FFFFFF"/>
+        <circle cx="32" cy="55" r="3" fill="#FFFFFF"/>
+        <circle cx="68" cy="55" r="3" fill="#FFFFFF"/>
+      </svg>
+      <div class="sih-text">
+        <div class="title">SMART INDIA<br>HACKATHON</div>
+        <div class="year">2026</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+
+    <!-- LEFT COLUMN: TECHNOLOGY USED -->
+    <section class="tech-column">
+      <div>
+        <h2 class="tech-heading">Technology Used</h2>
+
+        <div class="tech-list">
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Backend:</span>
+              <span class="tech-desc">FastAPI — Python 3.12 Async (Uvicorn ASGI)</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Database:</span>
+              <span class="tech-desc">PostgreSQL 16 + pgvector (Visual Embeddings) + PostGIS</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Authentication & Security:</span>
+              <span class="tech-desc">Supabase Auth (Phone OTP) + PyJWT + Role-Based Access Control (RBAC)</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">AI Studio Vision:</span>
+              <span class="tech-desc">OpenCV + RMBG-1.4 (Background Scrubbing & Drop-Shadow Synthesis)</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Indic Speech & NLP:</span>
+              <span class="tech-desc">Sarvam AI + Bhashini ASR/NMT (Speech-to-Text & Regional Translation)</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Smart Fair Pricing:</span>
+              <span class="tech-desc">Google SigLIP Embeddings + Statutory Wage-Protection Floor Engine</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Frontend & Mobile:</span>
+              <span class="tech-desc">Next.js 15 (React 19) + Flutter (Dart Mobile App) + Tailwind CSS</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Privacy & Compliance:</span>
+              <span class="tech-desc">DPDP Act 2023 + Masked Aadhaar Vault (UIDAI) + EXIF GPS Scrubbing</span>
+            </div>
+          </div>
+
+          <div class="tech-item">
+            <span class="tech-bullet">❖</span>
+            <div>
+              <span class="tech-label">Deployment:</span>
+              <span class="tech-desc">Cloudflare Workers (Edge CDN) + Render.com Live Cloud Container</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DEMO BADGE -->
+      <div class="demo-box">
+        <span class="demo-label">DEMO:</span>
+        <span class="demo-url">https://hunardhara.technogamerzthenextlevel.workers.dev/</span>
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN: WORKFLOW & ARCHITECTURE -->
+    <section class="right-column">
+
+      <!-- TOP: 6-STAGE WORKFLOW -->
+      <div>
+        <div class="section-banner">6-STAGE AI CATALOGING & MARKET LINKAGE PIPELINE</div>
+        <div class="workflow-container" style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
+
+          <!-- STAGE 1 -->
+          <div class="stage-card stage-1" style="flex: 1;">
+            <div class="stage-num-badge badge-1">1</div>
+            <div class="stage-title title-1">PHOTO CAPTURE</div>
+            <div class="stage-actor">Artisan Mobile App</div>
+            <div class="stage-icon-pill">📸</div>
+            <div class="stage-bullets">
+              <div>• <b>Camera:</b> Reticle Framing</div>
+              <div>• <b>Sensors:</b> Blur Detection</div>
+              <div>• <b>EXIF:</b> GPS Scrubbing</div>
+            </div>
+          </div>
+
+          <div style="font-size: 20px; color: #94a3b8; font-weight: bold; margin: 0 -2px;">›</div>
+
+          <!-- STAGE 2 -->
+          <div class="stage-card stage-2" style="flex: 1;">
+            <div class="stage-num-badge badge-2">2</div>
+            <div class="stage-title title-2">INDIC VOICE</div>
+            <div class="stage-actor">Regional Speech Input</div>
+            <div class="stage-icon-pill">🎙️</div>
+            <div class="stage-bullets">
+              <div>• <b>ASR:</b> Sarvam Saaras</div>
+              <div>• <b>Bhashini:</b> Dialect NMT</div>
+              <div>• <b>UI:</b> Zero-Typing Mic</div>
+            </div>
+          </div>
+
+          <div style="font-size: 20px; color: #94a3b8; font-weight: bold; margin: 0 -2px;">›</div>
+
+          <!-- STAGE 3 -->
+          <div class="stage-card stage-3" style="flex: 1;">
+            <div class="stage-num-badge badge-3">3</div>
+            <div class="stage-title title-3">STUDIO VISION</div>
+            <div class="stage-actor">OpenCV + Rembg</div>
+            <div class="stage-icon-pill">✨</div>
+            <div class="stage-bullets">
+              <div>• <b>RMBG:</b> Clutter Removal</div>
+              <div>• <b>Shadow:</b> Drop & Ambient</div>
+              <div>• <b>1:1 Canvas:</b> E-Com Spec</div>
+            </div>
+          </div>
+
+          <div style="font-size: 20px; color: #94a3b8; font-weight: bold; margin: 0 -2px;">›</div>
+
+          <!-- STAGE 4 -->
+          <div class="stage-card stage-4" style="flex: 1;">
+            <div class="stage-num-badge badge-4">4</div>
+            <div class="stage-title title-4">AI EXTRACTION</div>
+            <div class="stage-actor">Structured LLM Parser</div>
+            <div class="stage-icon-pill">📋</div>
+            <div class="stage-bullets">
+              <div>• <b>JSON:</b> Strict Pydantic</div>
+              <div>• <b>Materials:</b> Auto-Detect</div>
+              <div>• <b>Copy:</b> Hindi + English</div>
+            </div>
+          </div>
+
+          <div style="font-size: 20px; color: #94a3b8; font-weight: bold; margin: 0 -2px;">›</div>
+
+          <!-- STAGE 5 -->
+          <div class="stage-card stage-5" style="flex: 1;">
+            <div class="stage-num-badge badge-5">5</div>
+            <div class="stage-title title-5">FAIR PRICING</div>
+            <div class="stage-actor">Wage Floor Guard</div>
+            <div class="stage-icon-pill">⚖️</div>
+            <div class="stage-bullets">
+              <div>• <b>Formula:</b> Mat + Labor</div>
+              <div>• <b>SigLIP:</b> Vector Match</div>
+              <div>• <b>Tiers:</b> Floor/Retail/B2B</div>
+            </div>
+          </div>
+
+          <div style="font-size: 20px; color: #94a3b8; font-weight: bold; margin: 0 -2px;">›</div>
+
+          <!-- STAGE 6 -->
+          <div class="stage-card stage-6" style="flex: 1;">
+            <div class="stage-num-badge badge-6">6</div>
+            <div class="stage-title title-6">MARKET LINKAGE</div>
+            <div class="stage-actor">D2C & B2B Match</div>
+            <div class="stage-icon-pill">🛍️</div>
+            <div class="stage-bullets">
+              <div>• <b>Live:</b> SSR Marketplace</div>
+              <div>• <b>Passport:</b> Dynamic QR</div>
+              <div>• <b>B2B:</b> Capacity Matching</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- BOTTOM: SYSTEM ARCHITECTURE -->
+      <div>
+        <div class="section-banner">SYSTEM ARCHITECTURE</div>
+        <div class="arch-container" style="margin-top: 10px;">
+
+          <!-- ACTORS -->
+          <div class="arch-actors">
+            <div class="actor-card">
+              <span class="actor-icon">🧑‍🎨</span>
+              <span>Rural Artisan</span>
+            </div>
+            <div class="actor-card">
+              <span class="actor-icon">🛒</span>
+              <span>Retail Buyer</span>
+            </div>
+            <div class="actor-card">
+              <span class="actor-icon">🏢</span>
+              <span>B2B Enterprise</span>
+            </div>
+            <div class="actor-card">
+              <span class="actor-icon">🏛️</span>
+              <span>MoSJE Admin</span>
+            </div>
+          </div>
+
+          <div class="arrow">➔</div>
+
+          <!-- CLIENT LAYER -->
+          <div class="arch-box client-box">
+            <div style="font-size: 28px; margin-bottom: 4px;">📱💻</div>
+            <div class="arch-box-title">Client Interface</div>
+            <div class="arch-box-sub">
+              Flutter Mobile App<br>
+              + Next.js 15 Web Portal<br>
+              (Tailwind CSS Bento UI)
+            </div>
+          </div>
+
+          <div class="arrow">➔</div>
+
+          <!-- CENTER COLUMN (GATEWAY, BACKEND, AI) -->
+          <div class="center-column" style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+            <div class="arch-box auth-box" style="width: 100%;">
+              <div class="arch-box-title">Auth & Access Control</div>
+              <div class="arch-box-sub">Supabase Auth (Phone OTP) + PyJWT RBAC</div>
+            </div>
+
+            <div style="font-size: 18px; color: #94a3b8; font-weight: bold; line-height: 1;">⇅</div>
+
+            <div class="arch-box backend-box" style="width: 100%;">
+              <div class="arch-box-title">FastAPI Backend (Async)</div>
+              <div class="arch-box-sub">
+                Python 3.12 + Celery & Redis 7<br>
+                Render.com Docker Cloud
+              </div>
+            </div>
+
+            <div style="font-size: 18px; color: #94a3b8; font-weight: bold; line-height: 1;">⇅</div>
+
+            <div class="arch-box ai-box" style="width: 100%;">
+              <div class="arch-box-title">AI & Multimodal Core</div>
+              <div class="arch-box-sub">
+                OpenCV + Sarvam AI / Bhashini<br>
+                SigLIP Fair-Pricing Engine
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow">➔</div>
+
+          <!-- DATA & SECURITY COLUMN -->
+          <div class="data-column">
+            <div class="arch-box db-box">
+              <div style="font-size: 24px; margin-bottom: 2px;">🐘🗄️</div>
+              <div class="arch-box-title">Database Layer</div>
+              <div class="arch-box-sub">
+                <b>PostgreSQL 16 (Supabase)</b><br>
+                • <b>pgvector:</b> Craft Embeddings<br>
+                • <b>PostGIS:</b> Spatial Clusters<br>
+                • SQLAlchemy 2.0 ORM
+              </div>
+            </div>
+
+            <div class="arch-box sec-box">
+              <div style="font-size: 24px; margin-bottom: 2px;">🛡️📜</div>
+              <div class="arch-box-title">Sovereign Security Vault</div>
+              <div class="arch-box-sub">
+                • <b>Masked Aadhaar:</b> SHA-256<br>
+                • <b>DPDP Act 2023:</b> Consent Logs<br>
+                • <b>EXIF GPS:</b> Privacy Scrubber
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <!-- BOTTOM BLUE BAR -->
+  <footer class="footer-bar">
+    <span class="slide-num">3</span>
+  </footer>
+
+</body>
+</html>

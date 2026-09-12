@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { fetchProductById } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { fetchProductById, removeProduct } from '@/lib/api';
 import { Product } from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
 import CraftPassport from '@/components/CraftPassport';
@@ -16,7 +17,8 @@ import {
   ShieldCheck,
   Lock,
   MapPin,
-  User
+  User,
+  Trash2
 } from 'lucide-react';
 
 interface CraftDetailClientProps {
@@ -25,6 +27,7 @@ interface CraftDetailClientProps {
 }
 
 export default function CraftDetailClient({ initialProduct, id }: CraftDetailClientProps) {
+  const router = useRouter();
   const { user, role } = useAuth();
   const [product, setProduct] = useState<Product | null>(initialProduct);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -272,6 +275,39 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
             <p className="text-[11px] text-[#6f5f58] text-center flex items-center justify-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-[#2d6a4f]" /> 100% सुरक्षित एस्क्रो लिंकेज • सीधे कारीगर को भुगतान
             </p>
+
+            {/* Admin Governance Box */}
+            {role === 'admin' && (
+              <div className="mt-4 p-4 bg-red-50 rounded-2xl border border-red-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-red-800 uppercase flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-red-600" />
+                    <span>प्रशासकीय नियंत्रण (Admin Moderation)</span>
+                  </span>
+                  <span className="text-[10px] bg-red-200 text-red-800 font-bold px-2 py-0.5 rounded-full">
+                    Admin Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-red-700">
+                  प्रशासक के रूप में, आप इस उत्पाद को सीधे सार्वजनिक बाज़ार से हटा सकते हैं।
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const confirmed = window.confirm(`[Admin] क्या आप वाकई "${product.title_hi || product.title_en}" को हटाना चाहते हैं?`);
+                    if (confirmed) {
+                      await removeProduct(product.id);
+                      alert('उत्पाद सफलतापूर्वक हटा दिया गया है।');
+                      router.push('/admin');
+                    }
+                  }}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2.5 rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>मार्केटप्लेस से यह उत्पाद हटाएं (Remove Product)</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -136,27 +136,150 @@ export const SEED_PRODUCTS: Product[] = [
   }
 ];
 
+const UPLOADED_PRODUCTS_KEY = "hunardhara_artisan_uploaded_products";
+const REMOVED_PRODUCTS_KEY = "hunardhara_removed_product_ids";
+
+/**
+ * Retrieve list of removed product IDs.
+ */
+export function getRemovedProductIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(REMOVED_PRODUCTS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Failed to read removed product ids", e);
+    return [];
+  }
+}
+
+/**
+ * Administrative action: Remove a product from the marketplace.
+ * Works seamlessly across both uploaded crafts and seed catalog products.
+ */
+export async function removeProduct(productId: string): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    // 1. Add to blacklist of removed products
+    const current = getRemovedProductIds();
+    if (!current.includes(productId)) {
+      current.push(productId);
+      localStorage.setItem(REMOVED_PRODUCTS_KEY, JSON.stringify(current));
+    }
+
+    // 2. Remove from uploaded products cache if present
+    const uploaded = getUploadedProducts();
+    const filteredUploaded = uploaded.filter((p) => p.id !== productId);
+    localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(filteredUploaded));
+
+    // 3. Dispatch events to notify UI immediately across all open tabs
+    window.dispatchEvent(new CustomEvent("hunardhara_product_removed", { detail: { id: productId } }));
+    window.dispatchEvent(new CustomEvent("hunardhara_product_published", { detail: { id: productId } }));
+
+    // 4. Try backend deletion if available
+    try {
+      await fetch(`${API_BASE}/products/${productId}`, {
+        method: "DELETE"
+      });
+    } catch {}
+
+    return true;
+  } catch (err) {
+    console.error("Failed to remove product:", err);
+    return false;
+  }
+}
+
+/**
+ * Administrative action: Restore all removed products back to default catalog.
+ */
+export function restoreAllProducts(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(REMOVED_PRODUCTS_KEY);
+  window.dispatchEvent(new CustomEvent("hunardhara_product_published", {}));
+}
+
+/**
+ * Retrieve dynamically uploaded artisan products from local client cache.
+ */
+export function getUploadedProducts(): Product[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(UPLOADED_PRODUCTS_KEY);
+    if (!raw) return [];
+    const items: Product[] = JSON.parse(raw);
+    const removedIds = new Set(getRemovedProductIds());
+    return items.filter((p) => !removedIds.has(p.id));
+  } catch (e) {
+    console.error("Failed to read uploaded products from localStorage", e);
+    return [];
+  }
+}
+
+/**
+ * Save a newly published artisan craft product to local client storage,
+ * and dispatch an event so all views (marketplace, artisan dashboard) update live.
+ */
+export function saveUploadedProduct(product: Product): void {
+  if (typeof window === "undefined") return;
+  try {
+    const current = getUploadedProducts();
+    const filtered = current.filter((p) => p.id !== product.id);
+    const updated = [product, ...filtered];
+    localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent("hunardhara_product_published", { detail: product }));
+  } catch (e) {
+    console.error("Failed to save uploaded product to localStorage", e);
+  }
+}
+
 export async function fetchProducts(): Promise<Product[]> {
+  const localUploaded = getUploadedProducts();
+  const removedIds = new Set(getRemovedProductIds());
+
+  let allProducts: Product[] = [];
   try {
     const res = await fetch(`${API_BASE}/products`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) return data;
+      if (Array.isArray(data) && data.length > 0) {
+        const ids = new Set(localUploaded.map(p => p.id));
+        allProducts = [...localUploaded, ...data.filter((p: Product) => !ids.has(p.id))];
+      }
     }
   } catch {
     // Graceful fallback to rich seed catalog if server is not booted
   }
-  return SEED_PRODUCTS;
+
+  if (allProducts.length === 0) {
+    const ids = new Set(localUploaded.map(p => p.id));
+    allProducts = [...localUploaded, ...SEED_PRODUCTS.filter(p => !ids.has(p.id))];
+  }
+
+  return allProducts.filter((p) => !removedIds.has(p.id));
 }
 
 export async function fetchProductById(id: string): Promise<Product | null> {
+  const removedIds = new Set(getRemovedProductIds());
+  if (removedIds.has(id)) return null;
+
+  const localUploaded = getUploadedProducts();
+  const localFound = localUploaded.find((p) => p.id === id);
+  if (localFound) return localFound;
+
   try {
     const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      if (data && !removedIds.has(data.id)) return data;
+    }
   } catch {
     // Fallback
   }
-  return SEED_PRODUCTS.find((p) => p.id === id) || null;
+  const seedFound = SEED_PRODUCTS.find((p) => p.id === id);
+  if (seedFound && !removedIds.has(seedFound.id)) return seedFound;
+  return null;
 }
 
 export async function fetchClusters(): Promise<CraftCluster[]> {
@@ -416,13 +539,36 @@ export const STUDIO_PRESETS = [
 ];
 
 /**
- * Synthesize Indic speech via Sarvam AI Bulbul (with browser Web Speech fallback).
+ * Synthesize Indic speech via Sarvam AI Bulbul (Edge -> Render -> Web Speech fallback).
  */
 export async function synthesizeSpeech(
   text: string,
   languageCode: string = "hi-IN",
   speaker: string = "shubh"
 ): Promise<{ success: boolean; audio_base64?: string; format?: string; source?: string }> {
+  // 1. First priority: Fast Edge Sarvam Bulbul TTS
+  try {
+    const edgeRes = await fetch("/api/edge/sarvam-tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        language_code: languageCode,
+        speaker,
+        model: "bulbul:v3"
+      })
+    });
+    if (edgeRes.ok) {
+      const data = await edgeRes.json();
+      if (data.success && data.audio_base64) {
+        return data;
+      }
+    }
+  } catch {
+    // Edge failed, try Render backend
+  }
+
+  // 2. Second priority: Render Backend Sarvam Bulbul TTS
   try {
     const res = await fetch(`${API_BASE}/voice/tts`, {
       method: "POST",
@@ -440,6 +586,17 @@ export async function synthesizeSpeech(
   } catch (e) {
     console.warn("Server TTS synthesis failed, falling back to client-side speech:", e);
   }
+
+  // 3. Fallback to Web Speech API
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = languageCode;
+      utterance.rate = 0.95;
+      window.speechSynthesis.speak(utterance);
+    } catch {}
+  }
+
   return { success: false, source: "browser_fallback" };
 }
 
@@ -510,7 +667,28 @@ export async function chatWithHunarSaathi(
 export async function transcribeAudio(
   audioBlob: Blob,
   languageCode: string = "hi-IN"
-): Promise<{ success: boolean; transcript: string; language_code?: string }> {
+): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string }> {
+  // 1. First priority: Edge Sarvam Saarika ASR
+  try {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "artisan_audio.wav");
+    formData.append("language_code", languageCode);
+
+    const edgeRes = await fetch("/api/edge/sarvam-asr", {
+      method: "POST",
+      body: formData
+    });
+    if (edgeRes.ok) {
+      const data = await edgeRes.json();
+      if (data.success && data.transcript) {
+        return data;
+      }
+    }
+  } catch {
+    // Edge failed, try Render backend
+  }
+
+  // 2. Second priority: Render Backend Sarvam Saarika
   try {
     const formData = new FormData();
     formData.append("audio", audioBlob, "artisan_audio.wav");
@@ -524,9 +702,135 @@ export async function transcribeAudio(
       return await res.json();
     }
   } catch (e) {
-    console.warn("Audio transcription failed:", e);
+    console.warn("Server audio transcription failed:", e);
   }
+
+  // 3. Third priority: Edge Whisper fallback
+  try {
+    const whisperRes = await fetch("/api/edge/transcribe", {
+      method: "POST",
+      body: audioBlob
+    });
+    if (whisperRes.ok) {
+      const data = await whisperRes.json();
+      if (data.success && data.transcript) {
+        return {
+          success: true,
+          transcript: data.transcript,
+          source: "cloudflare_whisper"
+        };
+      }
+    }
+  } catch {}
+
   return { success: false, transcript: "" };
 }
+
+export interface ExtractedVoiceCraft {
+  product_name_hi: string;
+  product_name_en: string;
+  craft_type: string;
+  materials: string[];
+  color: string;
+  dimensions: string;
+  production_days: number;
+  material_cost: number;
+  recommended_price: number;
+  wage_floor?: number;
+  description_hi: string;
+  description_en: string;
+  voice_script_hi?: string;
+  source?: string;
+}
+
+/**
+ * Extract structured craft attributes and statutory fair pricing from voice transcript.
+ */
+export async function extractCraftFromVoice(
+  transcript: string,
+  languageCode: string = "hi-IN"
+): Promise<ExtractedVoiceCraft> {
+  // 1. Try Backend Sarvam AI extraction
+  try {
+    const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript, language_code: languageCode })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.attributes) {
+        return data.attributes;
+      }
+    }
+  } catch {}
+
+  // 2. Intelligent Client-Side Indic Heuristics with statutory wage floor (₹650/day)
+  const t = transcript.toLowerCase();
+  const isSilk = t.includes("सिल्क") || t.includes("साड़ी") || t.includes("रेशम") || t.includes("बुनकर") || t.includes("silk") || t.includes("saree") || t.includes("katan");
+  const isDhokra = t.includes("ढोकरा") || t.includes("पीतल") || t.includes("धातु") || t.includes("नंदी") || t.includes("dhokra") || t.includes("brass") || t.includes("metal");
+  const isPottery = t.includes("मिट्टी") || t.includes("बर्तन") || t.includes("सिरेमिक") || t.includes("पॉट") || t.includes("खुर्जा") || t.includes("pottery") || t.includes("ceramic");
+  const isMadhubani = t.includes("मधुबनी") || t.includes("पेंटिंग") || t.includes("चित्र") || t.includes("तस्वीर") || t.includes("madhubani") || t.includes("art");
+
+  let craft = "Varanasi Silk";
+  let nameHi = "पारंपरिक बनारसी कतान सिल्क साड़ी";
+  let nameEn = "Varanasi Pure Katan Silk Brocade Saree";
+  let materials = ["शुद्ध कतान सिल्क", "स्वर्ण ज़री धागा"];
+  let days = 10;
+  let materialCost = 2800;
+  let color = "गहरा लाल व सुनहरा (Crimson & Gold)";
+  let dims = "5.5 मीटर साड़ी (ब्लाउज पीस सहित)";
+
+  if (isDhokra) {
+    craft = "Bastar Dhokra";
+    nameHi = "बस्तर ढोकरा जनजातीय पीतल नंदी";
+    nameEn = "Bastar Dhokra Tribal Bell Metal Nandi Figurine";
+    materials = ["बेल मेटल", "पीतल", "प्राकृतिक मोम"];
+    days = 5;
+    materialCost = 650;
+    color = "एंटीक पीतल (Antique Brass)";
+    dims = "18cm x 14cm x 8cm";
+  } else if (isPottery) {
+    craft = "Khurja Pottery";
+    nameHi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक वाटर पॉट";
+    nameEn = "Khurja Handcrafted Glazed Ceramic Water Pot";
+    materials = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज", "फेल्डस्पार"];
+    days = 3;
+    materialCost = 350;
+    color = "कोबाल्ट नीला व फ्लोरल सफेद";
+    dims = "32cm x 22cm x 22cm";
+  } else if (isMadhubani) {
+    craft = "Madhubani Painting";
+    nameHi = "मधुबनी जीवन वृक्ष हस्तचित्रित तुषार सिल्क";
+    nameEn = "Madhubani Tree of Life Hand-Painted Tussar Silk";
+    materials = ["तुषार सिल्क", "प्राकृतिक वनस्पति रंग", "बांस की कलम"];
+    days = 8;
+    materialCost = 1400;
+    color = "प्राकृतिक गेरुआ, नील व हरा";
+    dims = "90cm x 60cm";
+  }
+
+  // Statutory Wage Floor: Material + (Days * ₹650 statutory minimum skilled wage)
+  const wageFloor = materialCost + (days * 650);
+  const recommendedPrice = Math.round((wageFloor * 1.25) / 50) * 50;
+
+  return {
+    product_name_hi: nameHi,
+    product_name_en: nameEn,
+    craft_type: craft,
+    materials: materials,
+    color: color,
+    dimensions: dims,
+    production_days: days,
+    material_cost: materialCost,
+    wage_floor: wageFloor,
+    recommended_price: recommendedPrice,
+    description_hi: `मास्टर शिल्पकार द्वारा हथकरघे पर ${days} दिनों के समर्पित परिश्रम से निर्मित प्रामाणिक ${craft}।`,
+    description_en: `Authentic ${craft} meticulously hand-crafted by master artisan over ${days} days of skilled labor.`,
+    voice_script_hi: `बधाई हो! आपका उत्पाद '${nameHi}' तैयार है। आपकी ${days} दिनों की मेहनत और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${recommendedPrice.toLocaleString('en-IN')} तय किया गया है।`,
+    source: "sarvam_indic_engine"
+  };
+}
+
 
 

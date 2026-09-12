@@ -2,15 +2,28 @@
 
 import Link from 'next/link';
 import { Product } from '@/lib/types';
-import { ArrowUpRight, MapPin, User } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { removeProduct } from '@/lib/api';
+import { ArrowUpRight, MapPin, User, Trash2 } from 'lucide-react';
 
 interface CraftCardProps {
   product: Product;
 }
 
 export default function CraftCard({ product }: CraftCardProps) {
+  const { role } = useAuth();
+
+  const handleAdminRemove = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const confirmed = window.confirm(`[Admin] क्या आप वाकई "${product.title_hi || product.title_en}" को मार्केटप्लेस से हटाना चाहते हैं?`);
+    if (confirmed) {
+      await removeProduct(product.id);
+    }
+  };
+
   return (
-    <div className="group bg-white rounded-3xl border border-[#e6ded3] bento-shadow hover:border-[#c85a32] transition-all duration-300 flex flex-col overflow-hidden">
+    <div className="group bg-white rounded-3xl border border-[#e6ded3] bento-shadow hover:border-[#c85a32] transition-all duration-300 flex flex-col overflow-hidden relative">
       {/* Product Image */}
       <Link
         href={`/craft/${product.id}`}
@@ -32,11 +45,32 @@ export default function CraftCard({ product }: CraftCardProps) {
           </span>
         </div>
 
-        {/* GI Tag Badge if certified */}
-        {product.gi_certified && (
-          <div className="absolute top-3.5 right-3.5">
+        {/* Right Badges: Admin Remove button OR GI Tag */}
+        <div className="absolute top-3.5 right-3.5 flex items-center gap-1.5">
+          {role === 'admin' && (
+            <button
+              type="button"
+              onClick={handleAdminRemove}
+              className="p-1.5 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-md transition-transform hover:scale-110 cursor-pointer z-10"
+              title="[Admin] उत्पाद हटाएं"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {product.gi_certified && (
             <span className="text-[10px] font-bold text-[#c85a32] uppercase tracking-wider bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-full border border-[#e6ded3] shadow-xs">
               GI Tagged
+            </span>
+          )}
+        </div>
+
+        {/* Live Upload Badge for Presentation Demo */}
+        {product.id.startsWith('prod-live-') && (
+          <div className="absolute bottom-3 left-3.5">
+            <span className="text-[10px] font-extrabold text-white bg-[#1b4332] px-2.5 py-1 rounded-full shadow-md flex items-center gap-1 border border-[#e9a83a]/40">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#e9a83a] animate-ping" />
+              <span>✨ Live Upload</span>
             </span>
           </div>
         )}

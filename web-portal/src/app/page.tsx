@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
-import { SEED_PRODUCTS } from '@/lib/api';
+import { SEED_PRODUCTS, fetchProducts } from '@/lib/api';
+import { Product } from '@/lib/types';
 import CraftCard from '@/components/CraftCard';
 import {
   Search,
@@ -14,12 +15,36 @@ import {
   Camera,
   Building2,
   MapPin,
-  CheckCircle2
+  CheckCircle2,
+  Sparkles
 } from 'lucide-react';
 
 export default function MarketplacePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCraft, setSelectedCraft] = useState('ALL');
+  const [products, setProducts] = useState<Product[]>(SEED_PRODUCTS);
+
+  useEffect(() => {
+    const loadCatalog = async () => {
+      try {
+        const items = await fetchProducts();
+        if (items && items.length > 0) {
+          setProducts(items);
+        }
+      } catch (e) {
+        console.warn('Catalog load note:', e);
+      }
+    };
+    loadCatalog();
+
+    const handleProductAdded = () => {
+      loadCatalog();
+    };
+    window.addEventListener('hunardhara_product_published', handleProductAdded);
+    return () => {
+      window.removeEventListener('hunardhara_product_published', handleProductAdded);
+    };
+  }, []);
 
   const craftCategories = [
     'ALL',
@@ -31,10 +56,11 @@ export default function MarketplacePage() {
   ];
 
   const filteredProducts = useMemo(() => {
-    return SEED_PRODUCTS.filter((p) => {
+    return products.filter((p) => {
       const matchesSearch =
         p.title_en.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.description_en.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.title_hi && p.title_hi.toLowerCase().includes(searchQuery.toLowerCase())) ||
         p.materials.some((m) => m.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (p.artisan_state && p.artisan_state.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -42,7 +68,7 @@ export default function MarketplacePage() {
 
       return matchesSearch && matchesCraft;
     });
-  }, [searchQuery, selectedCraft]);
+  }, [products, searchQuery, selectedCraft]);
 
   return (
     <div className="space-y-14 sm:space-y-20 pb-20">

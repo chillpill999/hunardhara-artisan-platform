@@ -130,3 +130,70 @@ def list_indic_speakers():
         "default": "shubh"
     }
 
+
+class ExtractCatalogRequest(BaseModel):
+    transcript: str = Field(..., description="Artisan spoken voice description in Hindi/Indic language")
+    language_code: Optional[str] = Field("hi-IN", description="Language code")
+
+
+@router.post("/extract-catalog", summary="Extract Craft Attributes via Sarvam AI")
+def extract_catalog_from_voice(req: ExtractCatalogRequest):
+    """
+    Parses spoken artisan description into 7 structured craft attributes,
+    calculates statutory wage floor, and prepares bilingual listing details.
+    """
+    return sarvam_service.extract_craft_attributes(
+        transcript=req.transcript,
+        language_code=req.language_code or "hi-IN"
+    )
+
+
+@router.post("/speak-catalog", summary="End-to-End Speak-to-Catalog via Sarvam AI")
+async def speak_to_catalog(
+    audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a / .webm)"),
+    language_code: str = Form("hi-IN", description="Language code")
+):
+    """
+    Complete Speak-to-Catalog Pipeline:
+    1. Transcribes audio via Sarvam Saarika ASR
+    2. Extracts structured attributes & fair pricing via Sarvam 105B LLM
+    3. Synthesizes confirmation audio via Sarvam Bulbul TTS
+    """
+    audio_bytes = await audio.read()
+    if not audio_bytes or len(audio_bytes) < 10:
+        return {"success": False, "error": "Audio file empty"}
+
+    # 1. Transcribe
+    asr_res = sarvam_service.transcribe_speech(
+        audio_bytes=audio_bytes,
+        filename=audio.filename or "recording.wav",
+        language_code=language_code
+    )
+    transcript = asr_res.get("transcript", "")
+    if not transcript:
+        return {"success": False, "error": "Speech could not be recognized", "details": asr_res}
+
+    # 2. Extract
+    extract_res = sarvam_service.extract_craft_attributes(
+        transcript=transcript,
+        language_code=language_code
+    )
+    attributes = extract_res.get("attributes", {})
+
+    # 3. Synthesize voice confirmation
+    voice_script = attributes.get("voice_script_hi", f"आपका उत्पाद {attributes.get('product_name_hi', '')} तैयार है।")
+    tts_res = sarvam_service.synthesize_speech(
+        text=voice_script,
+        language_code=language_code,
+        speaker="shubh"
+    )
+
+    return {
+        "success": True,
+        "transcript": transcript,
+        "attributes": attributes,
+        "confirmation_audio_base64": tts_res.get("audio_base64"),
+        "source": "sarvam_ai_suite"
+    }
+
+

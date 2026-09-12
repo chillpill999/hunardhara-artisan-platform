@@ -272,6 +272,120 @@ class SarvamService:
             logger.error(f"Sarvam chat error: {e}")
             return {"success": False, "reply": "", "error": str(e)}
 
+    def extract_craft_attributes(self, transcript: str, language_code: str = "hi-IN") -> Dict[str, Any]:
+        """
+        Extracts structured craft attributes and computes fair price recommendation
+        from an artisan voice transcript using Sarvam 105B LLM.
+        """
+        api_key = settings.SARVAM_API_KEY
+        prompt = (
+            "You are an expert Indian Handicraft Cataloging AI for the Ministry of Social Justice and Empowerment (MoSJE).\n"
+            "Analyze the artisan's voice transcript and extract key product attributes into a strict JSON object.\n"
+            f"Transcript: \"{transcript}\"\n\n"
+            "Return ONLY valid JSON with these exact keys:\n"
+            "{\n"
+            '  "product_name_hi": "सटीक हिंदी नाम",\n'
+            '  "product_name_en": "Accurate English Title",\n'
+            '  "craft_type": "Specific Craft (e.g. Varanasi Silk, Bastar Dhokra, Khurja Pottery, Madhubani Painting, Channapatna Toys)",\n'
+            '  "materials": ["मुख्य सामग्री 1", "सामग्री 2"],\n'
+            '  "color": "रंग",\n'
+            '  "dimensions": "आकार या माप (e.g. 5.5m x 1.2m)",\n'
+            '  "production_days": 10,\n'
+            '  "material_cost": 2500,\n'
+            '  "recommended_price": 6000,\n'
+            '  "description_hi": "2-line descriptive summary in Hindi",\n'
+            '  "description_en": "2-line descriptive summary in English",\n'
+            '  "voice_script_hi": "बधाई हो! आपका उत्पाद तैयार है। इसका उचित बिक्री मूल्य... रुपये तय किया गया है।"\n'
+            "}\n"
+            "Ensure material_cost and production_days are numbers. Compute recommended_price as: material_cost + (production_days * 650) + 15% margin.\n"
+            "Do NOT include markdown formatting or backticks, return raw JSON only."
+        )
+
+        if api_key:
+            try:
+                res = self.chat_completion(
+                    user_message=prompt,
+                    system_prompt="You are a strict JSON-only API. Never output preamble, explanation, or markdown backticks."
+                )
+                if res.get("success") and res.get("reply"):
+                    reply = res["reply"]
+                    # Extract JSON substring if needed
+                    json_match = re.search(r"\{[\s\S]*\}", reply)
+                    if json_match:
+                        parsed = json.loads(json_match.group(0))
+                        # Enforce statutory wage floor: material_cost + (days * 650)
+                        mat_cost = float(parsed.get("material_cost", 2000))
+                        days = int(parsed.get("production_days", 7))
+                        wage_floor = mat_cost + (days * 650.0)
+                        rec_price = max(float(parsed.get("recommended_price", wage_floor * 1.2)), wage_floor * 1.15)
+                        parsed["material_cost"] = int(mat_cost)
+                        parsed["production_days"] = days
+                        parsed["recommended_price"] = int(round(rec_price, -1))
+                        parsed["wage_floor"] = int(round(wage_floor, -1))
+                        parsed["source"] = "sarvam_105b"
+                        return {"success": True, "attributes": parsed}
+            except Exception as e:
+                logger.warning(f"Sarvam LLM extraction failed: {e}, using heuristic fallback")
+
+        # Deterministic Indic Fallback parser
+        t_lower = transcript.lower()
+        is_silk = any(k in t_lower for k in ["सिल्क", "साड़ी", "रेशम", "बुनकर", "silk", "saree", "katan", "banarasi"])
+        is_dhokra = any(k in t_lower for k in ["ढोकरा", "पीतल", "धातु", "नंदी", "dhokra", "brass", "bell metal", "tribal"])
+        is_pottery = any(k in t_lower for k in ["मिट्टी", "बर्तन", "सिरेमिक", "पॉट", "खुर्जा", "pottery", "ceramic"])
+
+        if is_silk:
+            craft = "Varanasi Silk"
+            name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी"
+            name_en = "Varanasi Pure Katan Silk Handloom Saree"
+            mat = ["शुद्ध कतान सिल्क", "स्वर्ण ज़री धागा"]
+            days = 10
+            mat_cost = 2800
+        elif is_dhokra:
+            craft = "Bastar Dhokra"
+            name_hi = "बस्तर ढोकरा जनजातीय नंदी प्रतिमा"
+            name_en = "Bastar Dhokra Tribal Bell Metal Nandi Figurine"
+            mat = ["बेल मेटल", "पीतल", "प्राकृतिक मोम"]
+            days = 5
+            mat_cost = 650
+        elif is_pottery:
+            craft = "Khurja Pottery"
+            name_hi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक वाटर पॉट"
+            name_en = "Khurja Handcrafted Glazed Ceramic Water Pot"
+            mat = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज"]
+            days = 3
+            mat_cost = 350
+        else:
+            craft = "Indian Traditional Handicraft"
+            name_hi = "हस्तनिर्मित पारंपरिक भारतीय शिल्प"
+            name_en = "Authentic Indian Handcrafted Art"
+            mat = ["प्राकृतिक सामग्री"]
+            days = 6
+            mat_cost = 1200
+
+        wage_floor = mat_cost + (days * 650.0)
+        rec_price = int(round(wage_floor * 1.25, -1))
+
+        return {
+            "success": True,
+            "attributes": {
+                "product_name_hi": name_hi,
+                "product_name_en": name_en,
+                "craft_type": craft,
+                "materials": mat,
+                "color": "पारंपरिक प्राकृतिक रंग",
+                "dimensions": "मानक हस्तशिल्प आकार",
+                "production_days": days,
+                "material_cost": mat_cost,
+                "wage_floor": int(round(wage_floor, -1)),
+                "recommended_price": rec_price,
+                "description_hi": f"हस्तशिल्पकार द्वारा {days} दिनों के समर्पित परिश्रम से निर्मित प्रामाणिक {craft}।",
+                "description_en": f"Authentic {craft} meticulously created by master artisan over {days} days of skilled craftsmanship.",
+                "voice_script_hi": f"बधाई हो! आपका उत्पाद {name_hi} तैयार है। आपकी {days} दिनों की मेहनत और कच्चे माल को जोड़कर इसका उचित बिक्री मूल्य ₹{rec_price} तय किया गया है।",
+                "source": "indic_heuristics_fallback"
+            }
+        }
+
 
 sarvam_service = SarvamService()
+
 

@@ -189,6 +189,104 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       }
     }
 
+    // 4. Edge Sarvam Bulbul TTS Endpoint
+    if (pathname === '/api/edge/sarvam-tts' && request.method === 'POST') {
+      try {
+        const body: any = await request.json();
+        const text = (body.text || '').trim();
+        const lang = body.language_code || 'hi-IN';
+        const speaker = body.speaker || 'shubh';
+        const model = body.model || 'bulbul:v3';
+
+        const sarvamRes = await fetch('https://api.sarvam.ai/text-to-speech', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'api-subscription-key': 'sk_u4pghxvt_p0vQqzymYE21Skp2UKwr7S66',
+          },
+          body: JSON.stringify({
+            inputs: [text.slice(0, 500)],
+            target_language_code: lang,
+            speaker: speaker,
+            pitch: 0,
+            pace: 1.0,
+            loudness: 1.0,
+            speech_sample_rate: 22050,
+            enable_preprocessing: true,
+            model: model,
+          }),
+        });
+
+        if (sarvamRes.ok) {
+          const sData: any = await sarvamRes.json();
+          const audios = sData.audios || [];
+          return new Response(
+            JSON.stringify({
+              success: true,
+              audio_base64: audios[0] || '',
+              format: 'wav',
+              source: 'sarvam_ai_edge',
+            }),
+            { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+          );
+        }
+        throw new Error(`Sarvam TTS status ${sarvamRes.status}`);
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ success: false, error: err?.message || String(err) }),
+          { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // 5. Edge Sarvam Saarika ASR Endpoint
+    if (pathname === '/api/edge/sarvam-asr' && request.method === 'POST') {
+      try {
+        const formData = await request.formData();
+        const file = formData.get('audio') as File;
+        const lang = (formData.get('language_code') as string) || 'hi-IN';
+
+        if (!file) {
+          return new Response(JSON.stringify({ success: false, error: 'No audio file' }), {
+            status: 400,
+            headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const sarvamForm = new FormData();
+        sarvamForm.append('file', file, 'artisan_recording.wav');
+        sarvamForm.append('model', 'saarika:v2.5');
+        sarvamForm.append('language_code', lang);
+
+        const sRes = await fetch('https://api.sarvam.ai/speech-to-text', {
+          method: 'POST',
+          headers: {
+            'api-subscription-key': 'sk_u4pghxvt_p0vQqzymYE21Skp2UKwr7S66',
+          },
+          body: sarvamForm,
+        });
+
+        if (sRes.ok) {
+          const sData: any = await sRes.json();
+          return new Response(
+            JSON.stringify({
+              success: true,
+              transcript: sData.transcript || '',
+              language_code: sData.language_code || lang,
+              source: 'sarvam_saarika_edge',
+            }),
+            { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+          );
+        }
+        throw new Error(`Sarvam ASR status ${sRes.status}`);
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ success: false, error: err?.message || String(err) }),
+          { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     // =========================================================================
     // ROUTE PROTECTION & STATIC ASSET SERVING
     // =========================================================================
@@ -232,6 +330,16 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
         );
         return Response.redirect(loginUrl.toString(), 302);
       }
+    }
+
+    // Dynamic craft detail routes (e.g. newly published products like /craft/prod-live-*)
+    if (pathname.startsWith('/craft/') && !pathname.includes('.')) {
+      const res = await env.ASSETS.fetch(request);
+      if (res.status === 404) {
+        const fallbackReq = new Request(new URL('/craft/prod-001.html', url.origin), request);
+        return env.ASSETS.fetch(fallbackReq);
+      }
+      return res;
     }
 
     // Pass through to static assets
