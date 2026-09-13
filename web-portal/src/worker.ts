@@ -13,6 +13,59 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// Defensive Security Headers (OWASP A05:2021 & Clickjacking Protection)
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Frame-Options': 'SAMEORIGIN',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=()',
+  'X-XSS-Protection': '1; mode=block',
+};
+
+function withSecurityHeaders(res: Response): Response {
+  const newHeaders = new Headers(res.headers);
+  for (const [key, val] of Object.entries(SECURITY_HEADERS)) {
+    if (!newHeaders.has(key)) {
+      newHeaders.set(key, val);
+    }
+  }
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: newHeaders,
+  });
+}
+
+// In-memory sliding window rate limiter for edge AI endpoints (OWASP A04:2021 DoS mitigation)
+const ipRateLimits = new Map<string, { count: number; resetTime: number }>();
+
+function checkRateLimit(clientIp: string, maxRequests = 45, windowMs = 60000): boolean {
+  const now = Date.now();
+  const record = ipRateLimits.get(clientIp);
+  if (!record || now > record.resetTime) {
+    ipRateLimits.set(clientIp, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+  if (record.count >= maxRequests) {
+    return false;
+  }
+  record.count += 1;
+  return true;
+}
+
+// Safe JWT payload inspector for edge validation
+function parseJwtPayload(token: string): any {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = atob(base64);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 const ARTISAN_SYSTEM_PROMPT = `आप 'हुनर साथी' (Hunar Saathi) हैं - हुनरधारा (Hunardhara) मंच के समर्पित AI सहायक, जो भारतीय ग्रामीण एवं पारंपरिक शिल्पकारों (बुनकर, मूर्तिकार, कुम्हार, धातुशिल्पी आदि) के कल्याण और उत्थान के लिए समर्पित हैं।
 नियम व ज्ञान:
 1. हमेशा अत्यंत आदरपूर्ण, सरल, और आत्मीय हिंदी में 2 से 4 वाक्यों में उत्तर दें।
@@ -31,8 +84,17 @@ export default {
     }
 
     // =========================================================================
-    // CLOUDFLARE WORKERS AI EDGE ENDPOINTS (Free 10K neurons/day)
+    // CLOUDFLARE WORKERS AI EDGE ENDPOINTS (Free 10K neurons/day with Rate Limiting)
     // =========================================================================
+    if (pathname.startsWith('/api/edge/')) {
+      const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '127.0.0.1';
+      if (!checkRateLimit(clientIp, 45, 60000)) {
+        return withSecurityHeaders(new Response(
+          JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED: Too many AI requests. Please wait 1 minute.' }),
+          { status: 429, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Retry-After': '60' } }
+        ));
+      }
+    }
 
     // 1. Edge Chat Endpoint (Llama 3.1 8B Instruct)
     if (pathname === '/api/edge/chat' && request.method === 'POST') {
@@ -457,7 +519,8 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       }
     }
 
-    // Pass through to static assets
-    return env.ASSETS.fetch(request);
+    // Pass through to static assets with security headers attached
+    const assetRes = await env.ASSETS.fetch(request);
+    return withSecurityHeaders(assetRes);
   },
 };

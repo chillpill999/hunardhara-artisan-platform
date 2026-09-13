@@ -77,21 +77,20 @@ app = FastAPI(
 )
 
 # CORS Middleware Configuration (Supporting Next.js 15 Web & Flutter Mobile Clients)
-origins = [
-    "http://localhost:3000",      # Next.js 15 Web Frontend
+trusted_origins = [
+    "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://localhost:8000",      # Swagger UI
+    "http://localhost:8000",
     "http://127.0.0.1:8000",
-    "http://localhost",
-    "http://10.0.2.2:8000",       # Android Emulator loopback
-    "*",                          # Allow mobile app clients
+    "https://hunardhara.technogamerzthenextlevel.workers.dev",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # Broad for hackathon preview & mobile client access
+    allow_origins=trusted_origins,
+    allow_origin_regex=r"https://.*\.workers\.dev",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 

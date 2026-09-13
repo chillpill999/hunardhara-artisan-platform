@@ -85,6 +85,7 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     Decodes and validates a signed JWT access token.
     Supports both local SECRET_KEY and unverified inspection when offline mock fallback is active.
     """
+    # 1. Try local application SECRET_KEY
     try:
         payload = jwt.decode(
             token,
@@ -94,12 +95,23 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         )
         return payload
     except jwt.PyJWTError:
-        # Check if it is a Supabase JWT or test token
+        pass
+
+    # 2. Try Supabase JWT Secret if configured (MUST verify signature)
+    supabase_secret = getattr(settings, "SUPABASE_JWT_SECRET", None) or os.getenv("SUPABASE_JWT_SECRET")
+    if supabase_secret:
         try:
-            unverified = jwt.decode(token, options={"verify_signature": False})
-            return unverified
-        except Exception:
-            return None
+            payload = jwt.decode(
+                token,
+                supabase_secret,
+                algorithms=["HS256"],
+                options={"verify_signature": True, "verify_aud": False}
+            )
+            return payload
+        except jwt.PyJWTError:
+            pass
+
+    return None
 
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser:

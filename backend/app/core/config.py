@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     AADHAAR_PEPPER_KEY: str = "mosje_sovereign_aadhaar_pepper_secret_2026"
+    SUPABASE_JWT_SECRET: Optional[str] = os.getenv("SUPABASE_JWT_SECRET", None)
 
     # Database Configuration
     # Defaults to SQLite for immediate local testing if Postgres is not configured
