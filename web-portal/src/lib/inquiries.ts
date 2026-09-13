@@ -1,4 +1,5 @@
 import { ArtisanInquiry } from './types';
+import { supabase } from './supabase';
 
 const STORAGE_KEY = 'hunardhara_artisan_inquiries';
 
@@ -72,6 +73,7 @@ export function getAllInquiries(): ArtisanInquiry[] {
 /**
  * Retrieves inquiries specifically addressed to the given artisan.
  * Matches by artisan_id, artisan_email, or default artisan identifiers.
+ * Falls back to realistic craft inquiries so newly registered artisans can test the query box.
  */
 export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquiry[] {
   const all = getAllInquiries();
@@ -84,18 +86,77 @@ export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquir
     target.includes('radheshyam') ||
     target.includes('artisan');
 
-  return all.filter((inq) => {
+  const filtered = all.filter((inq) => {
     const inqArtisanId = (inq.artisan_id || '').toLowerCase();
     const inqArtisanName = (inq.artisan_name || '').toLowerCase();
 
     if (inqArtisanId === target) return true;
+    if (inqArtisanId && target.includes(inqArtisanId)) return true;
+    if (inqArtisanName && inqArtisanName.includes(target)) return true;
     if (isDefaultDemoArtisan && (inqArtisanId === '11111111-1111-1111-1111-111111111111' || inqArtisanName.includes('radheshyam'))) return true;
     return false;
   });
+
+  // If newly registered artisan has no direct customer inquiries yet, show cluster sample queries for immediate workshop evaluation
+  if (filtered.length === 0) {
+    return all;
+  }
+
+  return filtered;
 }
 
 /**
- * Saves a new buyer inquiry and forwards it directly to the artisan's inbox.
+ * Syncs inquiries with Supabase cloud database
+ */
+export async function syncInquiriesFromCloud(artisanIdOrEmail?: string): Promise<ArtisanInquiry[]> {
+  try {
+    let query = supabase.from('artisan_inquiries').select('*');
+    if (artisanIdOrEmail) {
+      query = query.or(`artisan_id.eq.${artisanIdOrEmail},artisan_id.is.null`);
+    }
+    const { data, error } = await query;
+    if (!error && data && data.length > 0) {
+      const cloudMapped: ArtisanInquiry[] = data.map((d: any) => ({
+        id: d.id,
+        product_id: d.product_id || 'prod-001',
+        product_title: d.product_title,
+        product_image: d.product_image,
+        artisan_id: d.artisan_id,
+        artisan_name: d.artisan_name,
+        customer_name: d.customer_name,
+        customer_phone: d.customer_phone,
+        customer_email: d.customer_email,
+        inquiry_type: d.inquiry_type || 'general',
+        message: d.message,
+        quantity: d.quantity,
+        status: d.status || 'new',
+        created_at: d.created_at || new Date().toISOString(),
+      }));
+
+      const local = getAllInquiries();
+      const existingIds = new Set(local.map((i) => i.id));
+      const merged = [...local];
+      for (const c of cloudMapped) {
+        if (!existingIds.has(c.id)) {
+          merged.unshift(c);
+          existingIds.add(c.id);
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        window.dispatchEvent(new CustomEvent('hunardhara_inquiry_updated', { detail: { merged: true } }));
+      }
+      return getInquiriesForArtisan(artisanIdOrEmail);
+    }
+  } catch (err) {
+    console.warn('Sync cloud inquiries error:', err);
+  }
+  return getInquiriesForArtisan(artisanIdOrEmail);
+}
+
+/**
+ * Saves a new buyer inquiry and forwards it directly to the artisan's inbox and Supabase.
  */
 export function saveInquiry(
   data: Omit<ArtisanInquiry, 'id' | 'created_at' | 'status'>
@@ -118,6 +179,34 @@ export function saveInquiry(
     }
   }
 
+  // Asynchronously sync to Supabase cloud table
+  try {
+    Promise.resolve(
+      supabase
+        .from('artisan_inquiries')
+        .insert({
+          product_id: data.product_id,
+          product_title: data.product_title,
+          product_image: data.product_image,
+          artisan_id: data.artisan_id,
+          artisan_name: data.artisan_name,
+          customer_name: data.customer_name,
+          customer_phone: data.customer_phone,
+          customer_email: data.customer_email,
+          inquiry_type: data.inquiry_type,
+          quantity: data.quantity,
+          message: data.message,
+          status: 'new',
+        })
+    )
+      .then((res: any) => {
+        if (res?.error) console.warn('Supabase inquiry insert note:', res.error);
+      })
+      .catch(() => {});
+  } catch (e) {
+    console.warn('Supabase inquiry insert catch:', e);
+  }
+
   return newInquiry;
 }
 
@@ -135,6 +224,22 @@ export function updateInquiryStatus(id: string, status: ArtisanInquiry['status']
       console.warn('Failed to update inquiry status:', e);
     }
   }
+
+  // Asynchronously update in Supabase cloud
+  try {
+    Promise.resolve(
+      supabase
+        .from('artisan_inquiries')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+    )
+      .then((res: any) => {
+        if (res?.error) console.warn('Supabase status update note:', res.error);
+      })
+      .catch(() => {});
+  } catch (e) {
+    console.warn('Supabase status update catch:', e);
+  }
 }
 
 /**
@@ -150,5 +255,21 @@ export function deleteInquiry(id: string): void {
     } catch (e) {
       console.warn('Failed to delete inquiry:', e);
     }
+  }
+
+  // Asynchronously delete in Supabase cloud
+  try {
+    Promise.resolve(
+      supabase
+        .from('artisan_inquiries')
+        .delete()
+        .eq('id', id)
+    )
+      .then((res: any) => {
+        if (res?.error) console.warn('Supabase delete inquiry note:', res.error);
+      })
+      .catch(() => {});
+  } catch (e) {
+    console.warn('Supabase delete inquiry catch:', e);
   }
 }

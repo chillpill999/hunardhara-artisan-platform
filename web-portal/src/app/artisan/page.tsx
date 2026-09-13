@@ -7,7 +7,7 @@ import HunarSaathi from '@/components/HunarSaathi';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
 import { getUploadedProducts } from '@/lib/api';
-import { getInquiriesForArtisan, updateInquiryStatus, deleteInquiry } from '@/lib/inquiries';
+import { getInquiriesForArtisan, syncInquiriesFromCloud, updateInquiryStatus, deleteInquiry, saveInquiry } from '@/lib/inquiries';
 import { ArtisanInquiry } from '@/lib/types';
 import {
   Palette,
@@ -93,13 +93,16 @@ export default function ArtisanPortalPage() {
     return () => window.removeEventListener('hunardhara_product_published', syncArtisanProducts);
   }, []);
 
-  // Sync inquiries specifically addressed to this artisan
+  // Sync inquiries specifically addressed to this artisan from cloud and local cache
   useEffect(() => {
-    const syncInquiries = () => {
+    let isMounted = true;
+    const syncInquiries = async () => {
       try {
         const artisanId = user?.id || user?.email || '11111111-1111-1111-1111-111111111111';
-        const inqs = getInquiriesForArtisan(artisanId);
-        setInquiries(inqs);
+        const inqs = await syncInquiriesFromCloud(artisanId);
+        if (isMounted) {
+          setInquiries(inqs);
+        }
       } catch (e) {
         console.warn('Sync inquiries error:', e);
       }
@@ -109,10 +112,32 @@ export default function ArtisanPortalPage() {
     window.addEventListener('hunardhara_new_inquiry', syncInquiries);
     window.addEventListener('hunardhara_inquiry_updated', syncInquiries);
     return () => {
+      isMounted = false;
       window.removeEventListener('hunardhara_new_inquiry', syncInquiries);
       window.removeEventListener('hunardhara_inquiry_updated', syncInquiries);
     };
   }, [user]);
+
+  const handleSimulateInquiry = () => {
+    const sampleProduct = artisanProducts[0] || {
+      id: 'prod-001',
+      title: 'Varanasi Pure Katan Silk Saree',
+      image: '/static/studio/varanasi_silk.jpg'
+    };
+    saveInquiry({
+      product_id: sampleProduct.id,
+      product_title: sampleProduct.titleHi || sampleProduct.title,
+      product_image: sampleProduct.image,
+      artisan_id: user?.id || '11111111-1111-1111-1111-111111111111',
+      artisan_name: profile?.full_name || 'राधेश्याम अंसारी',
+      customer_name: 'अपूर्वा मेहता (Apurva Mehta, Mumbai)',
+      customer_phone: '+91 98112 34567',
+      customer_email: 'apurva.mehta@gmail.com',
+      inquiry_type: 'customization',
+      quantity: 1,
+      message: 'नमस्ते जी! मुझे इस शिल्प की बनावट बहुत सुंदर लगी। क्या इसमें सिल्वर ज़री के साथ कस्टमाइज़ेशन संभव है? मुझे 10 दिनों में चाहिए।',
+    });
+  };
 
   const newInquiriesCount = inquiries.filter((i) => i.status === 'new').length;
   const filteredInquiries = inquiries.filter((i) => {
@@ -230,20 +255,20 @@ export default function ArtisanPortalPage() {
           </button>
           <button
             onClick={() => setActiveTab('inquiries')}
-            className={`flex-1 min-w-[75px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center whitespace-nowrap flex items-center justify-center gap-1 ${
+            className={`flex-1 min-w-[95px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center whitespace-nowrap flex items-center justify-center gap-1.5 ${
               activeTab === 'inquiries'
-                ? 'bg-white text-[#1b4332] shadow-xs'
+                ? 'bg-[#1b4332] text-white shadow-xs'
                 : 'text-[#6f5f58] hover:text-[#231f1e]'
             }`}
           >
             <MessageSquareQuote className="w-3.5 h-3.5" />
-            <span>पूछताछ</span>
+            <span>पूछताछ बॉक्स (Query Box)</span>
             {newInquiriesCount > 0 ? (
-              <span className="bg-[#c85a32] text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+              <span className="bg-[#c85a32] text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full animate-pulse">
                 {newInquiriesCount}
               </span>
             ) : (
-              <span className="text-[10px] text-[#6f5f58]">({inquiries.length})</span>
+              <span className="text-[10px] opacity-75">({inquiries.length})</span>
             )}
           </button>
           <button
@@ -578,37 +603,48 @@ export default function ArtisanPortalPage() {
                   </p>
                 </div>
 
-                {/* Filter Controls */}
-                <div className="flex items-center bg-[#faf7f2] p-1 rounded-xl border border-[#e6ded3] self-start sm:self-auto">
+                {/* Controls & Quick Test */}
+                <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                  <div className="flex items-center bg-[#faf7f2] p-1 rounded-xl border border-[#e6ded3]">
+                    <button
+                      onClick={() => setInquiryFilter('all')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        inquiryFilter === 'all'
+                          ? 'bg-white text-[#1b4332] shadow-xs'
+                          : 'text-[#6f5f58] hover:text-[#231f1e]'
+                      }`}
+                    >
+                      सभी ({inquiries.length})
+                    </button>
+                    <button
+                      onClick={() => setInquiryFilter('new')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        inquiryFilter === 'new'
+                          ? 'bg-[#c85a32] text-white shadow-xs'
+                          : 'text-[#6f5f58] hover:text-[#231f1e]'
+                      }`}
+                    >
+                      नई ({newInquiriesCount})
+                    </button>
+                    <button
+                      onClick={() => setInquiryFilter('replied')}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                        inquiryFilter === 'replied'
+                          ? 'bg-white text-[#1b4332] shadow-xs'
+                          : 'text-[#6f5f58] hover:text-[#231f1e]'
+                      }`}
+                    >
+                      उत्तर दिया ({inquiries.filter((i) => i.status === 'replied').length})
+                    </button>
+                  </div>
+
                   <button
-                    onClick={() => setInquiryFilter('all')}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      inquiryFilter === 'all'
-                        ? 'bg-white text-[#1b4332] shadow-xs'
-                        : 'text-[#6f5f58] hover:text-[#231f1e]'
-                    }`}
+                    type="button"
+                    onClick={handleSimulateInquiry}
+                    className="inline-flex items-center gap-1.5 bg-[#fdf8f6] hover:bg-[#faeee9] text-[#c85a32] border border-[#c85a32]/30 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                    title="जांच के लिए एक नमूना ग्राहक पूछताछ बनाएं"
                   >
-                    सभी ({inquiries.length})
-                  </button>
-                  <button
-                    onClick={() => setInquiryFilter('new')}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      inquiryFilter === 'new'
-                        ? 'bg-[#c85a32] text-white shadow-xs'
-                        : 'text-[#6f5f58] hover:text-[#231f1e]'
-                    }`}
-                  >
-                    नई ({newInquiriesCount})
-                  </button>
-                  <button
-                    onClick={() => setInquiryFilter('replied')}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      inquiryFilter === 'replied'
-                        ? 'bg-white text-[#1b4332] shadow-xs'
-                        : 'text-[#6f5f58] hover:text-[#231f1e]'
-                    }`}
-                  >
-                    उत्तर दिया ({inquiries.filter((i) => i.status === 'replied').length})
+                    <span>+ परीक्षण पूछताछ</span>
                   </button>
                 </div>
               </div>
@@ -626,6 +662,15 @@ export default function ArtisanPortalPage() {
                     ? 'सभी पूछताछ का उत्तर दिया जा चुका है।'
                     : 'जैसे ही कोई ग्राहक या B2B खरीदार आपके शिल्पों पर पूछताछ करेगा, वह सीधे यहाँ दिखाई देगी।'}
                 </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSimulateInquiry}
+                    className="inline-flex items-center gap-2 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-xs px-4 py-2.5 rounded-full transition-all shadow-xs cursor-pointer"
+                  >
+                    <span>+ परीक्षण ग्राहक पूछताछ जोड़ें (Add Test Query)</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-4">
