@@ -48,7 +48,7 @@ function LoginFormContent() {
     ? 'Direct access to the Admin Panel is blocked. Only the authorized administrator email can enter.'
     : (searchParams.get('msg') || 'Access your Artisan Studio, products, AI cataloging tools and earnings.');
 
-  const [mode, setMode] = useState<'magiclink' | 'password' | 'signup'>('magiclink');
+  const [mode, setMode] = useState<'magiclink' | 'password' | 'signup'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -112,8 +112,16 @@ function LoginFormContent() {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (!email.trim()) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail) {
       setErrorMsg('Please enter your email address.');
+      return;
+    }
+
+    // Protect against non-existent or dummy domains that cause Supabase email bounce restrictions
+    const invalidDomains = ['example.com', 'test.com', 'fake.com', 'invalid.com', 'mailinator.com', 'tempmail.com', 'sample.com'];
+    if (invalidDomains.some((d) => trimmedEmail.endsWith(`@${d}`) || trimmedEmail.includes(d))) {
+      setErrorMsg('कृपया केवल सक्रिय व वैध ईमेल पता दर्ज करें। (Please enter a valid, active email address to avoid delivery bounce restrictions.)');
       return;
     }
 
@@ -122,14 +130,14 @@ function LoginFormContent() {
       ? `${window.location.origin}/login`
       : undefined;
 
-    const { error } = await signInWithMagicLink(email, redirectUrl);
+    const { error } = await signInWithMagicLink(trimmedEmail, redirectUrl);
 
     setIsSubmitting(false);
     if (error) {
       setErrorMsg(error.message || 'Failed to send magic link. Please check your email.');
     } else {
       setMagicLinkSent(true);
-      const masked = maskEmailDisplay(email);
+      const masked = maskEmailDisplay(trimmedEmail);
       setSuccessMsg(
         `Magic login link and OTP code dispatched to ${masked}! Enter the 6-digit code below or click the email link.`
       );
@@ -164,8 +172,10 @@ function LoginFormContent() {
     setSuccessMsg(null);
     setIsSubmitting(true);
 
+    const trimmedEmail = email.trim().toLowerCase();
+
     if (mode === 'password') {
-      const { error } = await signIn(email, password);
+      const { error } = await signIn(trimmedEmail, password);
       if (error) {
         setErrorMsg(error.message || 'Invalid email or password. Please try again.');
         setIsSubmitting(false);
@@ -178,10 +188,19 @@ function LoginFormContent() {
         setIsSubmitting(false);
         return;
       }
+
+      // Protect against non-existent or dummy domains that trigger Supabase email bounces
+      const invalidDomains = ['example.com', 'test.com', 'fake.com', 'invalid.com', 'mailinator.com', 'tempmail.com', 'sample.com'];
+      if (invalidDomains.some((d) => trimmedEmail.endsWith(`@${d}`) || trimmedEmail.includes(d))) {
+        setErrorMsg('कृपया केवल सक्रिय व वैध ईमेल पता दर्ज करें। (Please enter a valid, active email address to avoid delivery bounce restrictions.)');
+        setIsSubmitting(false);
+        return;
+      }
+
       const extraMeta = selectedRole === 'artisan'
         ? { preferred_language: artisanLanguage, craft_category: artisanCraftCategory }
         : { interest: customerInterest };
-      const { error } = await signUp(email, password, fullName, selectedRole, extraMeta);
+      const { error } = await signUp(trimmedEmail, password, fullName, selectedRole, extraMeta);
       if (error) {
         setErrorMsg(error.message || 'Failed to create account.');
         setIsSubmitting(false);
@@ -255,18 +274,6 @@ function LoginFormContent() {
           <button
             type="button"
             onClick={() => {
-              setMode('magiclink');
-              setErrorMsg(null);
-              setSuccessMsg(null);
-            }}
-            className={`py-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 ${mode === 'magiclink' ? 'bg-white shadow-xs text-[#1c1917]' : 'text-[#71717a] hover:text-[#1c1917]'}`}
-          >
-            <Send className="w-3 h-3 text-[#F5A941]" />
-            <span>Magic Link</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
               setMode('password');
               setErrorMsg(null);
               setSuccessMsg(null);
@@ -286,6 +293,18 @@ function LoginFormContent() {
             className={`py-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 ${mode === 'signup' ? 'bg-white shadow-xs text-[#1c1917]' : 'text-[#71717a] hover:text-[#1c1917]'}`}
           >
             <span>Register</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('magiclink');
+              setErrorMsg(null);
+              setSuccessMsg(null);
+            }}
+            className={`py-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 ${mode === 'magiclink' ? 'bg-white shadow-xs text-[#1c1917]' : 'text-[#71717a] hover:text-[#1c1917]'}`}
+          >
+            <Send className="w-3 h-3 text-[#F5A941]" />
+            <span>Magic Link</span>
           </button>
         </div>
 
@@ -307,6 +326,10 @@ function LoginFormContent() {
         {/* MODE 1: MAGIC LINK & OTP (PASSWORDLESS) */}
         {mode === 'magiclink' && (
           <div className="space-y-4">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+              ⚠️ <strong>केवल सक्रिय ईमेल का उपयोग करें (Active Email Required):</strong> यह विकल्प सीधे आपके इनबॉक्स पर वास्तविक ईमेल भेजता है। बाउंस से बचने के लिए अमान्य या परीक्षण ईमेल न डालें। तुरंत परीक्षण हेतु नीचे दिए गए <strong>Fast Logins</strong> का उपयोग करें।
+            </div>
+
             {!magicLinkSent ? (
               <form onSubmit={handleSendMagicLink} className="space-y-4">
                 <div>
@@ -578,6 +601,11 @@ function LoginFormContent() {
                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] text-xs sm:text-sm text-[#1c1917] focus:outline-hidden focus:border-[#F5A941] focus:bg-white transition-colors"
                 />
               </div>
+              {mode === 'signup' && (
+                <p className="text-[10.5px] text-[#71717a] mt-1">
+                  ℹ️ कृपया केवल वास्तविक व चालू ईमेल दर्ज करें (Please enter an active email only).
+                </p>
+              )}
             </div>
 
             <div>
