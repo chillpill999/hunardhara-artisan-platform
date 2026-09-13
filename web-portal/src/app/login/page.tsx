@@ -53,6 +53,8 @@ function LoginFormContent() {
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [artisanState, setArtisanState] = useState('Uttar Pradesh');
   const [selectedRole, setSelectedRole] = useState<UserRole>('artisan');
   const [artisanLanguage, setArtisanLanguage] = useState('Hindi (हिंदी)');
   const [artisanCraftCategory, setArtisanCraftCategory] = useState('Varanasi Silk Brocade');
@@ -76,8 +78,8 @@ function LoginFormContent() {
       } else if (role === 'admin') {
         router.push(searchParams.get('redirect') || '/admin');
       } else {
-        // Artisan has window of selling and uploading
-        router.push(searchParams.get('redirect') || '/artisan');
+        // Artisan has direct window of selling and uploading
+        router.push(searchParams.get('redirect') || '/artisan?tab=studio');
       }
     }
   }, [user, role, needsOnboarding, searchParams, router]);
@@ -189,6 +191,13 @@ function LoginFormContent() {
         return;
       }
 
+      const cleanPhone = phone.replace(/[^0-9]/g, '');
+      if (cleanPhone.length < 10) {
+        setErrorMsg('कृपया अपना 10-अंकीय मोबाइल / व्हाट्सएप नंबर दर्ज करें (Please enter a valid 10-digit mobile/WhatsApp number).');
+        setIsSubmitting(false);
+        return;
+      }
+
       // Protect against non-existent or dummy domains that trigger Supabase email bounces
       const invalidDomains = ['example.com', 'test.com', 'fake.com', 'invalid.com', 'mailinator.com', 'tempmail.com', 'sample.com'];
       if (invalidDomains.some((d) => trimmedEmail.endsWith(`@${d}`) || trimmedEmail.includes(d))) {
@@ -198,15 +207,25 @@ function LoginFormContent() {
       }
 
       const extraMeta = selectedRole === 'artisan'
-        ? { preferred_language: artisanLanguage, craft_category: artisanCraftCategory }
-        : { interest: customerInterest };
+        ? {
+            phone: phone.trim(),
+            state: artisanState,
+            preferred_language: artisanLanguage,
+            craft_category: artisanCraftCategory,
+            onboarding_completed: true,
+          }
+        : {
+            phone: phone.trim(),
+            interest: customerInterest,
+            onboarding_completed: true,
+          };
       const { error } = await signUp(trimmedEmail, password, fullName, selectedRole, extraMeta);
       if (error) {
         setErrorMsg(error.message || 'Failed to create account.');
         setIsSubmitting(false);
       } else {
         if (selectedRole === 'artisan') {
-          router.push('/artisan');
+          router.push('/artisan?tab=studio');
         } else {
           const dest = searchParams.get('redirect');
           if (dest && !dest.startsWith('/artisan') && !dest.startsWith('/admin')) {
@@ -577,6 +596,58 @@ function LoginFormContent() {
                     placeholder="e.g. Radheshyam Ansari"
                     className="w-full px-4 py-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] text-xs sm:text-sm text-[#1c1917] focus:outline-hidden focus:border-[#F5A941] focus:bg-white transition-colors"
                   />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-[#545454] mb-1.5">
+                      Mobile / WhatsApp (फोन नंबर)
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="9876543210"
+                      className="w-full px-4 py-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] text-xs sm:text-sm text-[#1c1917] focus:outline-hidden focus:border-[#c85a32] focus:bg-white transition-colors"
+                    />
+                  </div>
+
+                  {selectedRole === 'artisan' ? (
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-[#545454] mb-1.5">
+                        Workshop State (राज्य)
+                      </label>
+                      <select
+                        value={artisanState}
+                        onChange={(e) => setArtisanState(e.target.value)}
+                        className="w-full px-3.5 py-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] text-xs sm:text-sm text-[#1c1917] focus:outline-hidden focus:border-[#c85a32] focus:bg-white transition-colors"
+                      >
+                        <option value="Uttar Pradesh">Uttar Pradesh (उत्तर प्रदेश)</option>
+                        <option value="Chhattisgarh">Chhattisgarh (छत्तीसगढ़)</option>
+                        <option value="Bihar">Bihar (बिहार)</option>
+                        <option value="Karnataka">Karnataka (कर्नाटक)</option>
+                        <option value="Rajasthan">Rajasthan (राजस्थान)</option>
+                        <option value="West Bengal">West Bengal (पश्चिम बंगाल)</option>
+                        <option value="Madhya Pradesh">Madhya Pradesh (मध्य प्रदेश)</option>
+                        <option value="Jammu & Kashmir">Jammu & Kashmir (जम्मू और कश्मीर)</option>
+                        <option value="Other State">Other State (अन्य राज्य)</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-[#545454] mb-1.5">
+                        City / State (शहर / राज्य)
+                      </label>
+                      <input
+                        type="text"
+                        value={artisanState}
+                        onChange={(e) => setArtisanState(e.target.value)}
+                        placeholder="e.g. New Delhi"
+                        className="w-full px-4 py-3 rounded-xl border border-[#e4e4e7] bg-[#fafafa] text-xs sm:text-sm text-[#1c1917] focus:outline-hidden focus:border-[#1b4332] focus:bg-white transition-colors"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Role-Specific Progressive Essential Fields */}

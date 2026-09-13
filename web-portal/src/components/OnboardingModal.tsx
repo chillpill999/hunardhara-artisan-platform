@@ -54,6 +54,14 @@ export default function OnboardingModal() {
       if (metaPhone && !phone) {
         setPhone(metaPhone);
       }
+      const metaRole = user.user_metadata?.role;
+      if (metaRole === 'artisan' || metaRole === 'customer') {
+        setSelectedRole(metaRole);
+      }
+      const metaCraft = user.user_metadata?.craft_category;
+      if (metaCraft) {
+        setCraftCategory(metaCraft);
+      }
     }
   }, [user]);
 
@@ -98,7 +106,7 @@ export default function OnboardingModal() {
       setErrorMsg(error.message || 'विवरण सहेजने में विफल। कृपया पुनः प्रयास करें।');
     } else {
       if (selectedRole === 'artisan') {
-        router.push('/artisan');
+        router.push('/artisan?tab=studio');
       } else {
         router.push('/');
       }

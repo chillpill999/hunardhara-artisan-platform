@@ -48,6 +48,7 @@ interface AuthContextType {
   }) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   loginWithDemoAccount: (targetRole: UserRole, customEmail?: string) => Promise<{ error: Error | null }>;
+  switchToArtisanRole: () => Promise<{ error: Error | null }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -86,28 +87,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (!error && data) {
         // STRICT SECURITY: A user can ONLY have 'admin' role if their email is on the authorized admin list
+        const rawRole = data.role || authUser.user_metadata?.role;
         const resolvedRole: UserRole | null = isMaster
           ? 'admin'
-          : (data.role === 'admin' ? 'customer' : (['customer', 'artisan'].includes(data.role) ? data.role : null)) as UserRole | null;
+          : (rawRole === 'admin' ? 'customer' : (['customer', 'artisan'].includes(rawRole) ? (rawRole as UserRole) : null));
 
-        // Mandatory signup details requirement:
-        // User MUST have completed onboarding AND have an explicit role (artisan/customer/admin) AND have a valid phone number (>= 10 digits)
-        const hasPhone = typeof data.phone === 'string' && data.phone.replace(/[^0-9]/g, '').length >= 10;
-        const isComplete = isMaster || (data.onboarding_completed === true && resolvedRole !== null && hasPhone);
+        // User needs onboarding ONLY IF they do not have any defined role yet (e.g. fresh Google OAuth signup)
+        const needsOnboarding = !isMaster && resolvedRole === null;
 
         return {
-          role: isComplete ? resolvedRole : null,
-          needsOnboarding: !isComplete,
+          role: resolvedRole,
+          needsOnboarding,
           profile: {
             id: data.id,
-            role: isComplete ? resolvedRole : null,
+            role: resolvedRole,
             full_name: data.full_name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || (resolvedRole === 'admin' ? 'Lead Administrator (Aryan)' : 'Hunardhara Member'),
             avatar_url: data.avatar_url || authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
-            phone: data.phone,
-            state: data.state,
-            preferred_language: data.preferred_language,
-            craft_category: data.craft_category,
-            onboarding_completed: isComplete,
+            phone: data.phone || authUser.user_metadata?.phone,
+            state: data.state || authUser.user_metadata?.state,
+            preferred_language: data.preferred_language || authUser.user_metadata?.preferred_language,
+            craft_category: data.craft_category || authUser.user_metadata?.craft_category,
+            onboarding_completed: !needsOnboarding,
           },
         };
       }
@@ -121,18 +121,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ? 'admin'
       : (rawMetaRole === 'admin' ? 'customer' : (['customer', 'artisan'].includes(rawMetaRole) ? (rawMetaRole as UserRole) : null));
 
-    const hasMetaPhone = typeof authUser.user_metadata?.phone === 'string' && authUser.user_metadata.phone.replace(/[^0-9]/g, '').length >= 10;
-    const isComplete = isMaster || (authUser.user_metadata?.onboarding_completed === true && metaRole !== null && hasMetaPhone);
+    const needsOnboarding = !isMaster && metaRole === null;
 
     return {
-      role: isComplete ? metaRole : null,
-      needsOnboarding: !isComplete,
+      role: metaRole,
+      needsOnboarding,
       profile: {
         id: userId,
-        role: isComplete ? metaRole : null,
+        role: metaRole,
         full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (metaRole === 'admin' ? 'Lead Administrator (Aryan)' : 'Hunardhara Member'),
         avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
-        onboarding_completed: isComplete,
+        phone: authUser.user_metadata?.phone,
+        state: authUser.user_metadata?.state,
+        preferred_language: authUser.user_metadata?.preferred_language,
+        craft_category: authUser.user_metadata?.craft_category,
+        onboarding_completed: !needsOnboarding,
       },
     };
   }, []);
@@ -396,6 +399,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         data: {
           full_name: fullName,
           role: effectiveRole,
+          onboarding_completed: true,
           ...(extraMeta || {}),
         },
       },
@@ -418,14 +422,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setUser(data.user);
       setSession(data.session);
-      const { role: userRole, profile: userProfile } = await fetchProfile(data.user.id, data.user);
-      setRole(userRole);
-      setProfile(userProfile);
+      setRole(effectiveRole);
+      setNeedsOnboarding(false);
+
+      const newProfile: UserProfile = {
+        id: data.user.id,
+        role: effectiveRole,
+        full_name: fullName,
+        phone: extraMeta?.phone || null,
+        state: extraMeta?.state || 'Uttar Pradesh',
+        craft_category: extraMeta?.craft_category || 'Varanasi Silk Brocade',
+        preferred_language: extraMeta?.preferred_language || 'Hindi (हिंदी)',
+        onboarding_completed: true,
+      };
+      setProfile(newProfile);
+
+      try {
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          full_name: fullName,
+          role: effectiveRole,
+          phone: extraMeta?.phone || null,
+          state: extraMeta?.state || 'Uttar Pradesh',
+          craft_category: extraMeta?.craft_category || 'Varanasi Silk Brocade',
+          preferred_language: extraMeta?.preferred_language || 'Hindi (हिंदी)',
+          onboarding_completed: true,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (upsertErr) {
+        console.warn('Profile upsert note:', upsertErr);
+      }
 
       if (typeof document !== 'undefined') {
         const maxAge = 60 * 60 * 24 * 7;
         document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
-        if (userRole === 'admin') {
+        if (effectiveRole === 'admin') {
           setAdminAuthCookie(data.user.email || '');
         }
       }
@@ -589,6 +620,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return signIn(creds.email, creds.pass);
   };
 
+  const switchToArtisanRole = async () => {
+    if (!user) return { error: new Error('No active user session') };
+    setIsLoading(true);
+    try {
+      const isMaster = isAuthorisedAdminEmail(user.email);
+      const targetRole: UserRole = isMaster ? 'admin' : 'artisan';
+
+      // 1. Update user metadata
+      await supabase.auth.updateUser({
+        data: {
+          role: targetRole,
+          onboarding_completed: true,
+        },
+      });
+
+      // 2. Update public.profiles table
+      await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          role: targetRole,
+          full_name: profile?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || 'Master Artisan',
+          phone: profile?.phone || user.user_metadata?.phone || '9876543210',
+          state: profile?.state || user.user_metadata?.state || 'Uttar Pradesh',
+          craft_category: profile?.craft_category || user.user_metadata?.craft_category || 'Varanasi Silk Brocade',
+          preferred_language: profile?.preferred_language || user.user_metadata?.preferred_language || 'Hindi (हिंदी)',
+          onboarding_completed: true,
+          updated_at: new Date().toISOString(),
+        });
+
+      setRole(targetRole);
+      setNeedsOnboarding(false);
+      setProfile((prev) => ({
+        id: user.id,
+        role: targetRole,
+        full_name: prev?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || 'Master Artisan',
+        phone: prev?.phone || user.user_metadata?.phone || '9876543210',
+        state: prev?.state || user.user_metadata?.state || 'Uttar Pradesh',
+        craft_category: prev?.craft_category || user.user_metadata?.craft_category || 'Varanasi Silk Brocade',
+        preferred_language: prev?.preferred_language || user.user_metadata?.preferred_language || 'Hindi (हिंदी)',
+        avatar_url: prev?.avatar_url || user.user_metadata?.avatar_url,
+        onboarding_completed: true,
+      }));
+
+      setIsLoading(false);
+      return { error: null };
+    } catch (err: any) {
+      setIsLoading(false);
+      return { error: err };
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -606,6 +689,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         completeOnboarding,
         signOut,
         loginWithDemoAccount,
+        switchToArtisanRole,
       }}
     >
       {children}

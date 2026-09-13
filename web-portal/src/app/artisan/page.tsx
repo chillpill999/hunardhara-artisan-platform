@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import ArtisanStudio from '@/components/ArtisanStudio';
 import ArtisanRevenueLedger from '@/components/ArtisanRevenueLedger';
 import HunarSaathi from '@/components/HunarSaathi';
@@ -31,9 +32,22 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
-export default function ArtisanPortalPage() {
+function ArtisanPortalContent() {
   const { user, profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'home' | 'studio' | 'products' | 'orders' | 'inquiries' | 'revenue'>('home');
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<'home' | 'studio' | 'products' | 'orders' | 'inquiries' | 'revenue'>(
+    tabParam && ['home', 'studio', 'products', 'orders', 'inquiries', 'revenue'].includes(tabParam)
+      ? (tabParam as any)
+      : 'home'
+  );
+
+  useEffect(() => {
+    if (tabParam && ['home', 'studio', 'products', 'orders', 'inquiries', 'revenue'].includes(tabParam)) {
+      setActiveTab(tabParam as any);
+    }
+  }, [tabParam]);
+
   const [showAssistantModal, setShowAssistantModal] = useState(false);
   const [inquiries, setInquiries] = useState<ArtisanInquiry[]>([]);
   const [inquiryFilter, setInquiryFilter] = useState<'all' | 'new' | 'replied'>('all');
@@ -198,14 +212,30 @@ export default function ArtisanPortalPage() {
             </div>
           </div>
 
-          <button
-            onClick={() => setShowAssistantModal(true)}
-            className="flex flex-col items-center justify-center w-12 h-12 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] hover:bg-[#f4ede4] text-[#1b4332] transition-colors"
-            title="हुनर साथी खोलें"
-          >
-            <span className="text-lg">🌾</span>
-            <span className="text-[9px] font-bold">साथी</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab('studio')}
+              className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-2xl font-bold text-xs transition-all shadow-xs cursor-pointer ${
+                activeTab === 'studio'
+                  ? 'bg-[#c85a32] text-white ring-2 ring-[#c85a32]/30'
+                  : 'bg-[#fdf8f6] hover:bg-[#faeee9] text-[#c85a32] border border-[#c85a32]/30'
+              }`}
+              title="सीधे फोटो व आवाज स्टूडियो खोलें"
+            >
+              <Camera className="w-4 h-4" />
+              <span className="hidden sm:inline">कारीगर</span>
+              <span>स्टूडियो (Studio)</span>
+            </button>
+
+            <button
+              onClick={() => setShowAssistantModal(true)}
+              className="flex flex-col items-center justify-center w-11 h-11 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] hover:bg-[#f4ede4] text-[#1b4332] transition-colors"
+              title="हुनर साथी खोलें"
+            >
+              <span className="text-base">🌾</span>
+              <span className="text-[9px] font-bold">साथी</span>
+            </button>
+          </div>
         </div>
 
         {/* ===================================================================== */}
@@ -874,5 +904,20 @@ export default function ArtisanPortalPage() {
         )}
       </div>
     </AuthGuard>
+  );
+}
+
+export default function ArtisanPortalPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-10 h-10 rounded-full border-3 border-[#c85a32] border-t-transparent animate-spin mb-3" />
+          <p className="text-xs text-[#6f5f58] font-bold">कारीगर कार्यशाला लोड हो रही है...</p>
+        </div>
+      }
+    >
+      <ArtisanPortalContent />
+    </Suspense>
   );
 }

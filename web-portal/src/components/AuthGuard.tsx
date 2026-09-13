@@ -18,7 +18,8 @@ export default function AuthGuard({
   allowedRoles,
   redirectMessage = 'Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings.',
 }: AuthGuardProps) {
-  const { user, role, needsOnboarding, isLoading, signOut } = useAuth();
+  const { user, role, needsOnboarding, isLoading, signOut, switchToArtisanRole } = useAuth();
+  const [isSwitchingRole, setIsSwitchingRole] = React.useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -73,7 +74,8 @@ export default function AuthGuard({
   }
 
   // Authenticated but requires onboarding completion
-  if (needsOnboarding) {
+  // If the user already has the required role (e.g. artisan accessing artisan studio), NEVER block them!
+  if (needsOnboarding && (!role || (allowedRoles && !allowedRoles.includes(role)))) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-md mx-auto">
         <div className="w-16 h-16 rounded-3xl bg-amber-50 text-[#c85a32] flex items-center justify-center shadow-xs border border-amber-200">
@@ -179,14 +181,39 @@ export default function AuthGuard({
               Customer Account (ग्राहक खाता)
             </h2>
             <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-sm mx-auto">
-              यह विंडो केवल पंजीकृत कारीगरों के लिए है जहां वे हस्तशिल्प फोटो अपलोड और बेच सकते हैं। आपके पास ग्राहक के रूप में ई-कॉमर्स बाज़ार का पूर्ण उपयोग है।
-            </p>
-            <p className="text-[11px] text-[#71717a]">
-              Customer accounts have direct access to purchasing and browsing. Craft uploading is reserved for registered artisans.
+              यह विंडो केवल पंजीकृत कारीगरों के लिए है जहां वे हस्तशिल्प फोटो अपलोड और बेच सकते हैं।
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2 w-full">
+          <div className="w-full bg-[#fdf8f6] p-4 rounded-2xl border border-[#c85a32]/30 text-left space-y-2.5">
+            <p className="text-xs font-bold text-[#1c1917]">
+              क्या आप कारीगर / शिल्पकार हैं? (Are you an Artisan?)
+            </p>
+            <p className="text-[11px] text-[#545454] leading-relaxed">
+              यदि आप अपने हस्तशिल्प उत्पाद बेचना चाहते हैं, तो 1-क्लिक में अपने खाते को कारीगर खाते में बदलकर तुरंत स्टूडियो खोलें:
+            </p>
+            <button
+              type="button"
+              disabled={isSwitchingRole}
+              onClick={async () => {
+                setIsSwitchingRole(true);
+                const res = await switchToArtisanRole();
+                setIsSwitchingRole(false);
+                if (!res.error) {
+                  router.push('/artisan?tab=studio');
+                }
+              }}
+              className="w-full inline-flex items-center justify-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] disabled:opacity-50 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              {isSwitchingRole ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <span>🎨 मैं कारीगर हूँ — कारीगर स्टूडियो खोलें (Switch to Artisan & Enter Studio)</span>
+              )}
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1 w-full">
             <Link
               href="/"
               className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-full bg-[#1b4332] hover:bg-[#2d6a4f] text-white transition-all shadow-xs"
@@ -194,18 +221,12 @@ export default function AuthGuard({
               <ShoppingBag className="w-3.5 h-3.5" />
               <span>ई-कॉमर्स बाज़ार देखें</span>
             </Link>
-            <Link
-              href="/artisan/apply"
-              className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-full bg-[#c85a32] hover:bg-[#b84e28] text-white transition-all shadow-xs"
-            >
-              <span>कारीगर बनें (Apply to Sell)</span>
-            </Link>
             <button
               onClick={() => signOut()}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-full border border-[#e4e4e7] hover:bg-[#f4f4f5] text-[#545454] transition-all"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-full border border-[#e4e4e7] hover:bg-[#f4f4f5] text-[#545454] transition-all cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>स्विच खाता</span>
+              <span>साइन आउट</span>
             </button>
           </div>
         </div>

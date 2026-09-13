@@ -85,7 +85,7 @@ export default function Navbar() {
 
           {(role === 'artisan' || role === 'admin') && (
             <Link
-              href="/artisan"
+              href="/artisan?tab=studio"
               className={`transition-colors hover:text-[#1b4332] flex items-center gap-1.5 ${
                 pathname.startsWith('/artisan') ? 'text-[#1b4332] font-bold' : ''
               }`}
