@@ -580,7 +580,44 @@ export default function ArtisanStudio() {
       saveUploadedProduct(newProduct);
       setPublishedId(newId);
 
-      // 2. Sync to Supabase if session exists
+      // 2. AI Learning Loop: Record Artisan Review Outcome (Correct vs Wrong/Feedback)
+      try {
+        const reviewPayload = {
+          review_type: isEditMode ? 'WRONG' : 'CORRECT',
+          artisan_id: user?.id || 'artisan-default',
+          craft_type: extractedData.craftType || 'Traditional Craft',
+          input_data: {
+            transcript: rawTranscript,
+            photo_available: !!photoUrl,
+            entry_mode: entryMode
+          },
+          ai_product_card: {
+            title_hi: extractedData.productNameHi,
+            title_en: extractedData.productName,
+            craft_type: extractedData.craftType,
+            materials: extractedData.materials,
+            production_days: extractedData.productionDays,
+            material_cost: extractedData.materialCost,
+            price: extractedData.recommendedPrice
+          },
+          corrections: isEditMode ? {
+            edited_name_hi: extractedData.productNameHi,
+            edited_material_cost: extractedData.materialCost,
+            edited_production_days: extractedData.productionDays
+          } : null,
+          language: selectedLanguage
+        };
+
+        fetch('http://localhost:8000/api/v1/ai/assistant/review-outcome', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reviewPayload)
+        }).catch(() => {});
+      } catch (err) {
+        console.warn('AI learning loop note:', err);
+      }
+
+      // 3. Sync to Supabase if session exists
       if (user) {
         try {
           const { data, error } = await supabase

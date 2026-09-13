@@ -234,3 +234,52 @@ class TestAIEvaluationFramework:
         dashboard = version_registry.get_observability_dashboard()
         assert dashboard["metrics"]["total_requests"] >= len(gold_records)
         assert dashboard["status"] == "healthy"
+
+    def test_dual_path_learning_loop_and_finetuning_export(self):
+        """
+        Tests the complete continuous learning loop:
+        Artisan Review (Correct & Wrong) -> Hunardhara Dataset -> Human Validation -> Fine-tuning Export.
+        """
+        # 1. Simulate "CORRECT" review (Positive ground-truth sample)
+        correct_res = correction_feedback_service.record_artisan_review_outcome(
+            review_type="CORRECT",
+            artisan_id="artisan-bastar-001",
+            craft_type="Bastar Dhokra",
+            input_data={"voice": "यह पीतल का नंदी है", "photo": "present"},
+            ai_product_card={"product_name": "Bastar Dhokra Brass Nandi", "price": 1850}
+        )
+        assert correct_res["review_outcome"] == "CORRECT"
+        assert correct_res["validation_status"] == "artisan_verified_positive"
+
+        # 2. Simulate "WRONG" review (Artisan correction / feedback data)
+        wrong_res = correction_feedback_service.record_artisan_review_outcome(
+            review_type="WRONG",
+            artisan_id="artisan-khurja-002",
+            craft_type="Khurja Pottery",
+            input_data={"voice": "यह सिरेमिक पॉट है", "photo": "present"},
+            ai_product_card={"product_name": "Plastic Pot", "price": 200},
+            corrections={"product_name": "Khurja Glazed Ceramic Pot", "material": "Stoneware Clay", "price": 850}
+        )
+        assert wrong_res["review_outcome"] == "WRONG"
+        assert wrong_res["validation_status"] == "pending_human_validation"
+
+        # 3. Check learning loop status
+        loop_status = correction_feedback_service.get_dataset_pipeline_status()
+        assert loop_status["stage_3_artisan_review"]["correct_verified_samples"] >= 1
+        assert loop_status["stage_3_artisan_review"]["wrong_feedback_pending"] >= 1
+
+        # 4. Human validation approval
+        approved = correction_feedback_service.approve_correction(
+            correction_id=wrong_res["review_id"],
+            reviewer_id="lead-curator-delhi",
+            notes="Confirmed ceramic pot authenticity"
+        )
+        assert approved is not None
+        assert approved["status"] == "approved"
+
+        # 5. Export dataset for fine-tuning
+        export_result = correction_feedback_service.export_finetuning_dataset()
+        assert export_result["status"] == "ready_for_finetuning"
+        assert export_result["total_curated_samples"] >= 1
+        assert os.path.exists(export_result["export_filepath"])
+

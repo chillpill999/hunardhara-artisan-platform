@@ -135,3 +135,61 @@ def get_ai_observability_dashboard():
     Module 38: Returns real-time AI metrics, latency, acceptance rate, and version tracking.
     """
     return version_registry.get_observability_dashboard()
+
+
+class ReviewOutcomeRequest(BaseModel):
+    review_type: str = Field(..., description="'CORRECT' or 'WRONG'", example="CORRECT")
+    artisan_id: str = Field("artisan-default", description="Artisan identifier")
+    craft_type: str = Field(..., description="Craft category", example="Bastar Dhokra")
+    input_data: Dict[str, Any] = Field(..., description="Input photo/voice context")
+    ai_product_card: Dict[str, Any] = Field(..., description="Original AI product card")
+    corrections: Optional[Dict[str, Any]] = Field(None, description="Field corrections if WRONG")
+    language: str = Field("hi", description="Artisan language code")
+
+
+@router.post("/review-outcome")
+def process_artisan_review_outcome(req: ReviewOutcomeRequest):
+    """
+    Dual-path Learning Loop Endpoint:
+    Captures both 'Correct' (positive ground truth) and 'Wrong' (feedback data delta)
+    reviews to feed the Hunardhara dataset pipeline.
+    """
+    entry = correction_feedback_service.record_artisan_review_outcome(
+        review_type=req.review_type,
+        artisan_id=req.artisan_id,
+        craft_type=req.craft_type,
+        input_data=req.input_data,
+        ai_product_card=req.ai_product_card,
+        corrections=req.corrections,
+        language=req.language
+    )
+    return {
+        "status": "success",
+        "message": f"Artisan review [{req.review_type.upper()}] successfully recorded into Hunardhara dataset pipeline.",
+        "record": entry
+    }
+
+
+@router.get("/learning-loop/status")
+def get_learning_loop_status():
+    """
+    Returns the real-time stage status of the entire artisan learning loop:
+    Input -> AI Processing -> Artisan Review (Correct / Wrong) -> Dataset -> Human Validation -> Fine-tuning.
+    """
+    return {
+        "status": "success",
+        "pipeline": correction_feedback_service.get_dataset_pipeline_status()
+    }
+
+
+@router.post("/dataset/export-finetuning")
+def export_dataset_for_finetuning():
+    """
+    Compiles validated dataset samples into QLoRA/Alpaca format ready for train_colab.py.
+    """
+    result = correction_feedback_service.export_finetuning_dataset()
+    return {
+        "status": "success",
+        "export_details": result
+    }
+
