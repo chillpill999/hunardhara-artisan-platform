@@ -109,7 +109,7 @@ export default function TermsPage() {
             </p>
             <div className="bg-[#f7f4ee] p-4 rounded-xl text-xs space-y-1 font-mono text-[#443e39] mt-4">
               <p><strong>Legal & Compliance Desk:</strong> Hunardhara Platform Governance</p>
-              <p><strong>Email:</strong> <a href="mailto:aryanrockstar2007@gmail.com" className="text-[#c85a32] underline">aryanrockstar2007@gmail.com</a></p>
+              <p><strong>Email:</strong> <a href="mailto:legal@hunardhara.gov.in" className="text-[#c85a32] underline">legal@hunardhara.gov.in</a></p>
               <p><strong>Initiative:</strong> Ministry of Social Justice and Empowerment / Smart India Hackathon 2026</p>
             </div>
           </section>

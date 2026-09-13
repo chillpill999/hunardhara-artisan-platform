@@ -12,7 +12,7 @@ import {
 import { CraftCluster, Product } from '@/lib/types';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
-import { isAuthorisedAdminEmail, PRIMARY_ADMIN_EMAIL } from '@/lib/adminAuth';
+import { isAuthorisedAdminEmail } from '@/lib/adminAuth';
 import {
   ShieldCheck,
   Building2,
@@ -164,7 +164,7 @@ export default function AdminDashboardPage() {
               <span>प्रमाणित प्रशासक (Authorised Admin)</span>
             </div>
             <div className="text-[11px] font-mono text-[#F8C146] bg-black/40 px-2.5 py-1 rounded-lg border border-[#3e3e42] truncate max-w-xs">
-              {user?.email || PRIMARY_ADMIN_EMAIL}
+              {user?.email || 'Platform Administrator'}
             </div>
             <div className="flex items-center gap-2 text-[#a1a1aa] text-[10px] pt-1.5 border-t border-[#2e2e30]">
               <span>Direct Link Protected • Single-Email Whitelist</span>

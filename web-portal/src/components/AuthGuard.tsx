@@ -59,7 +59,7 @@ export default function AuthGuard({
         </h2>
         <p className="text-xs text-[#545454] max-w-sm">
           {isAdminRoute
-            ? `प्रशासकीय लिंक अवरोधित: Direct link navigation to the Admin Panel is strictly blocked. Only ${PRIMARY_ADMIN_EMAIL} has access.`
+            ? `प्रशासकीय लिंक अवरोधित: Direct link navigation to the Admin Panel is strictly blocked. Only the authorized platform administrator has access.`
             : redirectMessage}
         </p>
         <Link
@@ -92,7 +92,7 @@ export default function AuthGuard({
           </h2>
 
           <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-md mx-auto">
-            Direct access to the HunarDhara Admin Panel (<code className="bg-neutral-100 px-1 py-0.5 rounded text-red-600 font-mono text-xs">/admin</code>) is strictly restricted. Only the designated platform administrator (<strong className="text-[#1c1917]">{PRIMARY_ADMIN_EMAIL}</strong>) is authorised to enter this panel.
+            Direct access to the HunarDhara Admin Panel (<code className="bg-neutral-100 px-1 py-0.5 rounded text-red-600 font-mono text-xs">/admin</code>) is strictly restricted. Only the designated platform administrator is authorised to enter this panel.
           </p>
         </div>
 

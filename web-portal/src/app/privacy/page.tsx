@@ -112,7 +112,7 @@ export default function PrivacyPage() {
             </p>
             <div className="bg-[#f7f4ee] p-4 rounded-xl text-xs space-y-1 font-mono text-[#443e39]">
               <p><strong>Grievance Officer:</strong> Hunardhara Data Protection Officer</p>
-              <p><strong>Email:</strong> <a href="mailto:aryanrockstar2007@gmail.com" className="text-[#c85a32] underline">aryanrockstar2007@gmail.com</a></p>
+              <p><strong>Email:</strong> <a href="mailto:privacy@hunardhara.gov.in" className="text-[#c85a32] underline">privacy@hunardhara.gov.in</a></p>
               <p><strong>Platform:</strong> Hunardhara (हुनरधारा) • Ministry of Social Justice and Empowerment / Smart India Hackathon Initiative</p>
             </div>
           </section>

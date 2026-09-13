@@ -15,11 +15,9 @@ import {
   CheckCircle2,
   KeyRound,
   Send,
-  Crown,
   Camera
 } from 'lucide-react';
 import Link from 'next/link';
-import { PRIMARY_ADMIN_EMAIL } from '@/lib/adminAuth';
 
 function maskEmailDisplay(raw: string): string {
   if (!raw || !raw.includes('@')) return 'your email';
@@ -287,7 +285,7 @@ function LoginFormContent() {
                 प्रशासकीय लिंक अवरोधित • Direct Admin Access Blocked
               </span>
               <p className="text-red-700 leading-relaxed">
-                Direct URL navigation to the Admin Panel has been blocked. Only the verified administrator (<strong className="font-mono">{PRIMARY_ADMIN_EMAIL}</strong>) is authorized. Please sign in below with the authorized email.
+                Direct URL navigation to the Admin Panel has been blocked. Only the verified platform administrator is authorized. Please sign in below with your authorized administrator credentials.
               </p>
             </div>
           </div>
@@ -717,25 +715,6 @@ function LoginFormContent() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => handleFastDemoLogin('admin')}
-              disabled={isSubmitting}
-              className="p-3 rounded-xl border-2 border-[#F5A941] bg-[#fffbeb] hover:bg-[#fef3c7] text-left transition-all group col-span-1 sm:col-span-2 shadow-2xs"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#b45309]">
-                  <Crown className="w-4 h-4 text-[#d97706]" />
-                  <span>Lead Platform Administrator (Aryan)</span>
-                </div>
-                <span className="text-[9px] uppercase font-bold bg-[#F5A941] text-white px-2 py-0.5 rounded-full">
-                  Authorised Admin
-                </span>
-              </div>
-              <p className="text-[10px] text-[#71717a] mt-1 font-mono">
-                {PRIMARY_ADMIN_EMAIL} • Exclusive Admin Clearance
-              </p>
-            </button>
 
             <button
               type="button"

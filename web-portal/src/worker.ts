@@ -316,7 +316,7 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           loginUrl.searchParams.set('blocked', 'direct_admin_link');
           loginUrl.searchParams.set(
             'msg',
-            'प्रशासकीय लिंक अवरोधित: Direct admin link is blocked. Only aryanrockstar2007@gmail.com has access.'
+            'प्रशासकीय लिंक अवरोधित: Direct admin link is blocked. Only the authorized administrator has access.'
           );
           return Response.redirect(loginUrl.toString(), 302);
         }
@@ -345,7 +345,7 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
   <div class="card">
     <div class="badge">प्रशासकीय लिंक अवरोधित • Direct Admin Access Blocked</div>
     <h1>403 Forbidden: Unauthorised Email</h1>
-    <p>Direct access to the HunarDhara Admin Panel is strictly restricted. Only <strong>aryanrockstar2007@gmail.com</strong> is authorized to access this route.</p>
+    <p>Direct access to the HunarDhara Admin Panel is strictly restricted. Only the designated platform administrator is authorized to access this route.</p>
     <div class="email">Attempted Account: ${adminEmail || 'Unknown'}</div>
     <a href="/" class="btn">बाज़ार पर वापस जाएं (Marketplace)</a>
   </div>
