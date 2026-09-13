@@ -15,9 +15,11 @@ from app.models.craft_cluster import CraftCluster
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductFilter
 from app.schemas.studio import StudioResponse, StudioMetadata
 from app.schemas.voice import VoiceCatalogResponse
+from app.schemas.image_understanding import ImageUnderstandingResponse
 from app.services.studio_service import studio_service
 from app.services.voice_service import voice_service
 from app.services.pricing_service import pricing_service
+from app.services.openrouter_service import openrouter_service
 
 logger = logging.getLogger("artisan_platform.api.products")
 router = APIRouter(prefix="/products", tags=["Products & AI Pipelines"])
@@ -54,6 +56,35 @@ async def product_studio_upload(
     except Exception as e:
         logger.error(f"Studio pipeline failed: {e}")
         raise HTTPException(status_code=400, detail=f"STUDIO_PROCESSING_ERROR: {str(e)}")
+
+
+@router.post("/analyze-image", response_model=ImageUnderstandingResponse, summary="AI Craft Image Understanding (Gemma 4 31B)")
+async def product_analyze_image(
+    image: UploadFile = File(..., description="Craft photo to analyze"),
+    hint: Optional[str] = Form(None, description="Optional artisan craft hint or cluster context")
+):
+    """
+    Multimodal Craft Image Understanding Pipeline (Google Gemma 4 31B):
+    Visually inspects craft photos to detect GI craft cluster, traditional materials,
+    artisan technique, and auto-generates bilingual e-commerce catalog listings.
+    """
+    if not image.filename:
+        raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Filename missing")
+
+    image_bytes = await image.read()
+    if not image_bytes or len(image_bytes) < 10:
+        raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Empty or corrupted image buffer")
+
+    mime_type = image.content_type or "image/jpeg"
+    try:
+        return openrouter_service.analyze_craft_image(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            hint=hint
+        )
+    except Exception as e:
+        logger.error(f"Image analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"IMAGE_ANALYSIS_ERROR: {str(e)}")
 
 
 @router.post("/voice-catalog", response_model=VoiceCatalogResponse, summary="Indic Voice-to-Catalog")

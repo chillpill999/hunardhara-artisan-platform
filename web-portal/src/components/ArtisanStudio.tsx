@@ -8,7 +8,8 @@ import {
   transcribeAudio,
   extractCraftFromVoice,
   synthesizeSpeech,
-  saveUploadedProduct
+  saveUploadedProduct,
+  analyzeCraftImage
 } from '@/lib/api';
 import { Product } from '@/lib/types';
 import {
@@ -157,6 +158,39 @@ export default function ArtisanStudio() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishedId, setPublishedId] = useState('prod-001');
 
+  // Google Gemma 4 31B Multimodal Vision State
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const [visionAnalysisDone, setVisionAnalysisDone] = useState(false);
+  const [visionDetectedCraft, setVisionDetectedCraft] = useState<string | null>(null);
+
+  const runGemmaImageUnderstanding = async (imgData: string) => {
+    setIsAnalyzingImage(true);
+    try {
+      const analysis = await analyzeCraftImage(imgData);
+      if (analysis && analysis.craft_type) {
+        setVisionAnalysisDone(true);
+        setVisionDetectedCraft(analysis.craft_type);
+        setExtractedData(prev => ({
+          ...prev,
+          productName: analysis.product_name_en || prev.productName,
+          productNameHi: analysis.product_name_hi || prev.productNameHi,
+          craftType: analysis.craft_type,
+          materials: analysis.materials && analysis.materials.length > 0 ? analysis.materials : prev.materials,
+          dimensions: analysis.estimated_dimensions || prev.dimensions,
+          productionDays: analysis.estimated_production_days || prev.productionDays,
+          recommendedPrice: analysis.suggested_retail_price || prev.recommendedPrice,
+          descriptionHi: analysis.description_hi || prev.descriptionHi,
+          descriptionEn: analysis.description_en || prev.descriptionEn,
+          voiceScriptHi: `बधाई हो! आपका शिल्प ${analysis.product_name_hi} Google Gemma 4 AI द्वारा पहचाना गया है। इसका अनुशंसित मूल्य ₹${(analysis.suggested_retail_price || prev.recommendedPrice).toLocaleString('en-IN')} है।`
+        }));
+      }
+    } catch (err) {
+      console.warn('Gemma image understanding note:', err);
+    } finally {
+      setIsAnalyzingImage(false);
+    }
+  };
+
   useEffect(() => {
     return () => {
       stopCamera();
@@ -238,6 +272,7 @@ export default function ArtisanStudio() {
         const dataUrl = canvas.toDataURL('image/jpeg');
         setPhotoUrl(dataUrl);
         stopCamera();
+        runGemmaImageUnderstanding(dataUrl);
         setStep(2); // Advance to voice step
       }
     }
@@ -252,8 +287,10 @@ export default function ArtisanStudio() {
       }
       const reader = new FileReader();
       reader.onload = (event) => {
-        setPhotoUrl(event.target?.result as string);
+        const dataUrl = event.target?.result as string;
+        setPhotoUrl(dataUrl);
         stopCamera();
+        runGemmaImageUnderstanding(dataUrl);
         setStep(2); // Advance to voice step
       };
       reader.readAsDataURL(file);
@@ -1078,6 +1115,12 @@ export default function ArtisanStudio() {
                   <ShieldCheck className="w-3 h-3 text-[#e9a83a]" />
                   <span>GI Heritage Craft</span>
                 </div>
+                {visionDetectedCraft && (
+                  <div className="absolute bottom-3 left-3 bg-[#1b4332]/90 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 border border-white/20">
+                    <Sparkles className="w-3 h-3 text-[#e9a83a]" />
+                    <span>Gemma 4 31B Vision: {visionDetectedCraft}</span>
+                  </div>
+                )}
               </div>
             )}
 

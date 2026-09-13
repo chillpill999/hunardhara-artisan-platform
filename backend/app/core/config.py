@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Sarvam AI API Credentials
     SARVAM_API_KEY: Optional[str] = os.getenv("SARVAM_API_KEY", None)
 
+    # OpenRouter AI Credentials (Gemma 4 31B Multimodal)
+    OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY", None)
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
+    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
     # Storage & File Uploads
     STATIC_DIR: str = os.getenv("STATIC_DIR", "./static")
     UPLOAD_MAX_SIZE_MB: int = 15

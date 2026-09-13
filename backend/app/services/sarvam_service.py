@@ -301,6 +301,32 @@ class SarvamService:
             "Do NOT include markdown formatting or backticks, return raw JSON only."
         )
 
+        # 1. Try OpenRouter Gemma 4 31B if configured
+        if settings.OPENROUTER_API_KEY and not settings.OFFLINE_MODE:
+            try:
+                from app.services.openrouter_service import openrouter_service
+                raw_cat = openrouter_service._call_openrouter([
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Artisan Voice Transcript:\n{transcript}"}
+                ], max_tokens=1024, temperature=0.1)
+                if raw_cat:
+                    json_match = re.search(r"\{[\s\S]*\}", raw_cat)
+                    if json_match:
+                        parsed = json.loads(json_match.group(0))
+                        mat_cost = float(parsed.get("material_cost", 2000))
+                        days = int(parsed.get("production_days", 7))
+                        wage_floor = mat_cost + (days * 650.0)
+                        rec_price = max(float(parsed.get("recommended_price", wage_floor * 1.2)), wage_floor * 1.15)
+                        parsed["material_cost"] = int(mat_cost)
+                        parsed["production_days"] = days
+                        parsed["recommended_price"] = int(round(rec_price, -1))
+                        parsed["wage_floor"] = int(round(wage_floor, -1))
+                        parsed["source"] = "openrouter_gemma_4_31b"
+                        return {"success": True, "attributes": parsed}
+            except Exception as e:
+                logger.warning(f"OpenRouter Gemma extraction note: {e}")
+
+        # 2. Try Sarvam AI 105B LLM
         if api_key:
             try:
                 res = self.chat_completion(
