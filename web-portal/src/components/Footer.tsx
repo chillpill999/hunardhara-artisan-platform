@@ -66,10 +66,11 @@ export default function Footer() {
           <div>
             © 2026 Hunardhara (हुनरधारा) • Honoring India&apos;s Living Traditions
           </div>
-          <div className="flex gap-6">
+          <div className="flex flex-wrap gap-4 sm:gap-6 justify-center sm:justify-end">
             <Link href="/" className="hover:text-white transition-colors">Catalog</Link>
             <Link href="/b2b" className="hover:text-white transition-colors">Bulk Sourcing</Link>
-            <Link href="/#collection" className="hover:text-white transition-colors">Artisan Clusters</Link>
+            <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
+            <Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link>
           </div>
         </div>
       </div>
