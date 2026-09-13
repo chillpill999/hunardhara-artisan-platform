@@ -83,17 +83,16 @@ export default function Navbar() {
             </>
           )}
 
-          {(role === 'artisan' || role === 'admin') && (
+          {role === 'artisan' && (
             <Link
               href="/artisan?tab=studio"
               className={`transition-colors hover:text-[#1b4332] flex items-center gap-1.5 ${
                 pathname.startsWith('/artisan') ? 'text-[#1b4332] font-bold' : ''
               }`}
             >
+              <Camera className="w-3.5 h-3.5 text-[#c85a32]" />
               <span>कारीगर स्टूडियो</span>
-              {role === 'artisan' && (
-                <span className="w-2 h-2 rounded-full bg-[#c85a32]" />
-              )}
+              <span className="w-2 h-2 rounded-full bg-[#c85a32]" />
             </Link>
           )}
 
@@ -114,7 +113,7 @@ export default function Navbar() {
               }`}
             >
               <ShieldCheck className="w-4 h-4 text-[#c85a32]" />
-              <span>क्लस्टर प्रशासन</span>
+              <span>प्रशासन नियंत्रण</span>
             </Link>
           )}
         </nav>

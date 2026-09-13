@@ -186,7 +186,7 @@ function ArtisanPortalContent() {
 
   return (
     <AuthGuard
-      allowedRoles={['artisan', 'admin']}
+      allowedRoles={['artisan']}
       redirectMessage="Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings."
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 sm:py-10 space-y-6 pb-28">

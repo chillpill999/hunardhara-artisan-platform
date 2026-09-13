@@ -13,7 +13,8 @@ import {
   Building2,
   LogIn,
   ShieldCheck,
-  Camera
+  Camera,
+  Palette
 } from 'lucide-react';
 
 export default function MobileBottomNav() {
@@ -178,14 +179,26 @@ export default function MobileBottomNav() {
 
         {/* TAB 3: ELEVATED CENTER ACTION */}
         <Link
-          href={user ? '/artisan' : '/login?redirect=/artisan'}
+          href={
+            role === 'admin'
+              ? '/admin'
+              : role === 'artisan'
+              ? '/artisan?tab=studio'
+              : user
+              ? '/artisan'
+              : '/login?redirect=/artisan'
+          }
           className="flex flex-col items-center -mt-5 group"
         >
           <div className="w-13 h-13 rounded-full bg-[#c85a32] hover:bg-[#b84e28] text-white flex items-center justify-center shadow-lg border-2 border-white transition-transform group-hover:scale-105 active:scale-95">
-            <Camera className="w-6 h-6 text-[#faf7f2]" />
+            {role === 'admin' ? (
+              <ShieldCheck className="w-6 h-6 text-[#faf7f2]" />
+            ) : (
+              <Camera className="w-6 h-6 text-[#faf7f2]" />
+            )}
           </div>
           <span className="text-[10px] font-bold text-[#c85a32] mt-0.5">
-            {role === 'admin' ? 'स्टूडियो' : 'बेचें'}
+            {role === 'admin' ? 'प्रशासन' : 'स्टूडियो'}
           </span>
         </Link>
 
@@ -200,7 +213,7 @@ export default function MobileBottomNav() {
           <span className="text-[10px]">थोक (B2B)</span>
         </Link>
 
-        {/* TAB 5: ADMIN / LOGIN */}
+        {/* TAB 5: ADMIN / ARTISAN / PATRON ACCOUNT */}
         {user ? (
           role === 'admin' ? (
             <Link
@@ -211,6 +224,16 @@ export default function MobileBottomNav() {
             >
               <ShieldCheck className="w-5 h-5" />
               <span className="text-[10px]">प्रशासन</span>
+            </Link>
+          ) : role === 'artisan' ? (
+            <Link
+              href="/artisan"
+              className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${
+                pathname.startsWith('/artisan') ? 'text-[#1b4332] font-bold' : 'text-[#6f5f58]'
+              }`}
+            >
+              <Palette className="w-5 h-5 text-[#c85a32]" />
+              <span className="text-[10px]">कार्यशाला</span>
             </Link>
           ) : (
             <Link
