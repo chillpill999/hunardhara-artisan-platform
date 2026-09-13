@@ -50,7 +50,7 @@ const INITIAL_CART: CartItem[] = [
 
 export default function CartPage() {
   return (
-    <AuthGuard allowedRoles={['customer', 'admin']}>
+    <AuthGuard allowedRoles={['customer', 'artisan', 'admin']}>
       <CartContent />
     </AuthGuard>
   );

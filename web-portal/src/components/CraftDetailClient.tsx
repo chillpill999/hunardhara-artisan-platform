@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
 import { fetchProductById, removeProduct, ID_ALIASES } from '@/lib/api';
@@ -32,11 +32,12 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
   const router = useRouter();
   const params = useParams();
   const { user, role } = useAuth();
+  const lastFetchedIdRef = useRef<string | null>(null);
 
   // Helper to extract the actual craft ID requested in the browser URL
   const getRequestedId = () => {
     if (typeof window !== 'undefined') {
-      const parts = window.location.pathname.split('/');
+      const parts = window.location.pathname.split('/').filter(Boolean);
       const craftIdx = parts.indexOf('craft');
       if (craftIdx !== -1 && parts[craftIdx + 1]) {
         return parts[craftIdx + 1].replace(/\.html$/, '').split('?')[0].split('#')[0];
@@ -45,37 +46,78 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
     return (params?.id as string) || id;
   };
 
-  const [activeId, setActiveId] = useState<string>(getRequestedId);
-
   // Helper to verify if a loaded product matches the target route ID (or its alias)
   const doesProductMatch = (prod: Product | null, targetId: string) => {
     if (!prod || !targetId) return false;
     if (prod.id === targetId) return true;
     const alias = ID_ALIASES[targetId];
     if (alias && prod.id === alias) return true;
+    for (const [k, v] of Object.entries(ID_ALIASES)) {
+      if (k === targetId && prod.id === v) return true;
+      if (v === targetId && prod.id === k) return true;
+    }
     return false;
   };
 
-  // Only use initialProduct if it actually matches the requested URL ID
-  const initialMatches = doesProductMatch(initialProduct, activeId);
-  const [product, setProduct] = useState<Product | null>(initialMatches ? initialProduct : null);
-  const [loading, setLoading] = useState<boolean>(!initialMatches);
+  // Initial state MUST match server pre-rendered HTML to eliminate React Hydration Error #418.
+  // Dynamic resolution for new or unseeded crafts occurs smoothly post-mount.
+  const [mounted, setMounted] = useState(false);
+  const [activeId, setActiveId] = useState<string>(id);
+  const [product, setProduct] = useState<Product | null>(initialProduct);
+  const [loading, setLoading] = useState<boolean>(false);
   const [showOriginal, setShowOriginal] = useState(false);
   const [orderSent, setOrderSent] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
 
+  // Handlers enforcing authentication for purchases and inquiries
+  const handlePurchase = () => {
+    if (!user) {
+      const returnUrl = `/craft/${activeId || id}`;
+      router.push(`/login?redirect=${encodeURIComponent(returnUrl)}&msg=${encodeURIComponent('खरीदारी के लिए कृपया लॉगिन करें। केवल सत्यापित खरीदार ही कारीगर से सीधे ऑर्डर कर सकते हैं। (Please sign in to buy this craft.)')}`);
+      return;
+    }
+    setOrderSent(true);
+  };
+
+  const handleOpenInquiry = () => {
+    if (!user) {
+      const returnUrl = `/craft/${activeId || id}`;
+      router.push(`/login?redirect=${encodeURIComponent(returnUrl)}&msg=${encodeURIComponent('कारीगर से सीधा सवाल पूछने के लिए कृपया लॉगिन करें। (Please sign in to inquire with the artisan.)')}`);
+      return;
+    }
+    setIsInquiryModalOpen(true);
+  };
+
+  const handleOpenWholesaleInquiry = () => {
+    if (!user) {
+      const returnUrl = `/craft/${activeId || id}`;
+      router.push(`/login?redirect=${encodeURIComponent(returnUrl)}&msg=${encodeURIComponent('थोक मांग पूछने के लिए कृपया लॉगिन करें। (Please sign in to inquire for wholesale pricing.)')}`);
+      return;
+    }
+    setIsInquiryModalOpen(true);
+  };
+
   // Sync activeId whenever route parameters or window pathname changes
   useEffect(() => {
+    setMounted(true);
     const currentUrlId = getRequestedId();
     if (currentUrlId && currentUrlId !== activeId) {
       setActiveId(currentUrlId);
     }
   }, [params, id]);
 
+  // Set document title when product loads
+  useEffect(() => {
+    if (product?.title_en) {
+      document.title = `${product.title_en} | HunarDhara`;
+    }
+  }, [product]);
+
   // Fetch the correct product whenever activeId changes or when product doesn't match
   useEffect(() => {
-    const targetId = activeId || id;
+    if (!mounted) return;
+    const targetId = activeId || getRequestedId();
     if (!targetId) return;
 
     if (doesProductMatch(product, targetId)) {
@@ -83,6 +125,11 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
       return;
     }
 
+    if (lastFetchedIdRef.current === targetId && !loading) {
+      return;
+    }
+
+    lastFetchedIdRef.current = targetId;
     setLoading(true);
     let cancelled = false;
 
@@ -103,13 +150,36 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
     return () => {
       cancelled = true;
     };
-  }, [activeId, id, product]);
+  }, [mounted, activeId]);
 
-  if (loading) {
+  // 1. Post-mount loading indicator when loading a different craft than initial HTML
+  if (mounted && loading && !doesProductMatch(product, activeId)) {
     return (
-      <div className="max-w-4xl mx-auto py-28 px-4 text-center space-y-4">
+      <div className="max-w-4xl mx-auto py-28 px-4 text-center space-y-4" suppressHydrationWarning>
         <div className="w-10 h-10 border-3 border-[#c85a32] border-t-transparent rounded-full animate-spin mx-auto"></div>
         <p className="text-xs text-[#6f5f58]">कारीगर कार्यशाला से शिल्प विवरण लोड हो रहा है... (Loading craft details...)</p>
+      </div>
+    );
+  }
+
+  // 2. Craft not found or removed
+  if (mounted && !loading && (!product || !doesProductMatch(product, activeId))) {
+    return (
+      <div className="max-w-md mx-auto py-24 px-4 text-center space-y-4" suppressHydrationWarning>
+        <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h2 className="text-xl font-bold text-[#231f1e]">Craft Listing Unavailable</h2>
+        <p className="text-xs text-[#6f5f58]">
+          यह शिल्प उत्पाद वर्तमान में उपलब्ध नहीं है या हटा दिया गया है। (This craft is not available or has been removed.)
+        </p>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#1b4332] text-white hover:bg-[#2d6a4f] transition-all"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>वापस बाज़ार जाएं (Return to Marketplace)</span>
+        </Link>
       </div>
     );
   }
@@ -161,7 +231,7 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-14 space-y-10">
+    <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-14 space-y-10" suppressHydrationWarning>
       {/* Back Link */}
       <Link
         href="/"
@@ -259,7 +329,7 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsInquiryModalOpen(true)}
+                  onClick={handleOpenWholesaleInquiry}
                   className="text-[10.5px] font-bold text-[#c85a32] hover:underline mt-1 cursor-pointer"
                 >
                   थोक मांग पूछें →
@@ -322,8 +392,23 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
             </div>
           </div>
 
-          {/* Direct Order Request */}
+          {/* Direct Order Request & Actions */}
           <div className="pt-3 border-t border-[#e6ded3] space-y-3">
+            {/* Guest Browsing Policy Notice */}
+            {!user && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3.5 py-2.5 rounded-2xl text-xs flex items-center gap-2.5">
+                <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+                <div className="flex-1">
+                  <span className="font-bold block text-[11px] uppercase tracking-wider text-amber-800">
+                    अवलोकन खुला • खरीद व पूछताछ के लिए लॉगिन अनिवार्य
+                  </span>
+                  <span className="text-[11px] text-amber-900/90 leading-tight block mt-0.5">
+                    उत्पाद देखना सार्वजनिक है। सीधे कारीगर से खरीदने या सवाल पूछने के लिए कृपया साइन इन करें।
+                  </span>
+                </div>
+              </div>
+            )}
+
             {orderSent ? (
               <div className="bg-[#e8f5e9] border border-[#c8e6c9] text-[#1b4332] p-5 rounded-2xl flex items-center gap-3.5">
                 <CheckCircle2 className="w-6 h-6 text-[#2d6a4f] shrink-0" />
@@ -356,10 +441,15 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
                 </div>
 
                 <button
-                  onClick={() => setOrderSent(true)}
-                  className="flex-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-sm py-4 px-6 rounded-full transition-all shadow-xs flex items-center justify-center gap-2 active:scale-98"
+                  onClick={handlePurchase}
+                  className="flex-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-sm py-4 px-6 rounded-full transition-all shadow-xs flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
                 >
-                  <span>कारीगर से सीधे खरीदें (₹{Number((product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0) * quantity).toLocaleString('en-IN')})</span>
+                  {!user && <Lock className="w-4 h-4 text-[#e9a83a]" />}
+                  <span>
+                    {user
+                      ? `कारीगर से सीधे खरीदें (₹${Number((product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0) * quantity).toLocaleString('en-IN')})`
+                      : 'खरीदने के लिए लॉगिन करें (Sign In to Buy)'}
+                  </span>
                 </button>
 
                 <button
@@ -375,11 +465,15 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
             {/* Direct Inquiry with Artisan CTA */}
             <button
               type="button"
-              onClick={() => setIsInquiryModalOpen(true)}
+              onClick={handleOpenInquiry}
               className="w-full bg-[#faf7f2] hover:bg-[#f4ede4] text-[#1b4332] border border-[#1b4332]/25 font-bold text-xs py-3 px-5 rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-98"
             >
-              <MessageSquareQuote className="w-4 h-4 text-[#c85a32]" />
-              <span>कारीगर से सीधा सवाल पूछें (Ask Artisan / Inquire)</span>
+              {!user ? <Lock className="w-4 h-4 text-amber-600" /> : <MessageSquareQuote className="w-4 h-4 text-[#c85a32]" />}
+              <span>
+                {user
+                  ? 'कारीगर से सीधा सवाल पूछें (Ask Artisan / Inquire)'
+                  : 'पूछताछ के लिए लॉगिन करें (Sign In to Inquire)'}
+              </span>
             </button>
 
             <p className="text-[11px] text-[#6f5f58] text-center flex items-center justify-center gap-1.5">

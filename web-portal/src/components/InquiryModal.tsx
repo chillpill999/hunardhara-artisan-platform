@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext';
 import { saveInquiry } from '@/lib/inquiries';
 import { ArtisanInquiry } from '@/lib/types';
 import {
@@ -13,7 +15,9 @@ import {
   Mail,
   User,
   Package,
-  ShieldCheck
+  ShieldCheck,
+  Lock,
+  LogIn
 } from 'lucide-react';
 
 interface InquiryModalProps {
@@ -40,17 +44,99 @@ export default function InquiryModal({
   artisanCluster,
   defaultType = 'customization',
 }: InquiryModalProps) {
+  const { user } = useAuth();
+  const router = useRouter();
+
   const [inquiryType, setInquiryType] = useState<ArtisanInquiry['inquiry_type']>(defaultType);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerName, setCustomerName] = useState(user?.user_metadata?.full_name || '');
+  const [customerPhone, setCustomerPhone] = useState(user?.user_metadata?.phone || '');
+  const [customerEmail, setCustomerEmail] = useState(user?.email || '');
   const [quantity, setQuantity] = useState<number | ''>('');
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sync logged in user profile
+  useEffect(() => {
+    if (user) {
+      if (!customerName && user.user_metadata?.full_name) {
+        setCustomerName(user.user_metadata.full_name);
+      }
+      if (!customerEmail && user.email) {
+        setCustomerEmail(user.email);
+      }
+      if (!customerPhone && user.user_metadata?.phone) {
+        setCustomerPhone(user.user_metadata.phone);
+      }
+    }
+  }, [user]);
+
   if (!isOpen) return null;
+
+  // Strict Login Gate: Unauthenticated users are blocked from sending inquiries
+  if (!user) {
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : `/craft/${productId}`;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="bg-white rounded-3xl border border-[#e6ded3] max-w-md w-full p-6 sm:p-8 text-center space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 rounded-full text-[#6f5f58] hover:bg-[#faf7f2] transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="w-14 h-14 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto shadow-xs">
+            <Lock className="w-7 h-7" />
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider bg-amber-100 px-3 py-1 rounded-full">
+              लॉगिन आवश्यक • Sign In Required
+            </span>
+            <h3 className="font-sans text-xl font-bold text-[#231f1e]">
+              कारीगर से पूछताछ के लिए साइन इन करें
+            </h3>
+            <p className="text-xs text-[#6f5f58] leading-relaxed">
+              उत्पाद अवलोकन खुला है, परंतु कारीगरों को स्पैम से बचाने और सीधी बातचीत के लिए केवल सत्यापित खरीदार ही प्रश्न पूछ सकते हैं।
+            </p>
+          </div>
+
+          <div className="bg-[#faf7f2] p-3 rounded-2xl border border-[#e6ded3] text-left text-xs text-[#231f1e] flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white border border-[#e6ded3] overflow-hidden shrink-0 flex items-center justify-center">
+              <img src={productImage || '/logo.png'} alt="" className="w-full h-full object-contain" />
+            </div>
+            <div className="truncate flex-1">
+              <span className="font-bold block truncate">{productTitle}</span>
+              <span className="text-[11px] text-[#6f5f58]">{artisanName || 'कारीगर'}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                router.push(`/login?redirect=${encodeURIComponent(currentPath)}&msg=${encodeURIComponent('कारीगर से सीधा सवाल पूछने के लिए कृपया लॉगिन करें (Please sign in to inquire with the artisan)')}`);
+              }}
+              className="w-full bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-xs py-3.5 px-5 rounded-2xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>लॉगिन करें (Sign In to Inquire)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full bg-white hover:bg-[#faf7f2] text-[#6f5f58] font-semibold text-xs py-2.5 rounded-xl border border-[#e6ded3] transition-colors cursor-pointer"
+            >
+              रद्द करें (Cancel)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

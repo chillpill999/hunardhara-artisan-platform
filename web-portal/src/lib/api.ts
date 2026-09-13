@@ -1,4 +1,5 @@
 import { CraftCluster, Product, B2BRFQRequest, B2BMatchResponse, ArtisanEarnings, ArtisanStudioDraft } from "./types";
+import { supabase } from "./supabase";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://hunardhara-artisan-platform.onrender.com/api/v1";
 
@@ -452,9 +453,9 @@ export function normalizeProduct(raw: any): Product {
   const descHi = raw.description_hi || raw.description_hindi || titleHi;
 
   // Price handling
-  const floorPrice = Number(raw.floor_price) || 1200;
+  const floorPrice = Number(raw.floor_price ?? raw.cost_materials) || 1200;
   const recommendedRetail = Number(
-    raw.recommended_retail_d2c ?? raw.recommended_retail_price ?? raw.listing_price ?? Math.round(floorPrice * 1.6)
+    raw.recommended_retail_d2c ?? raw.recommended_retail_price ?? raw.listing_price ?? raw.price ?? Math.round(floorPrice * 1.6)
   );
   const wholesaleB2b = Number(
     raw.wholesale_b2b ?? raw.wholesale_b2b_price ?? Math.round(recommendedRetail * 0.7)
@@ -490,11 +491,12 @@ export function normalizeProduct(raw: any): Product {
       : [raw.craft_type || 'Indian Handicraft', 'MoSJE Verified'];
 
   // Image handling
-  const studioImg = raw.studio_image_url || '/logo.png';
+  const studioImg = raw.studio_image_url || raw.image_url || '/logo.png';
 
   // Artisan & State attribution
   const artisanName =
     raw.artisan_name ||
+    raw.profiles?.full_name ||
     (raw.craft_type?.includes('Silk')
       ? 'Radheshyam Ansari'
       : raw.craft_type?.includes('Dhokra')
@@ -509,6 +511,7 @@ export function normalizeProduct(raw: any): Product {
 
   const artisanState =
     raw.artisan_state ||
+    raw.state ||
     (raw.craft_type?.includes('Silk')
       ? 'Uttar Pradesh'
       : raw.craft_type?.includes('Dhokra')
@@ -555,14 +558,31 @@ export async function fetchProducts(): Promise<Product[]> {
   const removedIds = new Set(getRemovedProductIds());
 
   let allProducts: Product[] = [];
+
+  // 1. Fetch from Supabase published products
+  let supabaseProducts: Product[] = [];
+  try {
+    const { data: supaData, error: supaErr } = await supabase
+      .from("craft_products")
+      .select("*, profiles(full_name, phone, role)")
+      .eq("is_published", true)
+      .order("created_at", { ascending: false });
+    if (!supaErr && Array.isArray(supaData) && supaData.length > 0) {
+      supabaseProducts = supaData.map(normalizeProduct);
+    }
+  } catch (err) {
+    console.warn("Supabase fetchProducts note:", err);
+  }
+
+  // 2. Fetch from FastAPI backend
   try {
     const res = await fetch(`${API_BASE}/products`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const normalized = data.map(normalizeProduct);
-        const ids = new Set(localUploaded.map(p => p.id));
-        allProducts = [...localUploaded, ...normalized.filter((p: Product) => !ids.has(p.id))];
+        const ids = new Set([...localUploaded, ...supabaseProducts].map(p => p.id));
+        allProducts = [...localUploaded, ...supabaseProducts, ...normalized.filter((p: Product) => !ids.has(p.id))];
       }
     }
   } catch {
@@ -570,9 +590,9 @@ export async function fetchProducts(): Promise<Product[]> {
   }
 
   if (allProducts.length === 0) {
-    const ids = new Set(localUploaded.map(p => p.id));
+    const ids = new Set([...localUploaded, ...supabaseProducts].map(p => p.id));
     const primarySeeds = SEED_PRODUCTS.filter(p => !p.is_alias);
-    allProducts = [...localUploaded, ...primarySeeds.map(normalizeProduct).filter(p => !ids.has(p.id))];
+    allProducts = [...localUploaded, ...supabaseProducts, ...primarySeeds.map(normalizeProduct).filter(p => !ids.has(p.id))];
   }
 
   return allProducts.filter((p) => !removedIds.has(p.id));
@@ -582,6 +602,7 @@ export async function fetchProductById(id: string): Promise<Product | null> {
   const removedIds = new Set(getRemovedProductIds());
   if (removedIds.has(id)) return null;
 
+  // 1. Check local client storage
   const localUploaded = getUploadedProducts();
   const localFound = localUploaded.find((p) => p.id === id);
   if (localFound) return normalizeProduct(localFound);
@@ -592,6 +613,34 @@ export async function fetchProductById(id: string): Promise<Product | null> {
     if (aliasLocal) return normalizeProduct(aliasLocal);
   }
 
+  // 2. Check Supabase craft_products table
+  try {
+    const { data: supaProduct, error: supaErr } = await supabase
+      .from("craft_products")
+      .select("*, profiles(full_name, phone, role)")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!supaErr && supaProduct && !removedIds.has(supaProduct.id)) {
+      return normalizeProduct(supaProduct);
+    }
+
+    if (aliasId) {
+      const { data: supaAliasProduct, error: supaAliasErr } = await supabase
+        .from("craft_products")
+        .select("*, profiles(full_name, phone, role)")
+        .eq("id", aliasId)
+        .maybeSingle();
+
+      if (!supaAliasErr && supaAliasProduct && !removedIds.has(supaAliasProduct.id)) {
+        return normalizeProduct(supaAliasProduct);
+      }
+    }
+  } catch (err) {
+    console.warn("Supabase fetchProductById note:", err);
+  }
+
+  // 3. Check FastAPI backend
   try {
     const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
@@ -608,6 +657,7 @@ export async function fetchProductById(id: string): Promise<Product | null> {
     // Fallback
   }
 
+  // 4. Check seed products
   const seedFound = SEED_PRODUCTS.find((p) => p.id === id) || (aliasId ? SEED_PRODUCTS.find((p) => p.id === aliasId) : undefined);
   if (seedFound && !removedIds.has(seedFound.id)) return normalizeProduct(seedFound);
   return null;

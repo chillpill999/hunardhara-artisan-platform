@@ -395,18 +395,66 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       }
     }
 
-    // Dynamic craft detail routes (e.g. newly published products like /craft/prod-live-*)
-    if (pathname.startsWith('/craft/') && !pathname.includes('.')) {
-      let res = await env.ASSETS.fetch(request);
-      if (res.status === 404) {
-        const htmlReq = new Request(new URL(`${pathname}.html`, url.origin), request);
-        res = await env.ASSETS.fetch(htmlReq);
+    // Dynamic craft detail routes (e.g. newly published products like /craft/prod-live-* or UUIDs)
+    if (pathname.startsWith('/craft/')) {
+      const isTxt = pathname.endsWith('.txt') || url.searchParams.has('_rsc');
+      const isHtml = pathname.endsWith('.html') || !pathname.includes('.');
+
+      if (isTxt) {
+        let res = await env.ASSETS.fetch(request);
+        const cleanPath = pathname.endsWith('.txt') ? pathname.slice(0, -4) : pathname;
+        const targetId = cleanPath.replace('/craft/', '').split('/')[0].split('?')[0];
+
+        const isStaticSeed = [
+          'prod-001', 'prod-002', 'prod-003', 'prod-004', 'prod-005',
+          'prod-varanasi-001', 'prod-bastar-001', 'prod-bastar-002',
+          'prod-khurja-001', 'prod-madhubani-001', 'prod-channapatna-001'
+        ].includes(targetId);
+
+        if (!isStaticSeed) {
+          const fallbackReq = new Request(new URL('/craft/prod-001.txt', url.origin));
+          const fallbackRes = await env.ASSETS.fetch(fallbackReq);
+          const txt = await fallbackRes.text();
+          const rewrittenTxt = txt.replaceAll('prod-001', targetId);
+          return new Response(rewrittenTxt, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/x-component; charset=utf-8',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+            },
+          });
+        }
+        return res;
       }
-      if (res.status === 404) {
-        const fallbackReq = new Request(new URL('/craft/prod-001.html', url.origin), request);
-        return env.ASSETS.fetch(fallbackReq);
+
+      if (isHtml) {
+        let res = await env.ASSETS.fetch(request);
+        const cleanPath = pathname.endsWith('.html') ? pathname.slice(0, -5) : pathname;
+        const targetId = cleanPath.replace('/craft/', '').split('/')[0].split('?')[0];
+
+        // If not a static seed asset, dynamically load the craft shell
+        const isStaticSeed = [
+          'prod-001', 'prod-002', 'prod-003', 'prod-004', 'prod-005',
+          'prod-varanasi-001', 'prod-bastar-001', 'prod-bastar-002',
+          'prod-khurja-001', 'prod-madhubani-001', 'prod-channapatna-001'
+        ].includes(targetId);
+
+        if (!isStaticSeed) {
+          const fallbackReq = new Request(new URL('/craft/prod-001.html', url.origin));
+          const fallbackRes = await env.ASSETS.fetch(fallbackReq);
+          const htmlText = await fallbackRes.text();
+          const rewrittenHtml = htmlText.replaceAll('prod-001', targetId);
+          return new Response(rewrittenHtml, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'X-Dynamic-Craft': targetId,
+            },
+          });
+        }
+        return res;
       }
-      return res;
     }
 
     // Pass through to static assets
