@@ -18,7 +18,7 @@ export default function AuthGuard({
   allowedRoles,
   redirectMessage = 'Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings.',
 }: AuthGuardProps) {
-  const { user, role, isLoading, signOut } = useAuth();
+  const { user, role, needsOnboarding, isLoading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -68,6 +68,35 @@ export default function AuthGuard({
         >
           Sign In Now
         </Link>
+      </div>
+    );
+  }
+
+  // Authenticated but requires onboarding completion
+  if (needsOnboarding) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-md mx-auto">
+        <div className="w-16 h-16 rounded-3xl bg-amber-50 text-[#c85a32] flex items-center justify-center shadow-xs border border-amber-200">
+          <Lock className="w-8 h-8 text-[#c85a32]" />
+        </div>
+        <div className="space-y-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[#c85a32] bg-amber-50 px-3.5 py-1 rounded-full border border-amber-200">
+            खाता सेटअप अनिवार्य • Setup Required
+          </span>
+          <h2 className="text-2xl font-extrabold text-[#1c1917] tracking-tight">
+            Profile Setup Required
+          </h2>
+          <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-sm mx-auto">
+            Google साइन इन के बाद खाता प्रकार (कारीगर या खरीदार) व संपर्क विवरण चुनना अनिवार्य है। कृपया सामने खुली विंडो में अपना सेटअप पूरा करें।
+          </p>
+        </div>
+        <button
+          onClick={() => signOut()}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2.5 rounded-full border border-[#e4e4e7] hover:bg-[#f4f4f5] text-[#545454] transition-all"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>साइन आउट / दूसरा खाता</span>
+        </button>
       </div>
     );
   }

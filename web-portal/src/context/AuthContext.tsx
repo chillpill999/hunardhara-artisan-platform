@@ -15,7 +15,7 @@ export type UserRole = 'customer' | 'artisan' | 'admin';
 
 export interface UserProfile {
   id: string;
-  role: UserRole;
+  role: UserRole | null;
   full_name: string | null;
   phone?: string | null;
   avatar_url?: string | null;
@@ -90,14 +90,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ? 'admin'
           : (data.role === 'admin' ? 'customer' : (['customer', 'artisan'].includes(data.role) ? data.role : null)) as UserRole | null;
 
-        const isComplete = isMaster || (data.onboarding_completed === true && resolvedRole !== null);
+        // Mandatory signup details requirement:
+        // User MUST have completed onboarding AND have an explicit role (artisan/customer/admin) AND have a valid phone number (>= 10 digits)
+        const hasPhone = typeof data.phone === 'string' && data.phone.replace(/[^0-9]/g, '').length >= 10;
+        const isComplete = isMaster || (data.onboarding_completed === true && resolvedRole !== null && hasPhone);
 
         return {
-          role: resolvedRole,
+          role: isComplete ? resolvedRole : null,
           needsOnboarding: !isComplete,
           profile: {
             id: data.id,
-            role: resolvedRole || 'customer',
+            role: isComplete ? resolvedRole : null,
             full_name: data.full_name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || (resolvedRole === 'admin' ? 'Lead Administrator (Aryan)' : 'Hunardhara Member'),
             avatar_url: data.avatar_url || authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
             phone: data.phone,
@@ -118,14 +121,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ? 'admin'
       : (rawMetaRole === 'admin' ? 'customer' : (['customer', 'artisan'].includes(rawMetaRole) ? (rawMetaRole as UserRole) : null));
 
-    const isComplete = isMaster || (authUser.user_metadata?.onboarding_completed === true && metaRole !== null);
+    const hasMetaPhone = typeof authUser.user_metadata?.phone === 'string' && authUser.user_metadata.phone.replace(/[^0-9]/g, '').length >= 10;
+    const isComplete = isMaster || (authUser.user_metadata?.onboarding_completed === true && metaRole !== null && hasMetaPhone);
 
     return {
-      role: metaRole,
+      role: isComplete ? metaRole : null,
       needsOnboarding: !isComplete,
       profile: {
         id: userId,
-        role: metaRole || 'customer',
+        role: isComplete ? metaRole : null,
         full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (metaRole === 'admin' ? 'Lead Administrator (Aryan)' : 'Hunardhara Member'),
         avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
         onboarding_completed: isComplete,
@@ -479,6 +483,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (profileErr) {
         console.error('Error updating profile in Supabase:', profileErr);
+        setIsLoading(false);
+        return { error: new Error(profileErr.message || 'विवरण सहेजने में विफल (Failed to save profile).') };
       }
 
       setRole(assignedRole);

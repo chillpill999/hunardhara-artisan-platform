@@ -131,7 +131,7 @@ export default function Navbar() {
             <div className="flex items-center gap-2 sm:gap-3">
               {/* User Badge linking to role dashboard/account */}
               <Link
-                href={role === 'customer' ? '/account' : role === 'admin' ? '/admin' : '/artisan'}
+                href={role === 'customer' ? '/account' : role === 'admin' ? '/admin' : role === 'artisan' ? '/artisan' : '#'}
                 className="flex items-center gap-2 bg-white border border-[#e6ded3] hover:border-[#1b4332] px-3 py-1.5 rounded-full shadow-2xs transition-colors"
                 title="खाता विवरण देखें"
               >
@@ -143,7 +143,7 @@ export default function Navbar() {
                     {profile?.full_name || (role === 'admin' ? 'Administrator' : role === 'artisan' ? 'Master Artisan' : 'Valued Patron')}
                   </span>
                   <span className="text-[10px] uppercase font-bold text-[#c85a32] block -mt-0.5">
-                    {role}
+                    {role || 'Setup Required'}
                   </span>
                 </div>
               </Link>

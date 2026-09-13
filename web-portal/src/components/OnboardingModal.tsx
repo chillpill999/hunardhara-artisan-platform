@@ -20,7 +20,8 @@ export default function OnboardingModal() {
   const { user, needsOnboarding, completeOnboarding, signOut } = useAuth();
   const router = useRouter();
 
-  const [selectedRole, setSelectedRole] = useState<UserRole>('artisan');
+  // Explicit role selection required: starts as null so user cannot skip or be auto-assigned
+  const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [state, setState] = useState('Uttar Pradesh');
@@ -30,6 +31,17 @@ export default function OnboardingModal() {
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Lock body scroll while onboarding modal is active
+  useEffect(() => {
+    if (user && needsOnboarding) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [user, needsOnboarding]);
 
   // Prepopulate details from Google metadata if available
   useEffect(() => {
@@ -53,13 +65,19 @@ export default function OnboardingModal() {
     e.preventDefault();
     setErrorMsg(null);
 
+    if (!selectedRole) {
+      setErrorMsg('कृपया अपना खाता प्रकार चुनें: क्या आप "कारीगर / शिल्पकार" हैं या "खरीदार / ग्राहक"? (Please choose your account role to continue).');
+      return;
+    }
+
     if (!fullName.trim()) {
       setErrorMsg('कृपया अपना पूरा नाम दर्ज करें (Please enter your full name).');
       return;
     }
 
-    if (!phone.trim()) {
-      setErrorMsg('कृपया अपना मोबाइल / व्हाट्सएप नंबर दर्ज करें (Please enter your mobile/WhatsApp number).');
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (cleanPhone.length < 10) {
+      setErrorMsg('कृपया एक वैध 10-अंकीय मोबाइल / व्हाट्सएप नंबर दर्ज करें (Please enter a valid 10-digit mobile/WhatsApp number).');
       return;
     }
 
@@ -88,7 +106,7 @@ export default function OnboardingModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white rounded-3xl border border-[#e6ded3] max-w-lg w-full p-6 sm:p-8 space-y-6 shadow-2xl relative my-8">
         {/* Header */}
         <div className="text-center space-y-2">
@@ -221,7 +239,14 @@ export default function OnboardingModal() {
           </div>
 
           {/* Role Specific Fields */}
-          {selectedRole === 'artisan' ? (
+          {selectedRole === null ? (
+            <div className="bg-[#fdfaf6] border-2 border-dashed border-[#e6ded3] p-4 rounded-2xl text-center space-y-1">
+              <span className="text-xs font-bold text-[#c85a32]">👆 कृपया ऊपर दिए गए विकल्पों में से अपना खाता प्रकार चुनें</span>
+              <p className="text-[11px] text-[#6f5f58]">
+                कारीगर (Artisan) या खरीदार (Buyer) चुनें ताकि हम आपके लिए प्रासंगिक सेटअप तैयार कर सकें।
+              </p>
+            </div>
+          ) : selectedRole === 'artisan' ? (
             <div className="space-y-3 pt-1">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Craft Category */}
@@ -319,9 +344,11 @@ export default function OnboardingModal() {
           <div className="pt-3 space-y-2.5">
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !selectedRole}
               className={`w-full text-white font-bold text-xs sm:text-sm py-3.5 rounded-full transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer ${
-                selectedRole === 'artisan'
+                !selectedRole
+                  ? 'bg-neutral-400 cursor-not-allowed'
+                  : selectedRole === 'artisan'
                   ? 'bg-[#c85a32] hover:bg-[#b54f2a]'
                   : 'bg-[#1b4332] hover:bg-[#2d6a4f]'
               } disabled:opacity-50`}
@@ -330,7 +357,13 @@ export default function OnboardingModal() {
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>खाता सेटअप पूरा करें व आगे बढ़ें (Save Profile & Continue)</span>
+                  <span>
+                    {!selectedRole
+                      ? 'पहले खाता प्रकार चुनें (Select Role to Continue)'
+                      : selectedRole === 'artisan'
+                      ? 'कारीगर खाता पूरा करें व स्टूडियो जाएं (Save & Open Studio)'
+                      : 'खरीदार खाता पूरा करें व बाज़ार देखें (Save & View Marketplace)'}
+                  </span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
