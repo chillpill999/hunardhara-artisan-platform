@@ -31,12 +31,14 @@ function maskEmailDisplay(raw: string): string {
 function LoginFormContent() {
   const {
     signIn,
+    signInWithGoogle,
     signInWithMagicLink,
     verifyOtp,
     signUp,
     loginWithDemoAccount,
     user,
-    role
+    role,
+    needsOnboarding,
   } = useAuth();
 
   const router = useRouter();
@@ -63,9 +65,9 @@ function LoginFormContent() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // If already logged in, redirect based on role-specific window
+  // If already logged in and onboarding is completed, redirect based on role
   React.useEffect(() => {
-    if (user && role) {
+    if (user && !needsOnboarding && role) {
       if (role === 'customer') {
         const dest = searchParams.get('redirect');
         if (dest && !dest.startsWith('/artisan') && !dest.startsWith('/admin')) {
@@ -80,7 +82,7 @@ function LoginFormContent() {
         router.push(searchParams.get('redirect') || '/artisan');
       }
     }
-  }, [user, role, searchParams, router]);
+  }, [user, role, needsOnboarding, searchParams, router]);
 
   // Handle URL hash fragments & query errors from Magic Link redirect
   React.useEffect(() => {
@@ -219,6 +221,28 @@ function LoginFormContent() {
     }
   };
 
+  // Handle Google OAuth Sign-in
+  const handleGoogleSignIn = async () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setIsSubmitting(true);
+
+    const redirectUrl = typeof window !== 'undefined'
+      ? `${window.location.origin}/login`
+      : undefined;
+
+    const { error } = await signInWithGoogle(redirectUrl);
+    if (error) {
+      setIsSubmitting(false);
+      const errMsg = error.message || '';
+      if (errMsg.includes('not enabled') || errMsg.includes('provider is not enabled')) {
+        setErrorMsg('गूगल लॉगिन सेटअप: कृपया Supabase Dashboard -> Authentication -> Providers -> Google में Client ID और Secret सक्षम करें।');
+      } else {
+        setErrorMsg(errMsg || 'Google authentication failed. Please try again.');
+      }
+    }
+  };
+
   // Fast Demo Logins
   const handleFastDemoLogin = async (targetRole: UserRole) => {
     setErrorMsg(null);
@@ -268,6 +292,49 @@ function LoginFormContent() {
             </div>
           </div>
         )}
+
+        {/* Google OAuth Sign-in Button */}
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={isSubmitting}
+            className="w-full py-3 px-4 rounded-2xl border border-[#e4e4e7] bg-white hover:bg-[#fafafa] active:bg-[#f4f4f5] text-[#1c1917] font-semibold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-xs hover:border-[#d4d4d8] disabled:opacity-50 disabled:cursor-not-allowed group"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.02h3.88c2.27-2.09 3.66-5.17 3.66-9.11z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.02c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.24v3.12C3.26 21.4 7.33 24 12 24z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.28 14.3c-.25-.72-.38-1.49-.38-2.3s.13-1.58.38-2.3V6.58H1.24C.45 8.15 0 9.97 0 12s.45 3.85 1.24 5.42l4.04-3.12z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.6 1.24 6.58l4.04 3.12c.95-2.83 3.6-4.95 6.72-4.95z"
+              />
+            </svg>
+            <span className="font-semibold text-zinc-800 group-hover:text-zinc-950">
+              Continue with Google
+            </span>
+            <span className="text-[11px] text-zinc-400 font-normal hidden sm:inline">
+              (गूगल से साइन इन)
+            </span>
+          </button>
+
+          <div className="relative flex items-center justify-center pt-1">
+            <div className="border-t border-[#e4e4e7] w-full" />
+            <span className="bg-white px-3 text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider shrink-0">
+              या ईमेल द्वारा • Or with email
+            </span>
+            <div className="border-t border-[#e4e4e7] w-full" />
+          </div>
+        </div>
 
         {/* 3-Way Mode Toggle */}
         <div className="grid grid-cols-3 bg-[#f4f4f5] p-1 rounded-2xl gap-1">

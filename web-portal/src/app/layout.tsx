@@ -22,6 +22,7 @@ export const metadata: Metadata = {
 };
 
 import { AuthProvider } from "@/context/AuthContext";
+import OnboardingModal from "@/components/OnboardingModal";
 
 export default function RootLayout({
   children,
@@ -36,6 +37,7 @@ export default function RootLayout({
           <main className="flex-1">{children}</main>
           <Footer />
           <MobileBottomNav />
+          <OnboardingModal />
         </AuthProvider>
       </body>
     </html>
