@@ -37,7 +37,8 @@ import {
   Radio,
   Clock,
   Coins,
-  Palette
+  Palette,
+  AlertCircle
 } from 'lucide-react';
 
 interface ExtractedAttributes {
@@ -57,12 +58,14 @@ interface ExtractedAttributes {
 }
 
 const INDIC_LANGUAGES = [
-  { code: 'hi-IN', label: 'हिंदी (Hindi)' },
+  { code: 'hi-IN', label: '🇮🇳 हिंदी (Hindi)' },
+  { code: 'en-IN', label: '🇬🇧 English (India)' },
+  { code: 'mr-IN', label: 'मराठी (Marathi)' },
   { code: 'bn-IN', label: 'বাংলা (Bengali)' },
   { code: 'gu-IN', label: 'ગુજરાતી (Gujarati)' },
-  { code: 'mr-IN', label: 'मराठी (Marathi)' },
   { code: 'ta-IN', label: 'தமிழ் (Tamil)' },
   { code: 'te-IN', label: 'తెలుగు (Telugu)' },
+  { code: 'kn-IN', label: 'ಕನ್ನಡ (Kannada)' },
 ];
 
 const VOICE_PRESETS = [
@@ -120,6 +123,8 @@ export default function ArtisanStudio() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [rawTranscript, setRawTranscript] = useState('');
+  const rawTranscriptRef = useRef<string>('');
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
@@ -134,21 +139,21 @@ export default function ArtisanStudio() {
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [aiProcessingStage, setAiProcessingStage] = useState('');
 
-  // AI Extracted Details (Defaults)
+  // AI Extracted Details (Defaults - Neutral Generic Craft, not locked to Varanasi Saree)
   const [extractedData, setExtractedData] = useState<ExtractedAttributes>({
-    productName: 'Varanasi Pure Katan Silk Saree',
-    productNameHi: 'पारंपरिक बनारसी कतान सिल्क साड़ी',
-    craftType: 'Varanasi Silk',
-    materials: ['Pure Katan Silk', 'Gold Zari Thread'],
-    color: 'Deep Crimson & Gold',
-    dimensions: '5.5 meters with blouse piece',
-    productionDays: 10,
-    materialCost: 2800,
-    wageFloor: 9300,
-    recommendedPrice: 11650,
-    descriptionHi: 'शुद्ध कतान सिल्क पर सोने की ज़री का काम, हाथ से बुनी गई पारंपरिक बनारसी साड़ी। निर्माण में 10 दिन का समय लगा।',
-    descriptionEn: 'Master handwoven Varanasi pure katan silk saree adorned with intricate gold zari brocade motifs.',
-    voiceScriptHi: 'बधाई हो! आपका उत्पाद पारंपरिक बनारसी कतान सिल्क साड़ी तैयार है। 10 दिनों की मेहनत और शुद्ध सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹11,650 तय किया गया है।'
+    productName: 'Handcrafted Heritage Craft',
+    productNameHi: 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
+    craftType: 'Traditional Craft (हस्तशिल्प)',
+    materials: ['प्राकृतिक हस्तशिल्प सामग्री'],
+    color: 'प्राकृतिक पारंपरिक रंग',
+    dimensions: 'मानक हस्तशिल्प आकार',
+    productionDays: 4,
+    materialCost: 500,
+    wageFloor: 3100,
+    recommendedPrice: 3900,
+    descriptionHi: 'कुशल शिल्पकार द्वारा पारंपरिक तकनीक से निर्मित प्रामाणिक हस्तशिल्प।',
+    descriptionEn: 'Authentic handcrafted heritage item meticulously created by a skilled artisan.',
+    voiceScriptHi: 'बधाई हो! आपका उत्पाद तैयार है। आपकी मेहनत और सामग्री के आधार पर इसका उचित मूल्य तय किया गया है।'
   });
 
   // Edit Mode on Step 5
@@ -297,15 +302,19 @@ export default function ArtisanStudio() {
     }
   };
 
-  // Voice Recording Handlers with Real-Time Web Speech and Sarvam Saarika
+  // Voice Recording Handlers with Real-Time Web Speech and Dual-Engine Edge ASR (Sarvam + Whisper)
   const startRecording = async () => {
+    setVoiceError(null);
+    rawTranscriptRef.current = '';
+    setRawTranscript('');
+
     try {
       setRecordingSeconds(0);
       timerIntervalRef.current = setInterval(() => {
         setRecordingSeconds(s => s + 1);
       }, 1000);
 
-      // 1. Client-Side Live Speech Recognition for instant feedback
+      // 1. Client-Side Live Speech Recognition for instant real-time feedback
       if (typeof window !== 'undefined') {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
@@ -319,11 +328,15 @@ export default function ArtisanStudio() {
               for (let i = 0; i < event.results.length; i++) {
                 live += event.results[i][0].transcript + ' ';
               }
-              if (live.trim()) {
-                setRawTranscript(live.trim());
+              const cleaned = live.trim();
+              if (cleaned) {
+                rawTranscriptRef.current = cleaned;
+                setRawTranscript(cleaned);
               }
             };
-            recognition.onerror = () => {};
+            recognition.onerror = (e: any) => {
+              console.warn('Web speech recognition note:', e);
+            };
             recognition.start();
             recognitionRef.current = recognition;
           } catch (e) {
@@ -332,7 +345,7 @@ export default function ArtisanStudio() {
         }
       }
 
-      // 2. High-Quality MediaRecorder for Sarvam Saarika upload
+      // 2. High-Quality MediaRecorder for Server/Edge ASR
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
@@ -349,21 +362,26 @@ export default function ArtisanStudio() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setAudioUrl(URL.createObjectURL(audioBlob));
 
-        // Call Sarvam Saarika ASR (via Cloudflare Edge or Render Backend)
-        let finalTranscript = rawTranscript;
+        // Use synchronous ref value to avoid stale state closure bug
+        let finalTranscript = rawTranscriptRef.current.trim();
+
+        // Call Dual-Engine Edge ASR (Sarvam Saarika + Cloudflare Whisper Fallback)
         try {
           const asrResult = await transcribeAudio(audioBlob, selectedLanguage);
-          if (asrResult.success && asrResult.transcript) {
-            finalTranscript = asrResult.transcript;
+          if (asrResult.success && asrResult.transcript && asrResult.transcript.trim()) {
+            finalTranscript = asrResult.transcript.trim();
+            rawTranscriptRef.current = finalTranscript;
             setRawTranscript(finalTranscript);
           }
         } catch (err) {
-          console.warn('Sarvam ASR note:', err);
+          console.warn('Server/Edge ASR transcription note:', err);
         }
 
-        if (!finalTranscript.trim()) {
-          finalTranscript = 'शुद्ध कतान सिल्क की साड़ी, लाल और सुनहरा रंग, 10 दिन में बुनी गई, सोने की ज़री का काम।';
-          setRawTranscript(finalTranscript);
+        if (!finalTranscript) {
+          // No speech detected - NEVER substitute a hardcoded Varanasi Saree!
+          setIsRecording(false);
+          setVoiceError('⚠️ आवाज़ स्पष्ट रूप से सुनाई नहीं दी (Voice not detected clearly). कृपया माइक के पास बोलें या नीचे दिए गए टेक्स्ट बॉक्स में विवरण लिखें।');
+          return;
         }
 
         await processVoiceDescription(finalTranscript);
@@ -371,15 +389,11 @@ export default function ArtisanStudio() {
 
       mediaRecorder.start();
       setIsRecording(true);
-    } catch {
-      // Fallback if mic permission is restricted
-      setIsRecording(true);
-      setTimeout(() => {
-        setIsRecording(false);
-        const mockText = 'शुद्ध कतान सिल्क की साड़ी, लाल और सुनहरा रंग, 10 दिन में बुनी गई, सोने की ज़री का काम।';
-        setRawTranscript(mockText);
-        processVoiceDescription(mockText);
-      }, 2500);
+    } catch (micErr) {
+      console.warn('Microphone access note:', micErr);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      setIsRecording(false);
+      setVoiceError('⚠️ माइक्रोफ़ोन की अनुमति नहीं मिली या माइक उपलब्ध नहीं है (Microphone unavailable or permission denied). आप नीचे सीधे उत्पाद का विवरण लिख सकते हैं या त्वरित विकल्प चुन सकते हैं।');
     }
   };
 
@@ -441,11 +455,11 @@ export default function ArtisanStudio() {
 
       setExtractedData({
         productName: craftData.product_name_en || 'Handcrafted Artisan Craft',
-        productNameHi: craftData.product_name_hi || 'पारंपरिक हस्तशिल्प उत्पाद',
-        craftType: craftData.craft_type || 'Varanasi Silk',
-        materials: craftData.materials || ['शुद्ध कच्चा माल'],
-        color: craftData.color || 'पारंपरिक रंग',
-        dimensions: craftData.dimensions || 'मानक आकार',
+        productNameHi: craftData.product_name_hi || 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
+        craftType: craftData.craft_type || 'Traditional Indian Craft',
+        materials: craftData.materials && craftData.materials.length > 0 ? craftData.materials : ['प्राकृतिक हस्तशिल्प सामग्री'],
+        color: craftData.color || 'प्राकृतिक पारंपरिक रंग',
+        dimensions: craftData.dimensions || 'मानक हस्तशिल्प आकार',
         productionDays: days,
         materialCost: cost,
         wageFloor: floor,
@@ -758,16 +772,44 @@ export default function ArtisanStudio() {
               </span>
             </div>
             <p className="text-xs sm:text-sm text-[#6f5f58]">
-              सामग्री, रंग और बनाने में लगे दिन अपनी क्षेत्रीय भाषा में बोलें। सर्वम एआई सब कुछ समझ लेगा।
+              सामग्री, रंग और बनाने में लगे दिन अपनी भाषा में बोलें। सर्वम ASR और क्लाउडफ़्लेयर AI सब कुछ समझ लेंगे।
             </p>
           </div>
 
-          {/* Indic Language Selector Chips */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[#6f5f58]">
-              <Languages className="w-3.5 h-3.5 text-[#1b4332]" />
-              <span>अपनी भाषा चुनें (Select Indic Language):</span>
+          {/* Voice Error Notice Banner */}
+          {voiceError && (
+            <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start justify-between gap-2 text-xs text-amber-900 animate-in fade-in">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">{voiceError}</p>
+                  <p className="text-[11px] text-amber-700 mt-0.5">
+                    आप नीचे दिए गए टेक्स्ट बॉक्स में सीधे लिखकर भी आगे बढ़ सकते हैं।
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoiceError(null)}
+                className="text-amber-700 hover:text-amber-900 font-bold text-base leading-none p-1"
+              >
+                ×
+              </button>
             </div>
+          )}
+
+          {/* 1-Tap Quick Bilingual Toggles */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-[#6f5f58]">
+              <span className="flex items-center gap-1.5">
+                <Languages className="w-3.5 h-3.5 text-[#1b4332]" />
+                <span>अपनी बोलने की भाषा चुनें (Speaking Language):</span>
+              </span>
+              <span className="text-[11px] text-[#1b4332] font-bold">
+                सक्रिय: {INDIC_LANGUAGES.find(l => l.code === selectedLanguage)?.label || selectedLanguage}
+              </span>
+            </div>
+
             <div className="flex flex-wrap gap-1.5">
               {INDIC_LANGUAGES.map((l) => (
                 <button
@@ -842,7 +884,9 @@ export default function ArtisanStudio() {
               <p className="text-xs text-[#6f5f58] max-w-sm mx-auto">
                 {isRecording
                   ? 'जब आपका बोलना पूरा हो जाए, तो लाल बटन दोबारा दबाएं।'
-                  : 'उदा: "यह शुद्ध कतान सिल्क की बनारसी साड़ी है, लाल और सुनहरा रंग, 10 दिन में बुनी गई है।"'}
+                  : selectedLanguage === 'en-IN'
+                  ? 'E.g.: "This is a handcrafted wooden toy, takes 3 days, made of teak wood."'
+                  : 'उदा: "यह हाथ से बना लकड़ी का खिलौना है, 3 दिन में बना है, शीशम की लकड़ी है।"'}
               </p>
             </div>
 
@@ -859,27 +903,61 @@ export default function ArtisanStudio() {
             )}
           </div>
 
-          {/* Real-time Spoken Transcript Box */}
-          {rawTranscript && (
-            <div className="p-4 bg-[#faf7f2] rounded-2xl border border-[#e6ded3] space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-bold text-[#1b4332]">
-                <span className="flex items-center gap-1">
-                  <Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" />
-                  <span>लाइव ट्रांसक्रिप्ट (Sarvam Saarika Live):</span>
+          {/* Interactive Spoken Transcript & Direct Input Box */}
+          <div className="p-4 bg-[#faf7f2] rounded-2xl border border-[#e6ded3] space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-[#1b4332]">
+              <span className="flex items-center gap-1.5">
+                <Radio className={`w-3.5 h-3.5 ${isRecording ? 'text-red-500 animate-pulse' : 'text-[#2d6a4f]'}`} />
+                <span>
+                  {isRecording
+                    ? 'लाइव ट्रांसक्रिप्ट सुनी जा रही है...'
+                    : rawTranscript
+                    ? 'सुना गया विवरण (Spoken Transcript - Edit if needed):'
+                    : 'या यहाँ सीधे लिखकर विवरण दें (Or Type Directly):'}
                 </span>
+              </span>
+              {rawTranscript.trim() && !isRecording && (
                 <button
                   type="button"
-                  onClick={() => processVoiceDescription(rawTranscript)}
-                  className="text-[#c85a32] hover:underline font-bold"
+                  onClick={() => processVoiceDescription(rawTranscript.trim())}
+                  className="px-3 py-1 bg-[#1b4332] text-white rounded-lg hover:bg-[#133023] font-bold text-xs transition-colors shadow-xs flex items-center gap-1"
                 >
-                  आगे बढ़ें →
+                  <span>AI विश्लेषण करें →</span>
+                </button>
+              )}
+            </div>
+
+            <textarea
+              value={rawTranscript}
+              onChange={(e) => {
+                setRawTranscript(e.target.value);
+                rawTranscriptRef.current = e.target.value;
+              }}
+              placeholder={
+                selectedLanguage === 'en-IN'
+                  ? 'Speak into the mic or type your product details here (e.g., "Handmade brass bell, 2 days of work, cost 400 rupees")...'
+                  : 'माइक दबाकर बोलें या यहाँ अपने उत्पाद का विवरण लिखें (उदा: "हाथ से बनी पीतल की घंटी, 2 दिन का काम, 400 रुपये लागत")...'
+              }
+              rows={3}
+              className="w-full text-sm font-medium text-[#231f1e] bg-white border border-[#e6ded3] rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-[#1b4332]/20 resize-none leading-relaxed"
+            />
+
+            {rawTranscript.trim() && (
+              <div className="flex items-center justify-between text-[11px] text-[#6f5f58]">
+                <span>💡 यदि कोई शब्द गलत सुनाई दिया हो, तो आप ऊपर सीधे सुधार सकते हैं।</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRawTranscript('');
+                    rawTranscriptRef.current = '';
+                  }}
+                  className="text-red-600 hover:underline font-semibold"
+                >
+                  साफ करें (Clear)
                 </button>
               </div>
-              <p className="text-sm font-medium text-[#231f1e] leading-relaxed">
-                &ldquo;{rawTranscript}&rdquo;
-              </p>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Quick 1-Tap Craft Voice Presets for Instant Evaluation */}
           <div className="space-y-2 pt-1 border-t border-[#e6ded3]/60">
@@ -900,6 +978,7 @@ export default function ArtisanStudio() {
                   type="button"
                   onClick={() => {
                     setRawTranscript(preset.text);
+                    rawTranscriptRef.current = preset.text;
                     processVoiceDescription(preset.text, preset.image);
                   }}
                   className="p-2.5 text-left bg-[#faf7f2] hover:bg-[#e8f5e9] border border-[#e6ded3] hover:border-[#2d6a4f] rounded-2xl transition-all flex items-center gap-2.5 group cursor-pointer"

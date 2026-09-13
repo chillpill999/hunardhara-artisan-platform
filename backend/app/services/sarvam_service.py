@@ -353,40 +353,106 @@ class SarvamService:
             except Exception as e:
                 logger.warning(f"Sarvam LLM extraction failed: {e}, using heuristic fallback")
 
-        # Deterministic Indic Fallback parser
+        # Deterministic Multi-Craft Indic Fallback parser
         t_lower = transcript.lower()
-        is_silk = any(k in t_lower for k in ["सिल्क", "साड़ी", "रेशम", "बुनकर", "silk", "saree", "katan", "banarasi"])
-        is_dhokra = any(k in t_lower for k in ["ढोकरा", "पीतल", "धातु", "नंदी", "dhokra", "brass", "bell metal", "tribal"])
-        is_pottery = any(k in t_lower for k in ["मिट्टी", "बर्तन", "सिरेमिक", "पॉट", "खुर्जा", "pottery", "ceramic"])
 
-        if is_silk:
+        # Extract days if spoken
+        days = 4
+        days_match = re.search(r"(\d+)\s*(दिन|हफ्ते|हफ्ता|din|day|days|week|weeks)", t_lower)
+        if days_match:
+            d_val = int(days_match.group(1))
+            if 1 <= d_val <= 90:
+                days = d_val * 7 if any(w in days_match.group(2) for w in ["हफ्त", "week"]) else d_val
+
+        # Extract material cost if spoken
+        mat_cost = 600
+        cost_match = re.search(r"(?:₹|rs\.?|रुपये?|रू\.|cost|price|लागत)\s*(\d+)", t_lower) or re.search(r"(\d+)\s*(?:रुपये?|रू\.|rs\.?|लागत)", t_lower)
+        if cost_match:
+            c_val = int(cost_match.group(1))
+            if 50 <= c_val <= 500000:
+                mat_cost = c_val
+
+        is_wood = any(k in t_lower for k in ["लकड़ी", "काष्ठ", "खिलौना", "चन्नपटना", "सहारनपुर", "wood", "toy", "carving", "teak", "sheesham"])
+        is_dhokra = any(k in t_lower for k in ["ढोकरा", "पीतल", "धातु", "नंदी", "घंटी", "dhokra", "brass", "bell metal", "tribal", "bell"])
+        is_pottery = any(k in t_lower for k in ["मिट्टी", "बर्तन", "सिरेमिक", "पॉट", "खुर्जा", "घड़ा", "कुल्हड़", "pottery", "ceramic", "clay"])
+        is_madhubani = any(k in t_lower for k in ["मधुबनी", "वार्ली", "पेंटिंग", "चित्र", "तस्वीर", "कलमकारी", "madhubani", "painting", "art"])
+        is_leather = any(k in t_lower for k in ["चमड़ा", "चमड़े", "जूती", "चप्पल", "मोजड़ी", "कोल्हापुरी", "leather", "mojari", "wallet"])
+        is_carpet = any(k in t_lower for k in ["कालीन", "दरी", "गलीचा", "carpet", "rug", "dhurrie"])
+        is_cotton = any(k in t_lower for k in ["सूती", "कॉटन", "खादी", "दुपट्टा", "कुर्ता", "cotton", "khadi", "handloom"])
+        is_jewelry = any(k in t_lower for k in ["गहना", "आभूषण", "झुमका", "हार", "मीनाकारी", "jewelry", "necklace"])
+        is_bamboo = any(k in t_lower for k in ["बांस", "जूट", "टोकरी", "bamboo", "cane", "jute", "basket"])
+        is_silk = any(k in t_lower for k in ["सिल्क", "साड़ी", "रेशम", "कतान", "बनारसी", "silk", "saree", "katan", "brocade"])
+
+        if is_wood:
+            craft = "Channapatna Woodcraft & Toys"
+            name_hi = "चन्नपटना हस्तनिर्मित काष्ठ खिलौना / नक्काशी"
+            name_en = "Channapatna Handcrafted Lacquer Woodcraft"
+            mat = ["प्राकृतिक शीशम / सागवान की लकड़ी", "पारंपरिक गैर-विषाक्त लाख रंग"]
+            if not days_match: days = 4
+            if not cost_match: mat_cost = 450
+        elif is_dhokra:
+            craft = "Bastar Dhokra"
+            name_hi = "बस्तर ढोकरा जनजातीय पीतल शिल्प"
+            name_en = "Bastar Dhokra Tribal Bell Metal Craft"
+            mat = ["बेल मेटल", "पीतल", "प्राकृतिक मोम"]
+            if not days_match: days = 5
+            if not cost_match: mat_cost = 650
+        elif is_pottery:
+            craft = "Khurja Pottery"
+            name_hi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक पॉट"
+            name_en = "Khurja Handcrafted Glazed Ceramic Water Pot"
+            mat = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज"]
+            if not days_match: days = 3
+            if not cost_match: mat_cost = 350
+        elif is_madhubani:
+            craft = "Madhubani Folk Painting"
+            name_hi = "मधुबनी हस्तचित्रित पारंपरिक पेंटिंग"
+            name_en = "Authentic Hand-Painted Madhubani Folk Art"
+            mat = ["हस्तनिर्मित पेपर / कैनवास", "प्राकृतिक वनस्पति रंग"]
+            if not days_match: days = 7
+            if not cost_match: mat_cost = 850
+        elif is_leather:
+            craft = "Kolhapuri Leather Craft"
+            name_hi = "कोल्हापुरी पारंपरिक हस्तनिर्मित चर्म शिल्प"
+            name_en = "Authentic Kolhapuri Handcrafted Leather Article"
+            mat = ["प्राकृतिक चर्म", "सूती धागा"]
+            if not days_match: days = 3
+            if not cost_match: mat_cost = 550
+        elif is_carpet:
+            craft = "Bhadohi Hand-Knotted Carpet"
+            name_hi = "भदोही हस्तनिर्मित ऊनी कालीन"
+            name_en = "Bhadohi Hand-Knotted Woolen Carpet"
+            mat = ["शुद्ध ऊन", "सूती ताना"]
+            if not days_match: days = 12
+            if not cost_match: mat_cost = 2200
+        elif is_cotton:
+            craft = "Handloom Cotton Weaving"
+            name_hi = "हथकरघा शुद्ध सूती वस्त्र / दुपट्टा"
+            name_en = "Handloom Pure Cotton Woven Article"
+            mat = ["शुद्ध कॉटन सूत", "प्राकृतिक रंग"]
+            if not days_match: days = 4
+            if not cost_match: mat_cost = 500
+        elif is_bamboo:
+            craft = "Assam Bamboo & Cane Craft"
+            name_hi = "असम हस्तनिर्मित बांस व केन शिल्प"
+            name_en = "Handcrafted Eco-Friendly Bamboo Craft"
+            mat = ["प्राकृतिक असमिया बांस", "केन फाइबर"]
+            if not days_match: days = 3
+            if not cost_match: mat_cost = 300
+        elif is_silk:
             craft = "Varanasi Silk"
             name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी"
             name_en = "Varanasi Pure Katan Silk Handloom Saree"
             mat = ["शुद्ध कतान सिल्क", "स्वर्ण ज़री धागा"]
-            days = 10
-            mat_cost = 2800
-        elif is_dhokra:
-            craft = "Bastar Dhokra"
-            name_hi = "बस्तर ढोकरा जनजातीय नंदी प्रतिमा"
-            name_en = "Bastar Dhokra Tribal Bell Metal Nandi Figurine"
-            mat = ["बेल मेटल", "पीतल", "प्राकृतिक मोम"]
-            days = 5
-            mat_cost = 650
-        elif is_pottery:
-            craft = "Khurja Pottery"
-            name_hi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक वाटर पॉट"
-            name_en = "Khurja Handcrafted Glazed Ceramic Water Pot"
-            mat = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज"]
-            days = 3
-            mat_cost = 350
+            if not days_match: days = 10
+            if not cost_match: mat_cost = 2800
         else:
             craft = "Indian Traditional Handicraft"
             name_hi = "हस्तनिर्मित पारंपरिक भारतीय शिल्प"
-            name_en = "Authentic Indian Handcrafted Art"
-            mat = ["प्राकृतिक सामग्री"]
-            days = 6
-            mat_cost = 1200
+            name_en = "Authentic Indian Handcrafted Heritage Item"
+            mat = ["प्राकृतिक हस्तशिल्प सामग्री"]
+            if not days_match: days = 4
+            if not cost_match: mat_cost = 600
 
         wage_floor = mat_cost + (days * 650.0)
         rec_price = int(round(wage_floor * 1.25, -1))

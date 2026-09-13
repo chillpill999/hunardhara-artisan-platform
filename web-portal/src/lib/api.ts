@@ -1043,16 +1043,19 @@ export async function chatWithHunarSaathi(
 }
 
 /**
- * Transcribe recorded voice audio to Indic text via Sarvam Saarika ASR.
+ * Transcribe recorded voice audio to Indic/English text via Dual-Engine Edge ASR (Sarvam + Whisper).
  */
 export async function transcribeAudio(
   audioBlob: Blob,
   languageCode: string = "hi-IN"
 ): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string }> {
-  // 1. First priority: Edge Sarvam Saarika ASR
+  const isWebm = audioBlob.type?.includes("webm");
+  const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
+
+  // 1. First priority: Dual-Engine Edge ASR (/api/edge/sarvam-asr -> Sarvam + Cloudflare Whisper)
   try {
     const formData = new FormData();
-    formData.append("audio", audioBlob, "artisan_audio.wav");
+    formData.append("audio", audioBlob, fileName);
     formData.append("language_code", languageCode);
 
     const edgeRes = await fetch("/api/edge/sarvam-asr", {
@@ -1061,18 +1064,18 @@ export async function transcribeAudio(
     });
     if (edgeRes.ok) {
       const data = await edgeRes.json();
-      if (data.success && data.transcript) {
+      if (data.success && data.transcript && data.transcript.trim()) {
         return data;
       }
     }
-  } catch {
-    // Edge failed, try Render backend
+  } catch (edgeErr) {
+    console.warn("Dual-engine edge ASR note:", edgeErr);
   }
 
   // 2. Second priority: Render Backend Sarvam Saarika
   try {
     const formData = new FormData();
-    formData.append("audio", audioBlob, "artisan_audio.wav");
+    formData.append("audio", audioBlob, fileName);
     formData.append("language_code", languageCode);
 
     const res = await fetch(`${API_BASE}/voice/transcribe`, {
@@ -1080,13 +1083,16 @@ export async function transcribeAudio(
       body: formData
     });
     if (res.ok) {
-      return await res.json();
+      const data = await res.json();
+      if (data.success && data.transcript && data.transcript.trim()) {
+        return data;
+      }
     }
   } catch (e) {
-    console.warn("Server audio transcription failed:", e);
+    console.warn("Backend audio transcription note:", e);
   }
 
-  // 3. Third priority: Edge Whisper fallback
+  // 3. Third priority: Edge Whisper direct arrayBuffer
   try {
     const whisperRes = await fetch("/api/edge/transcribe", {
       method: "POST",
@@ -1094,10 +1100,10 @@ export async function transcribeAudio(
     });
     if (whisperRes.ok) {
       const data = await whisperRes.json();
-      if (data.success && data.transcript) {
+      if (data.success && data.transcript && data.transcript.trim()) {
         return {
           success: true,
-          transcript: data.transcript,
+          transcript: data.transcript.trim(),
           source: "cloudflare_whisper"
         };
       }
@@ -1126,17 +1132,37 @@ export interface ExtractedVoiceCraft {
 
 /**
  * Extract structured craft attributes and statutory fair pricing from voice transcript.
+ * Powered by Edge AI LLM, Backend Sarvam/OpenRouter, and Dynamic Multi-Craft Heuristics.
  */
 export async function extractCraftFromVoice(
   transcript: string,
   languageCode: string = "hi-IN"
 ): Promise<ExtractedVoiceCraft> {
-  // 1. Try Backend Sarvam AI extraction
+  const cleanTranscript = (transcript || "").trim();
+
+  // 1. First priority: Edge AI LLM Extraction (/api/edge/extract-craft)
+  try {
+    const edgeRes = await fetch("/api/edge/extract-craft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode })
+    });
+    if (edgeRes.ok) {
+      const data = await edgeRes.json();
+      if (data.success && data.attributes) {
+        return data.attributes;
+      }
+    }
+  } catch (err) {
+    console.warn("Edge craft extractor note:", err);
+  }
+
+  // 2. Second priority: Backend Sarvam/OpenRouter AI extraction
   try {
     const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transcript, language_code: languageCode })
+      body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode })
     });
     if (res.ok) {
       const data = await res.json();
@@ -1146,52 +1172,176 @@ export async function extractCraftFromVoice(
     }
   } catch {}
 
-  // 2. Intelligent Client-Side Indic Heuristics with statutory wage floor (₹650/day)
-  const t = transcript.toLowerCase();
-  const isSilk = t.includes("सिल्क") || t.includes("साड़ी") || t.includes("रेशम") || t.includes("बुनकर") || t.includes("silk") || t.includes("saree") || t.includes("katan");
-  const isDhokra = t.includes("ढोकरा") || t.includes("पीतल") || t.includes("धातु") || t.includes("नंदी") || t.includes("dhokra") || t.includes("brass") || t.includes("metal");
-  const isPottery = t.includes("मिट्टी") || t.includes("बर्तन") || t.includes("सिरेमिक") || t.includes("पॉट") || t.includes("खुर्जा") || t.includes("pottery") || t.includes("ceramic");
-  const isMadhubani = t.includes("मधुबनी") || t.includes("पेंटिंग") || t.includes("चित्र") || t.includes("तस्वीर") || t.includes("madhubani") || t.includes("art");
+  // 3. Intelligent Dynamic Multi-Craft Indic & English Heuristics
+  const t = cleanTranscript.toLowerCase();
 
-  let craft = "Varanasi Silk";
-  let nameHi = "पारंपरिक बनारसी कतान सिल्क साड़ी";
-  let nameEn = "Varanasi Pure Katan Silk Brocade Saree";
-  let materials = ["शुद्ध कतान सिल्क", "स्वर्ण ज़री धागा"];
-  let days = 10;
-  let materialCost = 2800;
-  let color = "गहरा लाल व सुनहरा (Crimson & Gold)";
-  let dims = "5.5 मीटर साड़ी (ब्लाउज पीस सहित)";
-
-  if (isDhokra) {
-    craft = "Bastar Dhokra";
-    nameHi = "बस्तर ढोकरा जनजातीय पीतल नंदी";
-    nameEn = "Bastar Dhokra Tribal Bell Metal Nandi Figurine";
-    materials = ["बेल मेटल", "पीतल", "प्राकृतिक मोम"];
-    days = 5;
-    materialCost = 650;
-    color = "एंटीक पीतल (Antique Brass)";
-    dims = "18cm x 14cm x 8cm";
-  } else if (isPottery) {
-    craft = "Khurja Pottery";
-    nameHi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक वाटर पॉट";
-    nameEn = "Khurja Handcrafted Glazed Ceramic Water Pot";
-    materials = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज", "फेल्डस्पार"];
-    days = 3;
-    materialCost = 350;
-    color = "कोबाल्ट नीला व फ्लोरल सफेद";
-    dims = "32cm x 22cm x 22cm";
-  } else if (isMadhubani) {
-    craft = "Madhubani Painting";
-    nameHi = "मधुबनी जीवन वृक्ष हस्तचित्रित तुषार सिल्क";
-    nameEn = "Madhubani Tree of Life Hand-Painted Tussar Silk";
-    materials = ["तुषार सिल्क", "प्राकृतिक वनस्पति रंग", "बांस की कलम"];
-    days = 8;
-    materialCost = 1400;
-    color = "प्राकृतिक गेरुआ, नील व हरा";
-    dims = "90cm x 60cm";
+  // Extract production days from spoken words
+  let detectedDays = 4;
+  const daysMatch = t.match(/(\d+)\s*(din|दिन|day|days|hafte|हफ्ते|हफ्ता|week|weeks)/);
+  if (daysMatch) {
+    const num = parseInt(daysMatch[1], 10);
+    if (num > 0 && num <= 90) {
+      detectedDays = daysMatch[2].includes("haft") || daysMatch[2].includes("हफ्") || daysMatch[2].includes("week")
+        ? num * 7
+        : num;
+    }
+  } else if (t.includes("हफ्ता") || t.includes("एक हफ्ता") || t.includes("one week")) {
+    detectedDays = 7;
+  } else if (t.includes("दो हफ्ता") || t.includes("two weeks")) {
+    detectedDays = 14;
+  } else if (t.includes("दस दिन") || t.includes("10 days")) {
+    detectedDays = 10;
+  } else if (t.includes("पांच दिन") || t.includes("5 days")) {
+    detectedDays = 5;
+  } else if (t.includes("दो दिन") || t.includes("2 days")) {
+    detectedDays = 2;
+  } else if (t.includes("तीन दिन") || t.includes("3 days")) {
+    detectedDays = 3;
   }
 
-  // Statutory Wage Floor: Material + (Days * ₹650 statutory minimum skilled wage)
+  // Extract material cost from spoken words
+  let detectedCost = 650;
+  const costMatch = t.match(/(₹|rs\.?|रुपये?|रू\.|cost|price|लागत)\s*(\d+)/) || t.match(/(\d+)\s*(रुपये?|रू\.|rs\.?|ki lagat|लागत)/);
+  if (costMatch) {
+    const cost = parseInt(costMatch[1] && /^\d+$/.test(costMatch[1]) ? costMatch[1] : costMatch[2], 10);
+    if (cost >= 50 && cost <= 500000) {
+      detectedCost = cost;
+    }
+  } else if (t.includes("हज़ार") || t.includes("हजार") || t.includes("thousand")) {
+    detectedCost = 1500;
+  } else if (t.includes("पांच सौ") || t.includes("500")) {
+    detectedCost = 500;
+  } else if (t.includes("बारह सौ") || t.includes("1200")) {
+    detectedCost = 1200;
+  } else if (t.includes("दो हज़ार") || t.includes("2000")) {
+    detectedCost = 2000;
+  }
+
+  // Multi-craft category matching
+  const isWood = t.includes("लकड़ी") || t.includes("काष्ठ") || t.includes("काठ") || t.includes("खिलौना") || t.includes("चन्नपटना") || t.includes("सहारनपुर") || t.includes("wood") || t.includes("toy") || t.includes("teak") || t.includes("sheesham") || t.includes("carving");
+  const isDhokra = t.includes("ढोकरा") || t.includes("पीतल") || t.includes("धातु") || t.includes("नंदी") || t.includes("घंटी") || t.includes("दीपक") || t.includes("dhokra") || t.includes("brass") || t.includes("metal") || t.includes("bell") || t.includes("bronze");
+  const isPottery = t.includes("मिट्टी") || t.includes("बर्तन") || t.includes("सिरेमिक") || t.includes("पॉट") || t.includes("खुर्जा") || t.includes("घड़ा") || t.includes("कुल्हड़") || t.includes("pottery") || t.includes("ceramic") || t.includes("terracotta") || t.includes("clay");
+  const isMadhubani = t.includes("मधुबनी") || t.includes("पेंटिंग") || t.includes("चित्र") || t.includes("तस्वीर") || t.includes("वार्ली") || t.includes("कलमकारी") || t.includes("madhubani") || t.includes("painting") || t.includes("canvas") || t.includes("art");
+  const isLeather = t.includes("चमड़ा") || t.includes("चमड़े") || t.includes("जूती") || t.includes("चप्पल") || t.includes("मोजड़ी") || t.includes("कोल्हापुरी") || t.includes("बैग") || t.includes("वॉलेट") || t.includes("leather") || t.includes("mojari") || t.includes("jutti") || t.includes("wallet");
+  const isStone = t.includes("पत्थर") || t.includes("संगमरमर") || t.includes("मार्बल") || t.includes("stone") || t.includes("marble") || t.includes("soapstone");
+  const isCarpet = t.includes("कालीन") || t.includes("दरी") || t.includes("गलीचा") || t.includes("carpet") || t.includes("rug") || t.includes("dhurrie") || t.includes("bhadhohi");
+  const isCotton = t.includes("सूती") || t.includes("कॉटन") || t.includes("खादी") || t.includes("दुपट्टा") || t.includes("कुर्ता") || t.includes("शॉल") || t.includes("cotton") || t.includes("khadi") || t.includes("handloom") || t.includes("scarf") || t.includes("shawl");
+  const isSilk = t.includes("सिल्क") || t.includes("साड़ी") || t.includes("रेशम") || t.includes("कतान") || t.includes("बनारसी") || t.includes("silk") || t.includes("saree") || t.includes("sari") || t.includes("katan") || t.includes("brocade");
+  const isJewelry = t.includes("गहना") || t.includes("आभूषण") || t.includes("झुमका") || t.includes("हार") || t.includes("मीनाकारी") || t.includes("कंगन") || t.includes("jewelry") || t.includes("necklace") || t.includes("earring") || t.includes("bangle");
+  const isBamboo = t.includes("बांस") || t.includes("जूट") || t.includes("टोकरी") || t.includes("केन") || t.includes("bamboo") || t.includes("cane") || t.includes("jute") || t.includes("basket");
+
+  let craft = "Indian Handicraft";
+  let nameHi = "हस्तनिर्मित पारंपरिक शिल्प";
+  let nameEn = "Handcrafted Traditional Artisan Item";
+  let materials = ["पारंपरिक प्राकृतिक सामग्री (Eco-Friendly Materials)"];
+  let days = detectedDays;
+  let materialCost = detectedCost;
+  let color = "प्राकृतिक पारंपरिक रंग (Natural Finish)";
+  let dims = "मानक हस्तशिल्प आकार (Standard Artisan Size)";
+
+  if (isWood) {
+    craft = "Channapatna Wooden Toys & Carvings";
+    nameHi = "चन्नपटना हस्तनिर्मित काष्ठ खिलौना / नक्काशी";
+    nameEn = "Channapatna Handcrafted Lacquer Woodcraft";
+    materials = ["प्राकृतिक शीशम / सागवान की लकड़ी", "पारंपरिक गैर-विषाक्त लाख रंग (Natural Lacquer)"];
+    days = detectedDays || 4;
+    materialCost = detectedCost || 450;
+    color = "चमकदार प्राकृतिक रंग (Vibrant Natural Lacquer)";
+    dims = "18cm x 12cm x 8cm";
+  } else if (isDhokra) {
+    craft = "Bastar Dhokra Brass Craft";
+    nameHi = "बस्तर ढोकरा जनजातीय पीतल शिल्प";
+    nameEn = "Bastar Dhokra Tribal Bell Metal Craft";
+    materials = ["बेल मेटल (Bell Metal)", "पीतल (Brass)", "प्राकृतिक मोम"];
+    days = detectedDays || 5;
+    materialCost = detectedCost || 650;
+    color = "एंटीक पीतल (Antique Brass Bronze)";
+    dims = "18cm x 14cm x 8cm";
+  } else if (isPottery) {
+    craft = "Khurja Ceramic & Pottery";
+    nameHi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक पॉट";
+    nameEn = "Khurja Handcrafted Glazed Ceramic Water Pot";
+    materials = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज", "फेल्डस्पार"];
+    days = detectedDays || 3;
+    materialCost = detectedCost || 350;
+    color = "कोबाल्ट नीला व फ्लोरल सफेद (Cobalt Blue & Floral)";
+    dims = "30cm x 20cm x 20cm";
+  } else if (isMadhubani) {
+    craft = "Madhubani Folk Painting";
+    nameHi = "मधुबनी हस्तचित्रित पारंपरिक पेंटिंग";
+    nameEn = "Authentic Hand-Painted Madhubani Folk Art";
+    materials = ["हस्तनिर्मित पेपर / कैनवास", "प्राकृतिक वनस्पति रंग", "बांस की कलम"];
+    days = detectedDays || 7;
+    materialCost = detectedCost || 850;
+    color = "प्राकृतिक गेरुआ, नील व हरा (Natural Pigments)";
+    dims = "60cm x 45cm";
+  } else if (isLeather) {
+    craft = "Kolhapuri Handcrafted Leather";
+    nameHi = "कोल्हापुरी पारंपरिक हस्तनिर्मित चर्म शिल्प";
+    nameEn = "Authentic Kolhapuri Handcrafted Leather Article";
+    materials = ["प्राकृतिक चर्म (Vegetable-Tanned Leather)", "सूती धागा"];
+    days = detectedDays || 3;
+    materialCost = detectedCost || 550;
+    color = "प्राकृतिक भूरा (Natural Tan Leather)";
+    dims = "मानक आकार (Standard Size)";
+  } else if (isCarpet) {
+    craft = "Bhadohi Hand-Knotted Carpet";
+    nameHi = "भदोही हस्तनिर्मित ऊनी कालीन / दरी";
+    nameEn = "Bhadohi Hand-Knotted Woolen Rug & Dhurrie";
+    materials = ["शुद्ध ऊन (Pure Wool)", "सूती ताना (Cotton Warp)"];
+    days = detectedDays || 12;
+    materialCost = detectedCost || 2200;
+    color = "शाही लाल व क्रीम (Royal Crimson & Cream)";
+    dims = "120cm x 90cm";
+  } else if (isCotton) {
+    craft = "Handloom Cotton Weaving";
+    nameHi = "हथकरघा शुद्ध सूती वस्त्र / दुपट्टा";
+    nameEn = "Handloom Pure Cotton Woven Article";
+    materials = ["शुद्ध कॉटन सूत (Pure Cotton Yarn)", "प्राकृतिक रंग"];
+    days = detectedDays || 4;
+    materialCost = detectedCost || 500;
+    color = "प्राकृतिक इंडिगो व सफेद (Natural Indigo & White)";
+    dims = "2.2 मीटर (Standard Length)";
+  } else if (isJewelry) {
+    craft = "Traditional Indian Artisan Jewelry";
+    nameHi = "पारंपरिक हस्तनिर्मित आभूषण / मीनाकारी";
+    nameEn = "Handcrafted Traditional Artisan Jewelry";
+    materials = ["पारंपरिक धातु / लाख", "प्राकृतिक रंग", "मोती"];
+    days = detectedDays || 3;
+    materialCost = detectedCost || 400;
+    color = "स्वर्ण व बहुरंगी (Gold & Multicolored)";
+    dims = "मानक आभूषण आकार";
+  } else if (isBamboo) {
+    craft = "Assam Bamboo & Cane Craft";
+    nameHi = "असम हस्तनिर्मित बांस व केन शिल्प";
+    nameEn = "Handcrafted Eco-Friendly Bamboo & Cane Craft";
+    materials = ["प्राकृतिक असमिया बांस", "केन फाइबर"];
+    days = detectedDays || 3;
+    materialCost = detectedCost || 300;
+    color = "प्राकृतिक सुनहरी बांस रंग (Natural Bamboo Golden)";
+    dims = "25cm x 25cm x 20cm";
+  } else if (isStone) {
+    craft = "Indian Stone & Marble Carving";
+    nameHi = "पारंपरिक नक्काशीदार संगमरमर / पाषाण शिल्प";
+    nameEn = "Intricately Hand-Carved Stone Artifact";
+    materials = ["प्राकृतिक संगमरमर / सोपस्टोन (Natural Soapstone)"];
+    days = detectedDays || 6;
+    materialCost = detectedCost || 800;
+    color = "प्राकृतिक सफेद / धूसर पाषाण (Natural Stone Finish)";
+    dims = "15cm x 10cm x 10cm";
+  } else if (isSilk) {
+    // Only applied when silk, saree, or katan was explicitly spoken!
+    craft = "Varanasi Pure Silk Handloom";
+    nameHi = "पारंपरिक बनारसी कतान सिल्क साड़ी";
+    nameEn = "Varanasi Pure Katan Silk Handloom Saree";
+    materials = ["शुद्ध कतान सिल्क", "स्वर्ण ज़री धागा"];
+    days = detectedDays || 10;
+    materialCost = detectedCost || 2800;
+    color = "गहरा लाल व सुनहरा (Crimson & Gold)";
+    dims = "5.5 मीटर साड़ी (ब्लाउज पीस सहित)";
+  }
+
+  // Statutory Wage Floor: Material Cost + (Days * ₹650 statutory minimum skilled wage)
   const wageFloor = materialCost + (days * 650);
   const recommendedPrice = Math.round((wageFloor * 1.25) / 50) * 50;
 
@@ -1206,10 +1356,10 @@ export async function extractCraftFromVoice(
     material_cost: materialCost,
     wage_floor: wageFloor,
     recommended_price: recommendedPrice,
-    description_hi: `मास्टर शिल्पकार द्वारा हथकरघे पर ${days} दिनों के समर्पित परिश्रम से निर्मित प्रामाणिक ${craft}।`,
-    description_en: `Authentic ${craft} meticulously hand-crafted by master artisan over ${days} days of skilled labor.`,
+    description_hi: `कुशल कारीगर द्वारा ${days} दिनों के समर्पित परिश्रम से निर्मित प्रामाणिक ${craft}।`,
+    description_en: `Authentic ${craft} meticulously hand-crafted by master artisan over ${days} days of dedicated labor.`,
     voice_script_hi: `बधाई हो! आपका उत्पाद '${nameHi}' तैयार है। आपकी ${days} दिनों की मेहनत और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${recommendedPrice.toLocaleString('en-IN')} तय किया गया है।`,
-    source: "sarvam_indic_engine"
+    source: "indic_heuristics_engine"
   };
 }
 
