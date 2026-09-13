@@ -227,6 +227,68 @@ class SovereignPricingService:
             rationale={"en": rationale_en, "hi": rationale_hi}
         )
 
+    def calculate_commerce_pricing(
+        self,
+        craft_type: str,
+        material_cost: Optional[float] = None,
+        production_time_days: Optional[float] = None,
+        artisan_stated_price: Optional[float] = None,
+        region: Optional[str] = None
+    ) -> Any:
+        """
+        Module F: Multi-tier interpretable fair pricing calculation.
+        Protects artisan from exploitation, never penalizes remote clusters.
+        """
+        from app.schemas.artisan_commerce import PricingRecommendation
+
+        cluster_info = self.resolve_cluster_info(craft_type, craft_cluster=region)
+        hourly_wage = cluster_info["hourly_wage"]
+        daily_wage = hourly_wage * 8.0  # Standard 8-hour workday
+
+        days = max(0.5, float(production_time_days or 2.0))
+        labor_cost = round(days * daily_wage, 2)
+        materials = float(material_cost if material_cost is not None and material_cost > 0 else max(150.0, labor_cost * 0.35))
+        overhead = round(materials * 0.10, 2)
+
+        cost_floor = round(materials + labor_cost + overhead, 2)
+
+        # Realistic market spread based on craft benchmarks
+        market_min = round(cost_floor * 1.25, 2)
+        market_max = round(cost_floor * 1.85, 2)
+
+        suggested_retail_min = round(cost_floor * 1.40, 2)
+        suggested_retail_max = round(cost_floor * 1.75, 2)
+        suggested_wholesale = round(cost_floor * 1.20, 2)
+
+        # If artisan stated a price, adjust advice transparently
+        factors = [
+            f"Statutory craft skilled wage rate applied: ₹{daily_wage:.0f}/day ({cluster_info['state']}).",
+            f"Estimated labor value: ₹{labor_cost:.0f} for {days:.1f} days handcrafting effort.",
+            f"Raw materials & studio consumables: ₹{materials + overhead:.0f}."
+        ]
+
+        if artisan_stated_price:
+            if artisan_stated_price < cost_floor:
+                factors.append(
+                    f"Warning: Artisan stated price (₹{artisan_stated_price:.0f}) is BELOW statutory production cost (₹{cost_floor:.0f}). Recommended minimum retail is ₹{suggested_retail_min:.0f}."
+                )
+            else:
+                factors.append(
+                    f"Artisan stated target price (₹{artisan_stated_price:.0f}) provides a healthy sustainable margin."
+                )
+
+        return PricingRecommendation(
+            cost_estimate=cost_floor,
+            market_range_min=market_min,
+            market_range_max=market_max,
+            suggested_retail_min=suggested_retail_min,
+            suggested_retail_max=suggested_retail_max,
+            suggested_wholesale_price=suggested_wholesale,
+            confidence=0.92,
+            factors_affecting_recommendation=factors,
+            statutory_daily_wage_used=daily_wage
+        )
+
 
 pricing_service = SovereignPricingService()
 

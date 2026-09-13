@@ -411,7 +411,49 @@ class SarvamService:
             }
         }
 
+    def normalize_codemixed_speech(self, text: str) -> str:
+        """
+        Module A: Normalizes colloquial code-mixed Indian speech, traditional units, and colloquial numbers.
+        Example: 'Ham ye cotton saree banate hain, iska price 1200 hai' -> clean normalized text.
+        """
+        if not text:
+            return ""
+
+        norm = text.strip()
+
+        # Colloquial numbers & periods
+        replacements = [
+            ("बारह सौ", "1200"),
+            ("पंद्रह सौ", "1500"),
+            ("अठारह सौ", "1800"),
+            ("दो हज़ार", "2000"),
+            ("दो हजार", "2000"),
+            ("ढाई हज़ार", "2500"),
+            ("ढाई हजार", "2500"),
+            ("तीन हज़ार", "3000"),
+            ("तीन हजार", "3000"),
+            ("पाँच हज़ार", "5000"),
+            ("पांच हजार", "5000"),
+            ("हफ्ता", "7 दिन"),
+            ("हफ्ते", "7 दिन"),
+            ("एक हफ्ता", "7 दिन"),
+            ("दो हफ्ता", "14 दिन"),
+            ("दो हफ्ते", "14 दिन"),
+            ("महीना", "30 दिन"),
+            ("डेढ़", "1.5"),
+            ("ढाई", "2.5"),
+            ("साढ़े तीन", "3.5"),
+            ("वित्ता", "वित्ता (लगभग 22 सेमी)"),
+            ("हाथ", "हाथ (लगभग 45 सेमी)"),
+        ]
+
+        for old, new in replacements:
+            norm = re.sub(re.escape(old), new, norm, flags=re.IGNORECASE)
+
+        return norm
+
 
 sarvam_service = SarvamService()
+
 
 
