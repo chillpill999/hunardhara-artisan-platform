@@ -180,7 +180,7 @@ class OfflineMockVoiceEngine:
 
         return None, None
 
-    def identify_craft_key(self, filename: str, sample_text: Optional[str] = None) -> str:
+    def identify_craft_key(self, filename: str, sample_text: Optional[str] = None) -> Optional[str]:
         """Determines best craft profile key based on filename cues or transcript text."""
         combined = f"{filename} {sample_text or ''}".lower()
 
@@ -195,24 +195,48 @@ class OfflineMockVoiceEngine:
         elif any(k in combined for k in ["channapatna", "toy", "wood", "lacquer", "खिलौना", "kannada"]):
             return "channapatna_toy"
 
-        # Default fallback
-        return "bastar_dhokra"
+        # Unknown or unrelated speech must NEVER fall back to hardcoded Bastar Dhokra
+        return None
 
     def process_audio(
         self,
         audio_bytes: bytes,
         filename: str = "voice.wav",
-        language_code: str = "hi"
+        language_code: str = "hi",
+        sample_text: Optional[str] = None
     ) -> VoiceCatalogResponse:
         """
         Executes deterministic speech transcription, translation, attribute extraction,
-        and copywriting.
+        and copywriting for demo/test mode.
         """
         err, warning = self.validate_audio(audio_bytes, filename)
         if err:
             raise ValueError(err)
 
-        craft_key = self.identify_craft_key(filename)
+        craft_key = self.identify_craft_key(filename, sample_text=sample_text)
+        if not craft_key:
+            # Unknown craft: return null/unknown attributes + clarification warning
+            return VoiceCatalogResponse(
+                transcript_original=sample_text or "अस्पष्ट या अज्ञात शिल्प विवरण",
+                transcript_english="Unrecognized or non-craft description",
+                attributes=VoiceCraftAttributes(
+                    product_name=None,
+                    craft_type=None,
+                    materials=[],
+                    dimensions=None,
+                    production_time_days=None,
+                    technique=None,
+                    color=None
+                ),
+                marketing_description=MarketingDescription(
+                    hi="शिल्प का विवरण स्पष्ट नहीं हो सका। कृपया शिल्प का नाम और सामग्री पुनः बताएं।",
+                    en="Craft details could not be identified. Please specify the craft type and materials."
+                ),
+                seo_tags=["Indian Handicrafts", "Handmade", "Traditional Art", "Artisan", "Unclassified"],
+                is_offline_mock=True,
+                warning=warning or "UNRECOGNIZED_OR_INSUFFICIENT_CRAFT_DETAILS"
+            )
+
         data = CRAFT_KNOWLEDGE_BASE[craft_key]
 
         attributes = VoiceCraftAttributes(

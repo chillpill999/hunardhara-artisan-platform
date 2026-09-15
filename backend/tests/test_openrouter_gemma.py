@@ -102,10 +102,10 @@ class TestOpenRouterGemmaIntegration:
     def test_openrouter_rate_limit_429_resilience(self):
         """Verifies simulated 429 upstream rate limit does not crash and uses graceful fallback."""
         with patch.object(openrouter_service, "_call_openrouter", return_value=None):
-            # Should not raise exception
-            res = openrouter_service.generate_catalog("कुछ विवरण", language_code="hi")
+            # Should not raise exception when craft description is provided
+            res = openrouter_service.generate_catalog("यह बस्तर का ढोकरा पीतल का शिल्प है", language_code="hi")
             assert res is not None
-            assert res.attributes.craft_type is not None
+            assert res.attributes.craft_type == "Bastar Dhokra"
 
             # Multimodal should also gracefully fallback
             dummy_bytes = b"\x00" * 50

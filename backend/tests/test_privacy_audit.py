@@ -99,7 +99,7 @@ def test_authenticated_admin_can_view_rfq_buyer_email(client, db):
     # Mint admin JWT
     admin_token = create_access_token(
         subject="admin-test-uuid",
-        extra_claims={"role": "admin", "email": "platform.admin@hunardhara.gov.in"}
+        extra_claims={"app_metadata": {"role": "admin"}, "email": "platform.admin@hunardhara.gov.in"}
     )
 
     res_admin = client.get(

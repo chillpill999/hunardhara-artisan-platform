@@ -109,7 +109,10 @@ class MaskedAadhaarVault:
         last_four = clean[-4:]
         masked = f"XXXXXXXX{last_four}"
         
-        pepper_key = (pepper or settings.AADHAAR_PEPPER_KEY).encode("utf-8")
+        active_pepper = pepper or settings.AADHAAR_PEPPER_KEY
+        if not active_pepper:
+            raise RuntimeError("AADHAAR_PEPPER_KEY is not configured")
+        pepper_key = active_pepper.encode("utf-8")
         aadhaar_hash = hmac.new(pepper_key, clean.encode("utf-8"), hashlib.sha256).hexdigest()
         
         return AadhaarVaultResult(

@@ -8,6 +8,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    storageKey: 'hunardhara_auth_token',
+    storageKey: 'hunardhara_supabase_session',
   },
 });

@@ -32,11 +32,11 @@ def db():
 def auth_tokens():
     """Generates standard tokens for all test roles."""
     return {
-        "customerA": create_access_token("cust-001", extra_claims={"role": "customer", "email": "customerA@crafts.gov.in"}),
-        "customerB": create_access_token("cust-002", extra_claims={"role": "customer", "email": "customerB@crafts.gov.in"}),
-        "artisanA": create_access_token("art-001", extra_claims={"role": "artisan", "email": "artisanA@crafts.gov.in"}),
-        "artisanB": create_access_token("art-002", extra_claims={"role": "artisan", "email": "artisanB@crafts.gov.in"}),
-        "adminA": create_access_token("admin-001", extra_claims={"role": "admin", "email": "admin@hunardhara.gov.in"}),
+        "customerA": create_access_token("cust-001", extra_claims={"app_metadata": {"role": "customer"}, "email": "customerA@crafts.gov.in"}),
+        "customerB": create_access_token("cust-002", extra_claims={"app_metadata": {"role": "customer"}, "email": "customerB@crafts.gov.in"}),
+        "artisanA": create_access_token("art-001", extra_claims={"app_metadata": {"role": "artisan"}, "email": "artisanA@crafts.gov.in"}),
+        "artisanB": create_access_token("art-002", extra_claims={"app_metadata": {"role": "artisan"}, "email": "artisanB@crafts.gov.in"}),
+        "adminA": create_access_token("admin-001", extra_claims={"app_metadata": {"role": "admin"}, "email": "admin@hunardhara.gov.in"}),
     }
 
 

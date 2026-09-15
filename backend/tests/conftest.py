@@ -6,6 +6,8 @@ Provides test client, fixture loaders, mock configurations, and algorithmic refe
 import os
 import sys
 import json
+import secrets
+import tempfile
 import pytest
 from pathlib import Path
 
@@ -19,10 +21,18 @@ os.environ.setdefault("OPENAI_API_KEY", "")
 os.environ.setdefault("INTEGRITY_MODE", "demo")
 os.environ.setdefault("OFFLINE_MODE", "true")
 os.environ.setdefault("MOCK_AI_SERVICES", "true")
-os.environ.setdefault("AADHAAR_PEPPER_KEY", "mosje_sovereign_aadhaar_pepper_secret_2026")
-os.environ.setdefault("SUPABASE_JWT_SECRET", "mosje_supabase_jwt_secret_test_key_32chars_long_2026")
-os.environ.setdefault("SUPABASE_JWT_ISSUER", "supabase")
-os.environ.setdefault("SUPABASE_JWT_AUDIENCE", "authenticated")
+# Ephemeral test configuration. Production secrets are never committed or used
+# by the test suite.
+os.environ["SUPABASE_JWT_SECRET"] = secrets.token_urlsafe(48)
+os.environ["SUPABASE_JWT_ISSUER"] = "https://test.supabase.invalid/auth/v1"
+os.environ["SUPABASE_JWT_AUDIENCE"] = "authenticated"
+os.environ["ADMIN_USER_IDS"] = "admin-001,admin-test-uuid"
+os.environ["AADHAAR_PEPPER_KEY"] = secrets.token_urlsafe(48)
+# Never run the test suite against a developer's repository database or a
+# configured deployment database.
+TEST_DB_PATH = Path(tempfile.gettempdir()) / f"hunardhara-pytest-{os.getpid()}.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ.pop("SYNC_DATABASE_URL", None)
 
 TESTS_DIR = Path(__file__).resolve().parent
 FIXTURES_DIR = TESTS_DIR / "fixtures"

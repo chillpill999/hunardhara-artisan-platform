@@ -424,16 +424,18 @@ DEBUG=true
 PROJECT_NAME="MoSJE AI Artisan Market Linkage Platform"
 API_V1_STR=/api/v1
 
-# Security & Sovereign Pepper Keys
-SECRET_KEY=mosje_super_secret_jwt_key_sih2026_artisan_platform_replace_in_prod
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-AADHAAR_PEPPER_KEY=mosje_sovereign_aadhaar_pepper_secret_2026
+# Authentication and sensitive values
+# Set each real value only through your local secret store, Render, or Cloudflare.
+SUPABASE_JWT_SECRET=
+SUPABASE_JWT_ISSUER=
+SUPABASE_JWT_AUDIENCE=
+ADMIN_USER_IDS=
+AADHAAR_PEPPER_KEY=
 
 # Database
-# PostgreSQL with pgvector (default Docker URL):
-DATABASE_URL=postgresql+asyncpg://artisan_admin:artisan_secure_password_2026@localhost:5432/artisan_platform
-SYNC_DATABASE_URL=postgresql://artisan_admin:artisan_secure_password_2026@localhost:5432/artisan_platform
+# PostgreSQL with pgvector (obtain credentials from the deployment secret manager):
+DATABASE_URL=
+SYNC_DATABASE_URL=
 # For Zero-Docker local development (SQLite):
 # DATABASE_URL=sqlite+aiosqlite:///./artisan_platform.db
 
@@ -447,15 +449,15 @@ OFFLINE_MODE=false
 MOCK_AI_SERVICES=false
 
 # OpenRouter (Gemma 4 31B IT Free Tier)
-OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_API_KEY=
 OPENROUTER_MODEL=google/gemma-4-31b-it:free
 
 # Hugging Face (BiRefNet Background Removal)
-HF_TOKEN=hf_...
+HF_TOKEN=
 BIREFNET_MODEL=ZhengPeng7/BiRefNet
 
 # Sarvam AI (Indic Speech Recognition)
-SARVAM_API_KEY=...
+SARVAM_API_KEY=
 
 # Storage & Uploads
 STATIC_DIR=./static

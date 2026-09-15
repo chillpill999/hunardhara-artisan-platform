@@ -63,9 +63,9 @@ class TestVoiceToCatalogEngine:
         with open(sample_noisy_audio_path, "rb") as f:
             audio_bytes = f.read()
 
-        catalog = voice_service.process_audio_bytes(audio_bytes, filename="edge_noisy_market_snr3db.wav")
+        catalog = voice_service.process_audio_bytes(audio_bytes, filename="edge_noisy_market_dhokra_snr3db.wav")
         assert catalog.warning == "LOW_AUDIO_CONFIDENCE_BACKGROUND_NOISE"
-        assert catalog.attributes.craft_type is not None
+        assert catalog.attributes.craft_type == "Bastar Dhokra"
 
     def test_voice_corrupt_opus_header_rejection(self, sample_corrupt_opus_path):
         """TC-VOICE-05: Corrupt opus header raises INVALID_AUDIO_FORMAT_OR_CORRUPT."""
@@ -344,5 +344,113 @@ class TestVoiceToCatalogEngine:
         assert attrs_cost["wage_floor"] is None
         assert attrs_cost["recommended_price"] is None
         assert "production_days" in res_cost.get("verification_required", [])
+
+    def test_real_hindi_speech_to_actual_transcript(self, monkeypatch):
+        """TC-VOICE-15: Real Hindi audio -> Real ASR transcript via Sarvam Saarika provider."""
+        from app.services.sarvam_service import sarvam_service
+        from app.core.config import settings
+        import base64
+
+        if not settings.SARVAM_API_KEY:
+            pytest.skip("SARVAM_API_KEY not set in environment")
+
+        # Synthesize genuine Hindi speech audio via Sarvam Bulbul TTS
+        tts_res = sarvam_service.synthesize_speech("यह पीतल का नंदी है", "hi-IN")
+        if not tts_res.get("audio_base64"):
+            pytest.skip("Sarvam TTS unavailable for live roundtrip")
+
+        audio_bytes = base64.b64decode(tts_res["audio_base64"])
+
+        # Activate online mode for this test
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+
+        catalog = voice_service.process_audio_bytes(audio_bytes, filename="real_artisan_hindi.wav", language_code="hi")
+
+        # Verify genuine ASR transcript
+        assert catalog.is_offline_mock is False
+        assert len(catalog.transcript_original) > 0
+        assert any(term in catalog.transcript_original for term in ["पीतल", "नंदी", "घोड़ा", "यह"])
+
+    def test_unrelated_speech_no_bastar_fallback(self):
+        """TC-VOICE-16: Unrelated speech audio must NEVER fall back to hardcoded Bastar Dhokra data."""
+        import numpy as np
+        import io
+        import wave
+
+        bio = io.BytesIO()
+        with wave.open(bio, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            tone = (np.sin(np.linspace(0, 440 * 2 * np.pi, 16000)) * 5000).astype(np.int16)
+            wf.writeframes(tone.tobytes())
+        tone_bytes = bio.getvalue()
+
+        catalog = voice_service.process_audio_bytes(tone_bytes, filename="general_meeting_discussion.wav")
+        assert catalog.attributes.craft_type is None
+        assert catalog.attributes.product_name != "Bastar Traditional Brass Dhokra Horse"
+        assert "Bastar" not in (catalog.attributes.craft_type or "")
+        assert catalog.warning in ("UNRECOGNIZED_OR_INSUFFICIENT_CRAFT_DETAILS", "REQUIRES_CLARIFICATION")
+
+    def test_two_different_recordings_no_leakage(self, sample_dhokra_audio_path, sample_khurja_opus_path):
+        """TC-VOICE-17: Sequential recordings must be completely independent with zero state leakage."""
+        with open(sample_dhokra_audio_path, "rb") as f:
+            dhokra_bytes = f.read()
+        with open(sample_khurja_opus_path, "rb") as f:
+            khurja_bytes = f.read()
+
+        # Call 1: Dhokra
+        cat_dhokra = voice_service.process_audio_bytes(dhokra_bytes, filename="bastar_horse.wav")
+        assert cat_dhokra.attributes.craft_type == "Bastar Dhokra"
+
+        # Call 2: Khurja Pottery
+        cat_khurja = voice_service.process_audio_bytes(khurja_bytes, filename="khurja_pottery.opus")
+        assert cat_khurja.attributes.craft_type == "Khurja Pottery"
+        assert "Dhokra" not in cat_khurja.attributes.craft_type
+        assert "Brass" not in cat_khurja.attributes.materials
+
+        # Call 3: Dhokra again
+        cat_dhokra2 = voice_service.process_audio_bytes(dhokra_bytes, filename="bastar_horse.wav")
+        assert cat_dhokra2.attributes.craft_type == "Bastar Dhokra"
+        assert "Pottery" not in cat_dhokra2.attributes.craft_type
+        assert "Ceramic" not in str(cat_dhokra2.attributes.materials)
+
+    def test_asr_failure_no_mock_success(self, monkeypatch, sample_dhokra_audio_path):
+        """TC-VOICE-18: When ASR fails in online mode, raise error and NEVER silently fall back to mock data."""
+        from app.services.sarvam_service import sarvam_service
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+
+        # Mock sarvam_service.transcribe_speech to simulate upstream failure
+        monkeypatch.setattr(
+            sarvam_service,
+            "transcribe_speech",
+            lambda *args, **kwargs: {"success": False, "transcript": "", "error": "Simulated upstream 502 connection timeout"}
+        )
+
+        with open(sample_dhokra_audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        with pytest.raises(ValueError) as exc:
+            voice_service.process_audio_bytes(audio_bytes, filename="artisan.wav")
+
+        assert "ASR_TRANSCRIPTION_FAILED" in str(exc.value)
+
+    def test_production_missing_credentials_fails_fast(self, monkeypatch, sample_dhokra_audio_path):
+        """TC-VOICE-19: In production mode without OFFLINE_MODE, missing SARVAM_API_KEY must raise configuration error."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", None)
+
+        with open(sample_dhokra_audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        with pytest.raises(RuntimeError) as exc:
+            voice_service.process_audio_bytes(audio_bytes, filename="artisan.wav")
+
+        assert "CONFIGURATION_ERROR" in str(exc.value)
+        assert "SARVAM_API_KEY is missing" in str(exc.value)
 
 

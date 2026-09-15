@@ -151,6 +151,7 @@ class OpenRouterService:
         return offline_voice_engine.process_audio(
             audio_bytes=b"\x00" * 100,
             filename="synthetic_audio.wav",
+            sample_text=transcript,
             language_code=language_code
         )
 

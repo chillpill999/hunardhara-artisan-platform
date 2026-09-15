@@ -115,7 +115,12 @@ async def product_voice_catalog_upload(
             raise HTTPException(status_code=400, detail="AUDIO_SILENT_OR_INCOMPREHENSIBLE")
         if "CORRUPT" in err_msg or "INVALID" in err_msg:
             raise HTTPException(status_code=400, detail="INVALID_AUDIO_FORMAT_OR_CORRUPT")
+        if "ASR_TRANSCRIPTION_FAILED" in err_msg:
+            raise HTTPException(status_code=502, detail=err_msg)
         raise HTTPException(status_code=400, detail=err_msg)
+    except RuntimeError as re:
+        logger.error(f"Configuration error during voice processing: {re}")
+        raise HTTPException(status_code=500, detail=str(re))
     except Exception as e:
         logger.error(f"Voice processing failed: {e}")
         raise HTTPException(status_code=400, detail=f"VOICE_PROCESSING_ERROR: {str(e)}")

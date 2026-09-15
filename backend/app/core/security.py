@@ -7,16 +7,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Union
 from fastapi import Header, HTTPException, status
 import jwt
-try:
-    from passlib.context import CryptContext
-    password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-except (ImportError, ModuleNotFoundError):
-    class MockCryptContext:
-        def hash(self, password: str) -> str:
-            return hashlib.sha256(password.encode()).hexdigest()
-        def verify(self, plain: str, hashed: str) -> bool:
-            return hashlib.sha256(plain.encode()).hexdigest() == hashed
-    password_context = MockCryptContext()
+from passlib.context import CryptContext
+
+password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 from app.core.config import settings
 
@@ -77,9 +70,9 @@ def create_access_token(
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=15)
 
-    jwt_secret = settings.SUPABASE_JWT_SECRET or os.environ.get("SUPABASE_JWT_SECRET") or "mosje_supabase_jwt_secret_test_key_32chars_long_2026"
-    jwt_issuer = settings.SUPABASE_JWT_ISSUER or os.environ.get("SUPABASE_JWT_ISSUER") or "supabase"
-    jwt_audience = settings.SUPABASE_JWT_AUDIENCE or os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated"
+    jwt_secret = settings.SUPABASE_JWT_SECRET
+    jwt_issuer = settings.SUPABASE_JWT_ISSUER
+    jwt_audience = settings.SUPABASE_JWT_AUDIENCE
 
     to_encode = {
         "exp": expire,
@@ -95,10 +88,11 @@ def create_access_token(
 
 
 def _auth_configured() -> bool:
-    secret = settings.SUPABASE_JWT_SECRET or os.environ.get("SUPABASE_JWT_SECRET") or "mosje_supabase_jwt_secret_test_key_32chars_long_2026"
-    issuer = settings.SUPABASE_JWT_ISSUER or os.environ.get("SUPABASE_JWT_ISSUER") or "supabase"
-    audience = settings.SUPABASE_JWT_AUDIENCE or os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated"
-    return bool(secret and issuer and audience)
+    return bool(
+        settings.SUPABASE_JWT_SECRET
+        and settings.SUPABASE_JWT_ISSUER
+        and settings.SUPABASE_JWT_AUDIENCE
+    )
 
 
 def _require_auth_configuration() -> None:
@@ -113,9 +107,9 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase JWT signature, issuer, audience, expiry, and subject."""
     if not _auth_configured():
         return None
-    jwt_secret = settings.SUPABASE_JWT_SECRET or os.environ.get("SUPABASE_JWT_SECRET") or "mosje_supabase_jwt_secret_test_key_32chars_long_2026"
-    jwt_issuer = settings.SUPABASE_JWT_ISSUER or os.environ.get("SUPABASE_JWT_ISSUER") or "supabase"
-    jwt_audience = settings.SUPABASE_JWT_AUDIENCE or os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated"
+    jwt_secret = settings.SUPABASE_JWT_SECRET
+    jwt_issuer = settings.SUPABASE_JWT_ISSUER
+    jwt_audience = settings.SUPABASE_JWT_AUDIENCE
     try:
         return jwt.decode(
             token,
@@ -152,7 +146,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
             headers={"WWW-Authenticate": "Bearer"}
         )
 
-    user_id = str(payload.get("sub") or payload.get("id") or "")
+    user_id = str(payload.get("sub") or "")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -162,9 +156,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
 
     app_metadata = payload.get("app_metadata")
     app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
-    direct_role = payload.get("role")
-    role_candidate = app_role or direct_role
-    role = role_candidate if role_candidate in {"customer", "artisan", "admin"} else "customer"
+    role = app_role if app_role in {"customer", "artisan", "admin"} else "customer"
     email = payload.get("email")
 
     return CurrentUser(id=user_id, email=email, role=str(role).lower())
@@ -182,14 +174,12 @@ def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Op
         payload = decode_access_token(token)
         if not payload:
             return None
-        user_id = str(payload.get("sub") or payload.get("id") or "")
+        user_id = str(payload.get("sub") or "")
         if not user_id:
             return None
         app_metadata = payload.get("app_metadata")
         app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
-        direct_role = payload.get("role")
-        role_candidate = app_role or direct_role
-        role = role_candidate if role_candidate in {"customer", "artisan", "admin"} else "customer"
+        role = app_role if app_role in {"customer", "artisan", "admin"} else "customer"
         email = payload.get("email")
         return CurrentUser(id=user_id, email=email, role=str(role).lower())
     except Exception:
@@ -230,7 +220,11 @@ def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
 def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
     """Requires a verified Supabase administrator subject configured server-side."""
     user = get_current_user(authorization)
-    if user.role != "admin" or (settings.admin_user_ids and user.id not in settings.admin_user_ids):
+    if (
+        user.role != "admin"
+        or not settings.admin_user_ids
+        or user.id not in settings.admin_user_ids
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN: Administrator privileges required."
@@ -240,7 +234,10 @@ def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
 
 def require_artisan_subject_or_admin(artisan_id: str, current_user: CurrentUser) -> None:
     """Authorize access to an artisan's private data by subject ID, never request data."""
-    if current_user.role == "admin" and (not settings.admin_user_ids or current_user.id in settings.admin_user_ids):
+    if (
+        current_user.role == "admin"
+        and current_user.id in settings.admin_user_ids
+    ):
         return
     if current_user.id != artisan_id:
         raise HTTPException(

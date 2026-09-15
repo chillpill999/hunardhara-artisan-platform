@@ -31,7 +31,7 @@ class TestSecurityAndDPDPCompliance:
         """TC-SEC-01: Verifies explicit consent is recorded with SHA256 cryptographic provenance."""
         artisan = db.query(Artisan).first()
         artisan_id = artisan.id if artisan else "art-varanasi-001"
-        token = create_access_token(artisan_id, extra_claims={"role": "artisan"})
+        token = create_access_token(artisan_id, extra_claims={"app_metadata": {"role": "artisan"}})
         res = client.post(
             "/api/v1/compliance/consent",
             json={
@@ -51,7 +51,7 @@ class TestSecurityAndDPDPCompliance:
 
     def test_sovereign_data_erasure_requires_confirmation(self, client):
         """TC-SEC-02: Erasure without confirmation raises HTTP 400."""
-        token = create_access_token("artisan-dpdp-test-02", extra_claims={"role": "artisan"})
+        token = create_access_token("artisan-dpdp-test-02", extra_claims={"app_metadata": {"role": "artisan"}})
         res = client.post(
             "/api/v1/compliance/forget",
             json={
@@ -70,7 +70,7 @@ class TestSecurityAndDPDPCompliance:
             artisan = db.query(Artisan).first()
         assert artisan is not None, "At least one artisan must exist in DB for DPDP erasure test"
         artisan_id = artisan.id
-        token = create_access_token(artisan_id, extra_claims={"role": "artisan"})
+        token = create_access_token(artisan_id, extra_claims={"app_metadata": {"role": "artisan"}})
 
         res = client.post(
             "/api/v1/compliance/forget",
@@ -109,7 +109,7 @@ class TestSecurityAndDPDPCompliance:
 
     def test_sovereign_data_erasure_nonexistent_artisan_404(self, client):
         """TC-SEC-06: Erasure for non-existent artisan ID returns HTTP 404."""
-        token = create_access_token("nonexistent-artisan-dpdp-404", extra_claims={"role": "artisan"})
+        token = create_access_token("nonexistent-artisan-dpdp-404", extra_claims={"app_metadata": {"role": "artisan"}})
         res = client.post(
             "/api/v1/compliance/forget",
             json={
@@ -124,7 +124,7 @@ class TestSecurityAndDPDPCompliance:
     def test_price_floor_guardrail_rejection_http422(self, client):
         """TC-SEC-04: Enforces HTTP 422 rejection when listing price is below certified cost-plus floor."""
         from app.core.security import create_access_token
-        artisan_token = create_access_token("artisan-bastar-001", extra_claims={"role": "artisan"})
+        artisan_token = create_access_token("artisan-bastar-001", extra_claims={"app_metadata": {"role": "artisan"}})
         headers = {"Authorization": f"Bearer {artisan_token}"}
         # For Bastar Dhokra: raw materials ₹400 + (8 hrs * ₹120) + ₹40 overhead = ₹1400 Floor!
         # Predatory listing price: ₹500
@@ -149,7 +149,7 @@ class TestSecurityAndDPDPCompliance:
     def test_price_floor_guardrail_acceptance_fair_price(self, client):
         """TC-SEC-05: Product listing priced >= cost-plus floor price is accepted (HTTP 201)."""
         from app.core.security import create_access_token
-        artisan_token = create_access_token("artisan-bastar-001", extra_claims={"role": "artisan"})
+        artisan_token = create_access_token("artisan-bastar-001", extra_claims={"app_metadata": {"role": "artisan"}})
         headers = {"Authorization": f"Bearer {artisan_token}"}
         # Certified floor is ₹1400. Fair listing price: ₹2850.
         res = client.post(

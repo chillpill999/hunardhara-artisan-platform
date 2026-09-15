@@ -67,9 +67,9 @@ def record_consent(
     try:
         db.commit()
         db.refresh(consent_record)
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.warning(f"Note persisting consent log: {e}")
+        logger.warning("Consent ledger persistence failed")
         consent_record.timestamp = datetime.now(timezone.utc)
 
     return {
@@ -141,10 +141,10 @@ def right_to_be_forgotten(
     try:
         db.commit()
         db.refresh(artisan)
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.warning(f"Note on audit commit: {e}")
-        raise HTTPException(status_code=500, detail=f"ERASURE_COMMIT_FAILED: {str(e)}")
+        logger.warning("Erasure audit commit failed")
+        raise HTTPException(status_code=500, detail="ERASURE_COMMIT_FAILED")
 
     return RightToBeForgottenResponse(
         status="success",

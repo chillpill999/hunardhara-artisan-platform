@@ -73,11 +73,15 @@ function checkRateLimit(clientIp: string, maxRequests = 45, windowMs = 60000): b
 
 type VerifiedIdentity = { subject: string; role: 'customer' | 'artisan' | 'admin' };
 
-function base64UrlToBytes(value: string): Uint8Array {
+function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 function jsonFromBase64Url(value: string): Record<string, any> | null {
@@ -249,12 +253,12 @@ export default {
           }),
           { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
-      } catch (err: any) {
+      } catch {
         return new Response(
           JSON.stringify({
             success: false,
             reply: 'माफ़ कीजिये, अभी सहायता उपलब्ध नहीं हो पा रही है। कृपया पुनः प्रयास करें।',
-            error: err?.message || String(err)
+            error: 'AI_SERVICE_UNAVAILABLE'
           }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
@@ -329,8 +333,8 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
                 parsedJson = JSON.parse(match[0]);
               }
             }
-          } catch (orErr) {
-            console.warn('OpenRouter Gemma vision attempt error:', orErr);
+          } catch {
+            console.warn('OpenRouter vision attempt failed');
           }
         }
 
@@ -355,8 +359,8 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
             if (match) parsedJson = JSON.parse(match[0]);
             usedModel = '@cf/meta/llama-3.2-11b-vision-instruct';
             provider = 'cloudflare_workers_ai';
-          } catch (cfErr) {
-            console.warn('Cloudflare Workers AI vision fallback error:', cfErr);
+          } catch {
+            console.warn('Cloudflare Workers AI vision fallback failed');
           }
         }
 
@@ -376,11 +380,11 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           }),
           { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
-      } catch (err: any) {
+      } catch {
         return new Response(
           JSON.stringify({
             success: false,
-            error: err?.message || String(err)
+            error: 'VISION_ANALYSIS_UNAVAILABLE'
           }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
@@ -405,11 +409,11 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           }),
           { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
-      } catch (err: any) {
+      } catch {
         return new Response(
           JSON.stringify({
             success: false,
-            error: err?.message || String(err)
+            error: 'TRANSCRIPTION_UNAVAILABLE'
           }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
@@ -472,9 +476,9 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           );
         }
         throw new Error(`Sarvam TTS status ${sarvamRes.status}`);
-      } catch (err: any) {
+      } catch {
         return new Response(
-          JSON.stringify({ success: false, error: err?.message || String(err) }),
+          JSON.stringify({ success: false, error: 'SPEECH_SYNTHESIS_UNAVAILABLE' }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
       }
@@ -483,7 +487,7 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
     // 5. Dual-Engine Edge ASR Endpoint (Sarvam Saarika v2.5 + Cloudflare Whisper Fallback)
     if (pathname === '/api/edge/sarvam-asr' && request.method === 'POST') {
       try {
-        const isDev = env?.ENVIRONMENT === 'development' || url.searchParams.get('debug') === 'true';
+        const isDev = env?.ENVIRONMENT === 'development';
         const formData = await request.formData();
         const file = formData.get('audio') as File;
         const lang = (formData.get('language_code') as string) || 'hi-IN';
@@ -566,8 +570,8 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
                 sourceEngine = 'sarvam_saarika_edge';
               }
             }
-          } catch (sarvamErr) {
-            console.warn('Sarvam edge ASR attempt note:', sarvamErr);
+          } catch {
+            console.warn('Sarvam ASR attempt failed');
           }
         }
 
@@ -581,8 +585,8 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
               transcript = whisperRes.text.trim();
               sourceEngine = 'cloudflare_whisper_edge';
             }
-          } catch (whisperErr) {
-            console.warn('Cloudflare Whisper edge fallback error:', whisperErr);
+          } catch {
+            console.warn('Cloudflare Whisper fallback failed');
           }
         }
 
@@ -628,9 +632,9 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
             },
           }
         );
-      } catch (err: any) {
+      } catch {
         return new Response(
-          JSON.stringify({ success: false, error: err?.message || String(err) }),
+          JSON.stringify({ success: false, error: 'SPEECH_RECOGNITION_UNAVAILABLE' }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
       }
@@ -639,7 +643,7 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
     // 6. Edge Craft Attribute Extractor (Sarvam 105B Indic LLM + Strict Explicit Fallback + Telemetry)
     if (pathname === '/api/edge/extract-craft' && request.method === 'POST') {
       try {
-        const isDev = env?.ENVIRONMENT === 'development' || url.searchParams.get('debug') === 'true';
+        const isDev = env?.ENVIRONMENT === 'development';
         const body: any = await request.json();
         const transcript = (body.transcript || '').trim();
         const lang = body.language_code || 'hi-IN';
@@ -732,8 +736,8 @@ CRITICAL TRUTHFULNESS RULES:
                 usedModel = 'sarvam-105b-conversations';
               }
             }
-          } catch (sarvamErr) {
-            console.warn('Sarvam 105B edge extraction error:', sarvamErr);
+          } catch {
+            console.warn('Sarvam extraction attempt failed');
           }
         }
 
@@ -770,8 +774,8 @@ CRITICAL TRUTHFULNESS RULES:
                   usedModel = OPENROUTER_MODEL;
                 }
               }
-            } catch (orErr) {
-              console.warn('OpenRouter voice extraction error:', orErr);
+            } catch {
+              console.warn('OpenRouter extraction attempt failed');
             }
           }
         }
@@ -802,12 +806,24 @@ CRITICAL TRUTHFULNESS RULES:
                 usedModel = model;
                 break;
               }
-            } catch (mErr) {
-              console.warn(`Model ${model} extraction failed:`, mErr);
+            } catch {
+              console.warn(`Model ${model} extraction failed`);
             }
           }
         }
 
+        // Failed real providers must fail closed. Do not turn unavailable AI
+        // analysis into fabricated attributes or a successful response.
+        if (!parsedJson) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'ATTRIBUTE_EXTRACTION_UNAVAILABLE' }),
+            { status: 503, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
+          );
+        }
+
+        // This legacy explicit-facts parser is retained below only for source
+        // history compatibility; the fail-closed response above makes it
+        // unreachable in production.
         // 4. Strict Explicit-Facts-Only Fallback (Zero Hallucination, Zero Canned Templates)
         if (!parsedJson) {
           const t = transcript.toLowerCase();
@@ -998,9 +1014,9 @@ CRITICAL TRUTHFULNESS RULES:
             },
           }
         );
-      } catch (err: any) {
+      } catch {
         return new Response(
-          JSON.stringify({ success: false, error: err?.message || String(err) }),
+          JSON.stringify({ success: false, error: 'ATTRIBUTE_EXTRACTION_UNAVAILABLE' }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
       }

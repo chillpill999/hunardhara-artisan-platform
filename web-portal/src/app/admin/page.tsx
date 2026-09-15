@@ -13,7 +13,6 @@ import { getAllInquiries, updateInquiryStatus, deleteInquiry } from '@/lib/inqui
 import { CraftCluster, Product, ArtisanInquiry } from '@/lib/types';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
-import { isAuthorisedAdminEmail, PRIMARY_ADMIN_EMAIL } from '@/lib/adminAuth';
 import {
   ShieldCheck,
   Building2,
@@ -193,7 +192,7 @@ const DEFAULT_MASTER_ARTISANS: MasterArtisanItem[] = [
 ];
 
 export default function AdminDashboardPage() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const [activeTab, setActiveTab] = useState<'products' | 'clusters' | 'b2b' | 'inquiries' | 'artisans' | 'security'>('products');
   const [clusters, setClusters] = useState<CraftCluster[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -220,7 +219,7 @@ export default function AdminDashboardPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const loadData = async () => {
-    if (!isAuthorisedAdminEmail(user?.email)) {
+    if (role !== 'admin') {
       return;
     }
     try {
@@ -238,12 +237,12 @@ export default function AdminDashboardPage() {
   };
 
   useEffect(() => {
-    if (isAuthorisedAdminEmail(user?.email)) {
+    if (role === 'admin') {
       loadData();
     }
 
     const handleUpdate = () => {
-      if (isAuthorisedAdminEmail(user?.email)) loadData();
+      if (role === 'admin') loadData();
     };
     window.addEventListener('hunardhara_product_published', handleUpdate);
     window.addEventListener('hunardhara_product_removed', handleUpdate);
@@ -253,7 +252,7 @@ export default function AdminDashboardPage() {
       window.removeEventListener('hunardhara_product_removed', handleUpdate);
       window.removeEventListener('hunardhara_inquiry_added', handleUpdate);
     };
-  }, [user]);
+  }, [role]);
 
   // Filtered Products
   const filteredProducts = useMemo(() => {
@@ -377,7 +376,7 @@ export default function AdminDashboardPage() {
               <span>प्रमाणित प्रशासक (Authorised Admin)</span>
             </div>
             <div className="text-[11px] font-mono text-[#F8C146] bg-black/40 px-2.5 py-1 rounded-lg border border-[#3e3e42] truncate max-w-xs">
-              {user?.email || PRIMARY_ADMIN_EMAIL}
+              {user?.email || 'Verified Supabase administrator'}
             </div>
             <div className="flex items-center gap-2 text-[#a1a1aa] text-[10px] pt-1.5 border-t border-[#2e2e30]">
               <span>Full Governance Clearance • MoSJE Oversight</span>
@@ -1273,10 +1272,10 @@ export default function AdminDashboardPage() {
                   </span>
                 </div>
                 <p className="text-xs text-neutral-300 leading-relaxed">
-                  एडमिन पैनल (<code className="text-[#F8C146]">/admin</code>) को क्लाउडफ्लेयर एज वर्कर और रिएक्ट लेयर दोनों पर सख्त सिंगल-ईमेल प्रमाणीकरण द्वारा सुरक्षित किया गया है। किसी भी अनधिकृत खाते या कारीगर खाते को स्वतः ब्लॉक कर दिया जाता है।
+                  संवेदनशील प्रशासनिक API कार्यवाही सत्यापित Supabase JWT और सर्वर-साइड अनुमोदित administrator subject ID द्वारा सुरक्षित है।
                 </p>
                 <div className="text-xs font-mono text-[#F8C146] bg-black/50 p-3 rounded-xl border border-[#3e3e42]">
-                  Designated MoSJE Admin: {PRIMARY_ADMIN_EMAIL}
+                  Administrator identity is configured server-side.
                 </div>
               </div>
             </div>

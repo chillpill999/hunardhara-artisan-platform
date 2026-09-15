@@ -34,8 +34,9 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
 
     # AI Services Configuration
-    OFFLINE_MODE: bool = True
-    MOCK_AI_SERVICES: bool = True
+    # Offline mock is disabled by default and allowed ONLY when explicitly enabled via OFFLINE_MODE=true
+    OFFLINE_MODE: bool = os.getenv("OFFLINE_MODE", "false").lower() in ("true", "1")
+    MOCK_AI_SERVICES: bool = os.getenv("MOCK_AI_SERVICES", "false").lower() in ("true", "1")
 
     # Bhashini ULCA API Credentials (Optional)
     BHASHINI_API_KEY: Optional[str] = None
