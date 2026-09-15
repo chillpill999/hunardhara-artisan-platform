@@ -18,9 +18,19 @@ services:
         value: "true"
       - key: STATIC_DIR
         value: /app/static
-      - key: SECRET_KEY
-        generateValue: true
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_JWT_ISSUER
+        sync: false
+      - key: SUPABASE_JWT_AUDIENCE
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
       - key: AADHAAR_PEPPER_KEY
-        generateValue: true
+        sync: false
       - key: DATABASE_URL
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
         sync: false

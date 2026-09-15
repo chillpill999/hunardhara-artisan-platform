@@ -137,7 +137,7 @@ class TestOpenRouterGemmaIntegration:
         """TC-VISION-02: Verifies /api/v1/voice/extract-catalog integrates Gemma 4."""
         res = client.post(
             "/api/v1/voice/extract-catalog",
-            json={"transcript": "यह वाराणसी की शुद्ध कातान सिल्क साड़ी है", "language_code": "hi-IN"}
+            json={"transcript": "यह वाराणसी की शुद्ध कातान सिल्क साड़ी है, 5 दिन लगे, 1200 रुपये लागत", "language_code": "hi-IN"}
         )
         assert res.status_code == 200
         data = res.json()

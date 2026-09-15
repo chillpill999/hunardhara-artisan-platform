@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.database import SessionLocal
+from app.core.security import create_access_token
 from app.models.artisan import Artisan
 from app.models.consent_log import ConsentLog
 from app.services.pricing_service import pricing_service
@@ -30,6 +31,7 @@ class TestSecurityAndDPDPCompliance:
         """TC-SEC-01: Verifies explicit consent is recorded with SHA256 cryptographic provenance."""
         artisan = db.query(Artisan).first()
         artisan_id = artisan.id if artisan else "art-varanasi-001"
+        token = create_access_token(artisan_id, extra_claims={"role": "artisan"})
         res = client.post(
             "/api/v1/compliance/consent",
             json={
@@ -37,7 +39,8 @@ class TestSecurityAndDPDPCompliance:
                 "consent_type": "VOICE_RECORDING",
                 "granted": True,
                 "purpose": "Acoustic transcription and smart catalog generation"
-            }
+            },
+            headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 200
         data = res.json()
@@ -48,12 +51,14 @@ class TestSecurityAndDPDPCompliance:
 
     def test_sovereign_data_erasure_requires_confirmation(self, client):
         """TC-SEC-02: Erasure without confirmation raises HTTP 400."""
+        token = create_access_token("artisan-dpdp-test-02", extra_claims={"role": "artisan"})
         res = client.post(
             "/api/v1/compliance/forget",
             json={
                 "artisan_id": "artisan-dpdp-test-02",
                 "confirmation": False
-            }
+            },
+            headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 400
         assert "CONFIRMATION_REQUIRED" in res.json()["detail"]
@@ -65,6 +70,7 @@ class TestSecurityAndDPDPCompliance:
             artisan = db.query(Artisan).first()
         assert artisan is not None, "At least one artisan must exist in DB for DPDP erasure test"
         artisan_id = artisan.id
+        token = create_access_token(artisan_id, extra_claims={"role": "artisan"})
 
         res = client.post(
             "/api/v1/compliance/forget",
@@ -72,7 +78,8 @@ class TestSecurityAndDPDPCompliance:
                 "artisan_id": artisan_id,
                 "confirmation": True,
                 "reason": "Artisan requested deletion under DPDP Act 2023 Section 12"
-            }
+            },
+            headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 200
         data = res.json()
@@ -102,12 +109,14 @@ class TestSecurityAndDPDPCompliance:
 
     def test_sovereign_data_erasure_nonexistent_artisan_404(self, client):
         """TC-SEC-06: Erasure for non-existent artisan ID returns HTTP 404."""
+        token = create_access_token("nonexistent-artisan-dpdp-404", extra_claims={"role": "artisan"})
         res = client.post(
             "/api/v1/compliance/forget",
             json={
                 "artisan_id": "nonexistent-artisan-dpdp-404",
                 "confirmation": True
-            }
+            },
+            headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 404
         assert "ARTISAN_NOT_FOUND" in res.json()["detail"]

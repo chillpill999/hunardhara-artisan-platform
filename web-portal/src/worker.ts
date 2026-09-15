@@ -5,6 +5,13 @@ interface Env {
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
   };
+  SARVAM_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
+  SUPABASE_JWT_SECRET?: string;
+  SUPABASE_JWT_ISSUER?: string;
+  SUPABASE_JWT_AUDIENCE?: string;
+  ADMIN_USER_IDS?: string;
+  ENVIRONMENT?: string;
 }
 
 const CORS_HEADERS = {
@@ -13,15 +20,15 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// OpenRouter AI Config (Google Gemma 4 31B Multimodal)
-const OPENROUTER_MODEL = 'google/gemma-4-31b-it:free';
+// Worker secrets are injected through Cloudflare's secret configuration.
+function getSarvamApiKey(env: any): string {
+  return typeof env?.SARVAM_API_KEY === 'string' ? env.SARVAM_API_KEY.trim() : '';
+}
+
+// OpenRouter AI Config (High-Performance Indic & Reasoning Fallback)
+const OPENROUTER_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 function getOpenRouterKey(env: any): string {
-  return (
-    env?.OPENROUTER_API_KEY ||
-    (typeof atob === 'function'
-      ? atob('c2stb3ItdjEtYTg3OGZjZjY0ZWMyODA2Y2QxZTUxNDExMzM2YmNkYTI4MDU4NDMzMWJlZjcwYTFiN2RhOTBiYjU5MTI0YmYzYQ==')
-      : '')
-  );
+  return typeof env?.OPENROUTER_API_KEY === 'string' ? env.OPENROUTER_API_KEY.trim() : '';
 }
 
 // Defensive Security Headers (OWASP A05:2021 & Clickjacking Protection)
@@ -64,17 +71,93 @@ function checkRateLimit(clientIp: string, maxRequests = 45, windowMs = 60000): b
   return true;
 }
 
-// Safe JWT payload inspector for edge validation
-function parseJwtPayload(token: string): any {
+type VerifiedIdentity = { subject: string; role: 'customer' | 'artisan' | 'admin' };
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function jsonFromBase64Url(value: string): Record<string, any> | null {
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const json = atob(base64);
-    return JSON.parse(json);
+    return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value)));
   } catch {
     return null;
   }
+}
+
+function authFailure(status: number, error: string): Response {
+  return withSecurityHeaders(new Response(JSON.stringify({ success: false, error }), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  }));
+}
+
+async function verifySupabaseRequest(
+  request: Request,
+  env: Env,
+  requireAdmin = false,
+): Promise<{ identity?: VerifiedIdentity; response?: Response }> {
+  if (!env.SUPABASE_JWT_SECRET || !env.SUPABASE_JWT_ISSUER || !env.SUPABASE_JWT_AUDIENCE) {
+    return { response: authFailure(503, 'AUTH_CONFIGURATION_ERROR') };
+  }
+
+  const authorization = request.headers.get('Authorization') || '';
+  if (!authorization.startsWith('Bearer ')) {
+    return { response: authFailure(401, 'AUTHENTICATION_REQUIRED') };
+  }
+
+  const token = authorization.slice('Bearer '.length).trim();
+  const parts = token.split('.');
+  if (parts.length !== 3) return { response: authFailure(401, 'INVALID_TOKEN') };
+
+  const header = jsonFromBase64Url(parts[0]);
+  const claims = jsonFromBase64Url(parts[1]);
+  if (!header || !claims || header.alg !== 'HS256') return { response: authFailure(401, 'INVALID_TOKEN') };
+
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(env.SUPABASE_JWT_SECRET),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    );
+    const validSignature = await crypto.subtle.verify(
+      'HMAC',
+      key,
+      base64UrlToBytes(parts[2]),
+      new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+    );
+    if (!validSignature) return { response: authFailure(401, 'INVALID_TOKEN') };
+  } catch {
+    return { response: authFailure(401, 'INVALID_TOKEN') };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const audienceValid = Array.isArray(claims.aud)
+    ? claims.aud.includes(env.SUPABASE_JWT_AUDIENCE)
+    : claims.aud === env.SUPABASE_JWT_AUDIENCE;
+  if (
+    typeof claims.sub !== 'string' || !claims.sub ||
+    claims.iss !== env.SUPABASE_JWT_ISSUER || !audienceValid ||
+    typeof claims.exp !== 'number' || claims.exp <= now ||
+    (typeof claims.nbf === 'number' && claims.nbf > now)
+  ) {
+    return { response: authFailure(401, 'INVALID_TOKEN') };
+  }
+
+  const appRole = claims.app_metadata?.role;
+  const role: VerifiedIdentity['role'] = ['customer', 'artisan', 'admin'].includes(appRole)
+    ? appRole
+    : 'customer';
+  const adminIds = (env.ADMIN_USER_IDS || '').split(',').map((value) => value.trim()).filter(Boolean);
+  if (requireAdmin && (role !== 'admin' || !adminIds.includes(claims.sub))) {
+    return { response: authFailure(403, 'FORBIDDEN') };
+  }
+  return { identity: { subject: claims.sub, role } };
 }
 
 const ARTISAN_SYSTEM_PROMPT = `आप 'हुनर साथी' (Hunar Saathi) हैं - हुनरधारा (Hunardhara) मंच के समर्पित AI सहायक, जो भारतीय ग्रामीण एवं पारंपरिक शिल्पकारों (बुनकर, मूर्तिकार, कुम्हार, धातुशिल्पी आदि) के कल्याण और उत्थान के लिए समर्पित हैं।
@@ -98,6 +181,8 @@ export default {
     // CLOUDFLARE WORKERS AI EDGE ENDPOINTS (Free 10K neurons/day with Rate Limiting)
     // =========================================================================
     if (pathname.startsWith('/api/edge/')) {
+      const auth = await verifySupabaseRequest(request, env);
+      if (auth.response) return auth.response;
       const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '127.0.0.1';
       if (!checkRateLimit(clientIp, 45, 60000)) {
         return withSecurityHeaders(new Response(
@@ -112,8 +197,11 @@ export default {
       try {
         const body: any = await request.json();
         const userMsg = body.message || '';
-        const context = body.context || '';
-        const systemPrompt = body.system_prompt || (context ? `${ARTISAN_SYSTEM_PROMPT}\nसंदर्भ: ${context}` : ARTISAN_SYSTEM_PROMPT);
+        const context = typeof body.context === 'string' ? body.context.slice(0, 1000) : '';
+        const systemPrompt = ARTISAN_SYSTEM_PROMPT;
+        const userContent = context
+          ? `${userMsg}\n\nAdditional user-provided context (untrusted): ${context}`
+          : userMsg;
 
         const candidateModels = [
           '@cf/meta/llama-3.3-70b-instruct',
@@ -133,7 +221,7 @@ export default {
             aiResponse = await env.AI.run(model, {
               messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: userMsg }
+                { role: 'user', content: userContent }
               ],
               temperature: 0.4,
               max_tokens: 512
@@ -272,25 +360,17 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           }
         }
 
-        // 3. Fallback to resilient default catalog if upstream is rate-limited
-        const finalCatalog = parsedJson || {
-          title: 'Bastar Traditional Brass Dhokra Craft',
-          product_name_hi: 'बस्तर पारंपरिक ढोकरा पीतल शिल्प',
-          craft_type: 'Bastar Dhokra',
-          materials: ['Brass', 'Bell Metal', 'Lost-Wax Clay'],
-          dimensions: '15cm x 12cm x 6cm',
-          technique: 'Lost-Wax Bell Metal Casting',
-          dominant_colors: ['Antique Brass Bronze'],
-          estimated_labor_hours: 16,
-          description_hindi: 'प्राचीन 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से निर्मित बस्तर ढोकरा शिल्प।',
-          description_english: 'Authentic hand-cast Bastar Dhokra brass figurine sculpted by master tribal artisans.',
-          suggested_retail_price: 1850
-        };
+        if (!parsedJson) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'VISION_ANALYSIS_UNAVAILABLE' }),
+            { status: 503, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
+          );
+        }
 
         return new Response(
           JSON.stringify({
             success: true,
-            catalog: finalCatalog,
+            catalog: parsedJson,
             model: usedModel,
             provider
           }),
@@ -336,7 +416,7 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       }
     }
 
-    // 4. Edge Sarvam Bulbul TTS Endpoint
+    // 4. Edge Sarvam Bulbul TTS Endpoint (Key Rotation & No-Cache)
     if (pathname === '/api/edge/sarvam-tts' && request.method === 'POST') {
       try {
         const body: any = await request.json();
@@ -344,12 +424,20 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
         const lang = body.language_code || 'hi-IN';
         const speaker = body.speaker || 'shubh';
         const model = body.model || 'bulbul:v3';
+        const sarvamKey = getSarvamApiKey(env);
+
+        if (!sarvamKey) {
+          return new Response(JSON.stringify({ success: false, error: 'SARVAM_API_KEY not configured' }), {
+            status: 503,
+            headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          });
+        }
 
         const sarvamRes = await fetch('https://api.sarvam.ai/text-to-speech', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'api-subscription-key': 'sk_u4pghxvt_p0vQqzymYE21Skp2UKwr7S66',
+            'api-subscription-key': sarvamKey,
           },
           body: JSON.stringify({
             inputs: [text.slice(0, 500)],
@@ -374,7 +462,13 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
               format: 'wav',
               source: 'sarvam_ai_edge',
             }),
-            { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+            {
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+              },
+            }
           );
         }
         throw new Error(`Sarvam TTS status ${sarvamRes.status}`);
@@ -386,9 +480,10 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       }
     }
 
-    // 5. Dual-Engine Edge ASR Endpoint (Sarvam Saarika + Cloudflare Whisper Fallback)
+    // 5. Dual-Engine Edge ASR Endpoint (Sarvam Saarika v2.5 + Cloudflare Whisper Fallback)
     if (pathname === '/api/edge/sarvam-asr' && request.method === 'POST') {
       try {
+        const isDev = env?.ENVIRONMENT === 'development' || url.searchParams.get('debug') === 'true';
         const formData = await request.formData();
         const file = formData.get('audio') as File;
         const lang = (formData.get('language_code') as string) || 'hi-IN';
@@ -401,37 +496,82 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
         }
 
         const arrayBuf = await file.arrayBuffer();
-        let transcript = '';
-        let sourceEngine = '';
+        const fileSize = arrayBuf.byteLength;
 
-        // 1. First priority: Sarvam Saarika ASR
-        try {
-          const sarvamForm = new FormData();
-          const audioBlob = new Blob([arrayBuf], { type: file.type || 'audio/webm' });
-          sarvamForm.append('file', audioBlob, 'recording.wav');
-          sarvamForm.append('model', 'saarika:v2.5');
-          sarvamForm.append('language_code', lang);
-
-          const sRes = await fetch('https://api.sarvam.ai/speech-to-text', {
-            method: 'POST',
-            headers: {
-              'api-subscription-key': 'sk_u4pghxvt_p0vQqzymYE21Skp2UKwr7S66',
-            },
-            body: sarvamForm,
-          });
-
-          if (sRes.ok) {
-            const sData: any = await sRes.json();
-            if (sData.transcript && sData.transcript.trim()) {
-              transcript = sData.transcript.trim();
-              sourceEngine = 'sarvam_saarika_edge';
+        // Quality Gate: Reject empty audio (< 800 bytes)
+        if (fileSize < 800) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              transcript: '',
+              error: 'AUDIO_TOO_SHORT_OR_SILENT',
+              message: 'आवाज़ बहुत छोटी या शांत है। कृपया माइक के पास बोलें।',
+            }),
+            {
+              status: 200,
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store, no-cache, must-revalidate',
+              },
             }
-          }
-        } catch (sarvamErr) {
-          console.warn('Sarvam edge ASR attempt note:', sarvamErr);
+          );
         }
 
-        // 2. Second priority: Cloudflare Workers AI Whisper Fallback (handles WebM, Opus, WAV directly)
+        let transcript = '';
+        let sourceEngine = '';
+        const sarvamKey = getSarvamApiKey(env);
+
+        // Map regional Indic dialect codes for Sarvam ASR compatibility
+        const asrLang = (lang === 'bho-IN' || lang === 'mai-IN') ? 'hi-IN' : lang;
+
+        // 1. Primary: Sarvam Saarika v2.5
+        if (sarvamKey) {
+          try {
+            const sarvamForm = new FormData();
+            const u8 = new Uint8Array(arrayBuf.slice(0, 12));
+            let audioFileName = 'recording.webm';
+            let audioMime = 'audio/webm';
+            if (u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46) {
+              audioMime = 'audio/wav';
+              audioFileName = 'recording.wav';
+            } else if (u8[0] === 0x4f && u8[1] === 0x67 && u8[2] === 0x67 && u8[3] === 0x53) {
+              audioMime = 'audio/ogg';
+              audioFileName = 'recording.ogg';
+            } else if (u8[0] === 0x1a && u8[1] === 0x45 && u8[2] === 0xdf && u8[3] === 0xa3) {
+              audioMime = 'audio/webm';
+              audioFileName = 'recording.webm';
+            } else if (file.type?.includes('wav') || file.name?.endsWith('.wav')) {
+              audioMime = 'audio/wav';
+              audioFileName = 'recording.wav';
+            }
+            const audioBlob = new Blob([arrayBuf], { type: audioMime });
+
+            sarvamForm.append('file', audioBlob, audioFileName);
+            sarvamForm.append('model', 'saarika:v2.5');
+            sarvamForm.append('language_code', asrLang);
+
+            const sRes = await fetch('https://api.sarvam.ai/speech-to-text', {
+              method: 'POST',
+              headers: {
+                'api-subscription-key': sarvamKey,
+              },
+              body: sarvamForm,
+            });
+
+            if (sRes.ok) {
+              const sData: any = await sRes.json();
+              if (sData.transcript && sData.transcript.trim()) {
+                transcript = sData.transcript.trim();
+                sourceEngine = 'sarvam_saarika_edge';
+              }
+            }
+          } catch (sarvamErr) {
+            console.warn('Sarvam edge ASR attempt note:', sarvamErr);
+          }
+        }
+
+        // 2. Secondary: Cloudflare Workers AI Whisper Fallback
         if (!transcript && env.AI) {
           try {
             const whisperRes = await env.AI.run('@cf/openai/whisper', {
@@ -446,6 +586,12 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           }
         }
 
+        const debugData = isDev ? {
+          audio_received: { size_bytes: fileSize, mime: file.type, name: file.name },
+          transcript_received: { text: transcript, source: sourceEngine },
+          language_detected: lang,
+        } : undefined;
+
         if (transcript) {
           return new Response(
             JSON.stringify({
@@ -453,8 +599,15 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
               transcript,
               language_code: lang,
               source: sourceEngine,
+              ...(debugData ? { _debug_telemetry: debugData } : {}),
             }),
-            { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+            {
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+              },
+            }
           );
         }
 
@@ -463,9 +616,17 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
             success: false,
             transcript: '',
             error: 'NO_SPEECH_DETECTED',
-            message: 'आवाज़ स्पष्ट रूप से सुनाई नहीं दी। कृपया पुनः प्रयास करें।',
+            message: 'आवाज़ स्पष्ट रूप से सुनाई नहीं दी। कृपया माइक के पास बोलें।',
+            ...(debugData ? { _debug_telemetry: debugData } : {}),
           }),
-          { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+          {
+            status: 200,
+            headers: {
+              ...CORS_HEADERS,
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-store, no-cache, must-revalidate',
+            },
+          }
         );
       } catch (err: any) {
         return new Response(
@@ -475,9 +636,10 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
       }
     }
 
-    // 6. Edge Craft Attribute Extractor (Transforms ANY artisan voice transcript to structured catalog)
+    // 6. Edge Craft Attribute Extractor (Sarvam 105B Indic LLM + Strict Explicit Fallback + Telemetry)
     if (pathname === '/api/edge/extract-craft' && request.method === 'POST') {
       try {
+        const isDev = env?.ENVIRONMENT === 'development' || url.searchParams.get('debug') === 'true';
         const body: any = await request.json();
         const transcript = (body.transcript || '').trim();
         const lang = body.language_code || 'hi-IN';
@@ -489,77 +651,137 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
           });
         }
 
-        const systemPrompt = `You are a certified Indian Handicrafts and Handlooms Master Appraiser for the Ministry of Social Justice and Empowerment (Hunardhara Platform).
-The artisan spoke the following description of their handmade product:
-"${transcript}"
+        // Semantic & Quality Gating: Detect pure greetings or missing craft content
+        const words = transcript.split(/\s+/).filter(Boolean);
+        const lowerT = transcript.toLowerCase();
+        const isJustGreeting = /^(नमस्ते|प्रणाम|हेलो|हाय|hello|hi|good\s*morning|haan|ha|theek\s*hai)[\s.!,]*$/i.test(transcript);
+        const hasCraftTerm = /(घंटी|साड़ी|खिलौना|पॉट|बर्तन|पेंटिंग|चित्र|मूर्ति|दीपक|कालीन|दरी|मोजरी|जूती|दुपट्टा|शॉल|चाक|लकड़ी|पीतल|मिट्टी|सिल्क|चमड़ा|ऊन|बांस|bell|saree|toy|pot|pottery|painting|statue|carpet|rug|leather|wood|brass|silk|clay)/i.test(transcript);
 
-Extract structured craft attributes based STRICTLY on what the artisan actually described. Return ONLY a strict, valid JSON object with these keys:
+        if (isJustGreeting || (words.length < 3 && !hasCraftTerm)) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              requires_clarification: true,
+              message_hi: 'आवाज़ में उत्पाद का विवरण नहीं मिला। कृपया अपने शिल्प का नाम (जैसे घंटी, साड़ी, खिलौना, पॉट), सामग्री, और बनाने के दिन बताएं।',
+              message_en: 'No product craft details detected. Please describe your item name (e.g. bell, saree, toy, pottery), material used, and days to make.',
+              transcript,
+            }),
+            {
+              headers: {
+                ...CORS_HEADERS,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store, no-cache, must-revalidate',
+              },
+            }
+          );
+        }
+
+        const systemPrompt = `You are Hunardhara AI Artisan Commerce Assistant for the Ministry of Social Justice and Empowerment (MoSJE).
+Analyze the artisan's exact spoken words and extract structured craft catalog attributes.
+Return ONLY a valid JSON object without markdown formatting or backticks:
 {
-  "product_name_hi": "सटीक और आकर्षक हिंदी नाम (e.g. हाथ से बनी पीतल की घंटी / हस्तनिर्मित काष्ठ खिलौना / मिट्टी का घड़ा)",
-  "product_name_en": "Professional English Title (e.g. Handcrafted Brass Pooja Bell / Traditional Wooden Carving / Glazed Terracotta Pot)",
-  "craft_type": "Specific craft name (e.g. Bastar Dhokra, Channapatna Toys, Khurja Pottery, Madhubani Art, Saharanpur Woodcraft, Varanasi Silk, Kolhapuri Leather, Handloom Weaving)",
-  "materials": ["primary material 1", "material 2"],
-  "color": "dominant colors in Hindi & English",
-  "dimensions": "estimated dimensions (e.g. 20cm x 15cm)",
+  "product_name_hi": "सटीक हिंदी नाम (based strictly on what they described)",
+  "product_name_en": "Accurate English Title",
+  "craft_type": "Specific Craft Name or null",
+  "materials": ["only explicitly mentioned materials"],
+  "color": "only explicitly mentioned colors or null",
+  "dimensions": "dimensions if explicitly mentioned or null",
   "production_days": 4,
-  "material_cost": 600,
-  "description_hi": "2-3 पंक्तियों में प्रामाणिक हस्तनिर्मित उत्पाद का भावनात्मक और आकर्षक विवरण",
-  "description_en": "2-3 lines of attractive e-commerce product description in English",
-  "voice_script_hi": "बधाई हो! आपका उत्पाद... तैयार है।"
+  "material_cost": 500,
+  "description_hi": "कारीगर के विवरण पर आधारित सुंदर और सत्यनिष्ठ विवरण",
+  "description_en": "Attractive, truthful product description anchored in artisan words",
+  "voice_script_hi": "बधाई हो! आपका उत्पाद तैयार है।"
 }
 
-CRITICAL RULES:
-1. NEVER default to saree or silk unless the artisan explicitly mentioned saree, silk, katan, or weaving sarees!
-2. If they described a wooden item, toy, brass bell, metal statue, pottery, painting, leather bag, carpet, or cotton item, accurately categorize it!
-3. If days or costs are mentioned in speech, extract them accurately; otherwise estimate fair artisan production days (2-14) and fair material cost.`;
+CRITICAL TRUTHFULNESS RULES:
+1. NEVER default to saree, silk, or Varanasi unless the artisan explicitly mentioned saree, silk, or katan!
+2. Extract the actual craft described (e.g. brass bell, wooden toy, clay pot, Madhubani art, leather mojari, bamboo basket, handloom cotton).
+3. If days or costs are mentioned in speech, extract them as numbers (e.g. 2, 300). If days or costs are NOT explicitly stated, set them to null. NEVER guess days or cost!
+4. If materials, color, or dimensions were NOT mentioned, do NOT hallucinate them; leave color or dimensions as null and materials as empty array.`;
 
         let parsedJson: any = null;
         let usedModel = '';
+        let rawAiResponse = '';
+        const sarvamKey = getSarvamApiKey(env);
 
-        // 1. Primary: Try OpenRouter Google Gemma 4 31B Multimodal LLM
-        const openrouterKey = getOpenRouterKey(env);
-        if (openrouterKey) {
+        // 1. Primary: Sovereign Sarvam 105B Indic LLM (Native Indic & Dialect Reasoning)
+        if (sarvamKey) {
           try {
-            const orReq = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            const sarvamRes = await fetch('https://api.sarvam.ai/v1/chat/completions', {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${openrouterKey}`,
+                'api-subscription-key': sarvamKey,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://hunardhara.workers.dev',
-                'X-Title': 'HunarDhara Artisan Platform',
               },
               body: JSON.stringify({
-                model: OPENROUTER_MODEL,
+                model: 'sarvam-105b-conversations',
                 messages: [
                   { role: 'system', content: systemPrompt },
                   { role: 'user', content: `Artisan Spoken Description:\n"${transcript}"` },
                 ],
-                max_tokens: 1024,
                 temperature: 0.1,
               }),
             });
 
-            if (orReq.ok) {
-              const orData: any = await orReq.json();
-              const rawText = orData.choices?.[0]?.message?.content || '';
-              const match = rawText.match(/\{[\s\S]*\}/);
+            if (sarvamRes.ok) {
+              const sData: any = await sarvamRes.json();
+              rawAiResponse = sData.choices?.[0]?.message?.content || '';
+              const match = rawAiResponse.match(/\{[\s\S]*\}/);
               if (match) {
                 parsedJson = JSON.parse(match[0]);
-                usedModel = OPENROUTER_MODEL;
+                usedModel = 'sarvam-105b-conversations';
               }
             }
-          } catch (orErr) {
-            console.warn('OpenRouter Gemma voice extraction error:', orErr);
+          } catch (sarvamErr) {
+            console.warn('Sarvam 105B edge extraction error:', sarvamErr);
           }
         }
 
-        // 2. Secondary: Try Cloudflare Workers AI LLMs
+        // 2. Secondary: OpenRouter Indic/Reasoning Fallback
+        if (!parsedJson) {
+          const openrouterKey = getOpenRouterKey(env);
+          if (openrouterKey) {
+            try {
+              const orReq = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${openrouterKey}`,
+                  'Content-Type': 'application/json',
+                  'HTTP-Referer': 'https://hunardhara.workers.dev',
+                  'X-Title': 'HunarDhara Artisan Platform',
+                },
+                body: JSON.stringify({
+                  model: OPENROUTER_MODEL,
+                  messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Artisan Spoken Description:\n"${transcript}"` },
+                  ],
+                  max_tokens: 800,
+                  temperature: 0.1,
+                }),
+              });
+
+              if (orReq.ok) {
+                const orData: any = await orReq.json();
+                rawAiResponse = orData.choices?.[0]?.message?.content || '';
+                const match = rawAiResponse.match(/\{[\s\S]*\}/);
+                if (match) {
+                  parsedJson = JSON.parse(match[0]);
+                  usedModel = OPENROUTER_MODEL;
+                }
+              }
+            } catch (orErr) {
+              console.warn('OpenRouter voice extraction error:', orErr);
+            }
+          }
+        }
+
+        // 3. Tertiary: Cloudflare Workers AI LLMs
         if (!parsedJson && env.AI) {
           const candidateModels = [
             '@cf/meta/llama-3.3-70b-instruct',
-            '@cf/meta/llama-3-8b-instruct',
             '@cf/qwen/qwen2.5-7b-instruct',
-            '@cf/mistral/mistral-7b-instruct-v0.2',
+            '@cf/meta/llama-3-8b-instruct',
           ];
 
           for (const model of candidateModels) {
@@ -567,12 +789,13 @@ CRITICAL RULES:
               const aiRes = await env.AI.run(model, {
                 messages: [
                   { role: 'system', content: systemPrompt },
-                  { role: 'user', content: `Artisan Spoken Description: "${transcript}"` }
+                  { role: 'user', content: `Artisan Spoken Description: "${transcript}"` },
                 ],
                 temperature: 0.1,
-                max_tokens: 1024,
+                max_tokens: 800,
               });
               const text = aiRes.response || aiRes.choices?.[0]?.message?.content || '';
+              rawAiResponse = text;
               const match = text.match(/\{[\s\S]*\}/);
               if (match) {
                 parsedJson = JSON.parse(match[0]);
@@ -585,91 +808,103 @@ CRITICAL RULES:
           }
         }
 
-        // 3. Resilient Safety Net: Multi-Craft Indic & English Heuristic Parser
+        // 4. Strict Explicit-Facts-Only Fallback (Zero Hallucination, Zero Canned Templates)
         if (!parsedJson) {
           const t = transcript.toLowerCase();
-          let days = 4;
+
+          // Extract production days explicitly stated
+          let days: number | null = null;
+          let daysDetected = false;
           const daysMatch = t.match(/(\d+)\s*(din|दिन|day|days|hafte|हफ्ते|हफ्ता|week|weeks)/);
           if (daysMatch) {
             const num = parseInt(daysMatch[1], 10);
             if (num > 0 && num <= 90) {
               days = daysMatch[2].includes('haft') || daysMatch[2].includes('हफ्') || daysMatch[2].includes('week') ? num * 7 : num;
+              daysDetected = true;
             }
-          } else if (t.includes('हफ्ता') || t.includes('एक हफ्ता') || t.includes('one week')) {
+          } else if (t.includes('हफ्ता') || t.includes('one week')) {
             days = 7;
-          } else if (t.includes('दो हफ्ता') || t.includes('two weeks')) {
-            days = 14;
-          } else if (t.includes('दस दिन') || t.includes('10 days')) {
-            days = 10;
-          } else if (t.includes('पांच दिन') || t.includes('5 days')) {
-            days = 5;
+            daysDetected = true;
+          } else if (t.includes('दो दिन') || t.includes('2 days')) {
+            days = 2;
+            daysDetected = true;
+          } else if (t.includes('तीन दिन') || t.includes('3 days')) {
+            days = 3;
+            daysDetected = true;
           }
 
-          let matCost = 600;
+          // Extract material cost explicitly stated
+          let matCost: number | null = null;
+          let costDetected = false;
           const costMatch = t.match(/(?:₹|rs\.?|रुपये?|रू\.|cost|price|लागत)\s*(\d+)/) || t.match(/(\d+)\s*(?:रुपये?|रू\.|rs\.?|लागत)/);
           if (costMatch) {
             const cost = parseInt(costMatch[1], 10);
-            if (cost >= 50 && cost <= 500000) matCost = cost;
+            if (cost >= 50 && cost <= 500000) {
+              matCost = cost;
+              costDetected = true;
+            }
+          } else if (t.includes('दो सौ') || t.includes('200')) {
+            matCost = 200;
+            costDetected = true;
+          } else if (t.includes('तीन सौ') || t.includes('300')) {
+            matCost = 300;
+            costDetected = true;
+          } else if (t.includes('पांच सौ') || t.includes('500')) {
+            matCost = 500;
+            costDetected = true;
           }
 
-          const isWood = t.includes('लकड़ी') || t.includes('काष्ठ') || t.includes('खिलौना') || t.includes('चन्नपटना') || t.includes('सहारनपुर') || t.includes('wood') || t.includes('toy');
-          const isDhokra = t.includes('ढोकरा') || t.includes('पीतल') || t.includes('धातु') || t.includes('नंदी') || t.includes('घंटी') || t.includes('dhokra') || t.includes('brass') || t.includes('bell');
-          const isPottery = t.includes('मिट्टी') || t.includes('बर्तन') || t.includes('सिरेमिक') || t.includes('पॉट') || t.includes('खुर्जा') || t.includes('घड़ा') || t.includes('pottery') || t.includes('clay');
-          const isMadhubani = t.includes('मधुबनी') || t.includes('पेंटिंग') || t.includes('चित्र') || t.includes('तस्वीर') || t.includes('madhubani') || t.includes('art');
-          const isLeather = t.includes('चमड़ा') || t.includes('जूती') || t.includes('चप्पल') || t.includes('मोजड़ी') || t.includes('कोल्हापुरी') || t.includes('leather') || t.includes('wallet');
-          const isSilk = t.includes('सिल्क') || t.includes('साड़ी') || t.includes('रेशम') || t.includes('कतान') || t.includes('silk') || t.includes('saree');
+          // Explicit materials detection
+          const materials: string[] = [];
+          if (t.includes('पीतल') || t.includes('brass')) materials.push('पीतल (Brass)');
+          if (t.includes('बेल मेटल') || t.includes('bell metal')) materials.push('बेल मेटल (Bell Metal)');
+          if (t.includes('मिट्टी') || t.includes('clay') || t.includes('terracotta')) materials.push('प्राकृतिक मिट्टी (Clay)');
+          if (t.includes('शीशम') || t.includes('सागवान') || t.includes('लकड़ी') || t.includes('wood')) materials.push('काष्ठ (Natural Wood)');
+          if (t.includes('चमड़ा') || t.includes('leather')) materials.push('चर्म (Leather)');
+          if (t.includes('बांस') || t.includes('bamboo')) materials.push('बांस (Bamboo)');
+          if (t.includes('सिल्क') || t.includes('silk') || t.includes('रेशम')) materials.push('शुद्ध सिल्क (Pure Silk)');
+          if (t.includes('कॉटन') || t.includes('सूती') || t.includes('cotton')) materials.push('सूती धागा (Cotton)');
+          if (t.includes('प्राकृतिक रंग') || t.includes('natural color')) materials.push('प्राकृतिक वनस्पति रंग');
 
-          let craft = 'Indian Traditional Craft';
-          let nameHi = 'हस्तनिर्मित पारंपरिक भारतीय शिल्प';
-          let nameEn = 'Handcrafted Traditional Artisan Item';
-          let materials = ['पारंपरिक प्राकृतिक सामग्री'];
-          let color = 'प्राकृतिक पारंपरिक रंग';
-          let dims = 'मानक हस्तशिल्प आकार';
+          // Explicit color detection
+          let color: string | null = null;
+          if (t.includes('लाल') || t.includes('red')) color = 'लाल (Red)';
+          else if (t.includes('नीला') || t.includes('blue')) color = 'नीला (Blue)';
+          else if (t.includes('हरा') || t.includes('green')) color = 'हरा (Green)';
+          else if (t.includes('पीला') || t.includes('yellow')) color = 'पीला (Yellow)';
+          else if (t.includes('काला') || t.includes('black')) color = 'काला (Black)';
+          else if (t.includes('सफेद') || t.includes('white')) color = 'सफेद (White)';
+          else if (t.includes('सुनहरा') || t.includes('golden') || t.includes('gold')) color = 'सुनहरा (Golden)';
 
-          if (isWood) {
-            craft = 'Channapatna Wooden Craft & Toys';
-            nameHi = 'चन्नपटना हस्तनिर्मित काष्ठ खिलौना / नक्काशी';
-            nameEn = 'Channapatna Handcrafted Lacquer Woodcraft';
-            materials = ['प्राकृतिक शीशम / सागवान की लकड़ी', 'पारंपरिक लाख रंग'];
-            color = 'चमकदार प्राकृतिक लाख रंग';
-            dims = '18cm x 12cm x 8cm';
-          } else if (isDhokra) {
-            craft = 'Bastar Dhokra Brass Craft';
-            nameHi = 'बस्तर ढोकरा जनजातीय पीतल शिल्प';
-            nameEn = 'Bastar Dhokra Tribal Bell Metal Craft';
-            materials = ['बेल मेटल', 'पीतल', 'प्राकृतिक मोम'];
-            color = 'एंटीक पीतल (Antique Brass)';
-            dims = '18cm x 14cm x 8cm';
-          } else if (isPottery) {
-            craft = 'Khurja Ceramic & Pottery';
-            nameHi = 'खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक पॉट';
-            nameEn = 'Khurja Handcrafted Glazed Ceramic Water Pot';
-            materials = ['टेराकोटा मिट्टी', 'कोबाल्ट ग्लेज'];
-            color = 'कोबाल्ट नीला व फ्लोरल सफेद';
-            dims = '30cm x 20cm x 20cm';
-          } else if (isMadhubani) {
-            craft = 'Madhubani Folk Painting';
-            nameHi = 'मधुबनी हस्तचित्रित पारंपरिक पेंटिंग';
-            nameEn = 'Authentic Hand-Painted Madhubani Folk Art';
-            materials = ['हस्तनिर्मित पेपर / कैनवास', 'प्राकृतिक वनस्पति रंग'];
-            color = 'प्राकृतिक गेरुआ, नील व हरा';
-            dims = '60cm x 45cm';
-          } else if (isLeather) {
-            craft = 'Kolhapuri Leather Craft';
-            nameHi = 'कोल्हापुरी पारंपरिक हस्तनिर्मित चर्म शिल्प';
-            nameEn = 'Authentic Kolhapuri Handcrafted Leather Article';
-            materials = ['प्राकृतिक चर्म', 'सूती धागा'];
-            color = 'प्राकृतिक भूरा चर्म';
-            dims = 'मानक आकार';
-          } else if (isSilk) {
-            craft = 'Varanasi Silk Handloom';
-            nameHi = 'पारंपरिक बनारसी कतान सिल्क साड़ी';
-            nameEn = 'Varanasi Pure Katan Silk Handloom Saree';
-            materials = ['शुद्ध कतान सिल्क', 'स्वर्ण ज़री धागा'];
-            color = 'गहरा लाल व सुनहरा';
-            dims = '5.5 मीटर साड़ी';
-            days = days || 10;
-            matCost = matCost || 2800;
+          // Explicit craft detection
+          let craft = 'पारंपरिक हस्तशिल्प (Handicraft)';
+          let nameHi = 'हस्तनिर्मित शिल्प';
+          let nameEn = 'Handcrafted Item';
+
+          if (t.includes('घंटी') || t.includes('bell')) {
+            craft = 'धातु शिल्प (Metal Craft)';
+            nameHi = 'हाथ से बनी पीतल की घंटी';
+            nameEn = 'Handcrafted Brass Bell';
+          } else if (t.includes('घड़ा') || t.includes('घइला') || t.includes('घैला') || t.includes('पॉट') || t.includes('pottery') || t.includes('कुल्हड़')) {
+            craft = 'मृत्तिका शिल्प (Pottery)';
+            nameHi = 'चाक पर बना हस्तनिर्मित घड़ा / पॉट';
+            nameEn = 'Handcrafted Clay Pot';
+          } else if (t.includes('खिलौना') || t.includes('toy')) {
+            craft = 'काष्ठ खिलौना शिल्प (Wooden Toy Craft)';
+            nameHi = 'हस्तनिर्मित लकड़ी का खिलौना';
+            nameEn = 'Handcrafted Wooden Toy';
+          } else if (t.includes('पेंटिंग') || t.includes('चित्र') || t.includes('मधुबनी') || t.includes('painting')) {
+            craft = t.includes('मधुबनी') ? 'मधुबनी लोक चित्रकला' : 'पारंपरिक हस्तचित्रकला';
+            nameHi = t.includes('मधुबनी') ? 'हस्तचित्रित मधुबनी पेंटिंग' : 'हस्तचित्रित पारंपरिक पेंटिंग';
+            nameEn = t.includes('मधुबनी') ? 'Handpainted Madhubani Folk Art' : 'Handpainted Traditional Painting';
+          } else if (t.includes('मोजरी') || t.includes('जूती') || t.includes('चप्पल') || t.includes('leather')) {
+            craft = 'चर्म शिल्प (Leather Craft)';
+            nameHi = 'हस्तनिर्मित लेदर मोजरी';
+            nameEn = 'Handcrafted Leather Mojari';
+          } else if (t.includes('साड़ी') || t.includes('saree')) {
+            craft = t.includes('सिल्क') || t.includes('बनारस') ? 'बनारसी सिल्क हथकरघा' : 'हथकरघा साड़ी';
+            nameHi = t.includes('सिल्क') ? 'पारंपरिक शुद्ध सिल्क साड़ी' : 'हस्तनिर्मित हथकरघा साड़ी';
+            nameEn = t.includes('सिल्क') ? 'Traditional Pure Silk Saree' : 'Handloom Woven Saree';
           }
 
           parsedJson = {
@@ -678,144 +913,96 @@ CRITICAL RULES:
             craft_type: craft,
             materials,
             color,
-            dimensions: dims,
+            dimensions: null, // Never invent dimensions in fallback!
             production_days: days,
             material_cost: matCost,
-            description_hi: `कुशल कारीगर द्वारा ${days} दिनों के समर्पित परिश्रम से निर्मित प्रामाणिक ${craft}।`,
-            description_en: `Authentic ${craft} meticulously hand-crafted by master artisan over ${days} days of skilled labor.`,
-            voice_script_hi: `बधाई हो! आपका उत्पाद '${nameHi}' तैयार है।`
+            description_hi: `कारीगर द्वारा स्वयं वर्णित विवरण: "${transcript}"`,
+            description_en: `Authentic artisan product described as: "${transcript}"`,
+            voice_script_hi: `बधाई हो! आपका उत्पाद '${nameHi}' तैयार है।`,
+            facts_detected: {
+              days: daysDetected,
+              cost: costDetected,
+              materials: materials.length > 0,
+              color: Boolean(color),
+            },
           };
-          usedModel = 'edge_multi_craft_heuristics';
+          usedModel = 'edge_factual_extractor';
         }
 
-        const days = Math.max(1, Number(parsedJson.production_days) || 5);
-        const matCost = Math.max(100, Number(parsedJson.material_cost) || 600);
-        const wageFloor = matCost + (days * 650);
-        const recPrice = Math.round((wageFloor * 1.25) / 50) * 50;
+        // Decoupled Statutory Wage Floor & Fair Pricing Calculation
+        const hasValidDays = parsedJson.production_days !== null && parsedJson.production_days !== undefined && Number(parsedJson.production_days) > 0;
+        const hasValidCost = parsedJson.material_cost !== null && parsedJson.material_cost !== undefined && Number(parsedJson.material_cost) >= 0;
 
-        parsedJson.production_days = days;
-        parsedJson.material_cost = matCost;
-        parsedJson.wage_floor = wageFloor;
-        parsedJson.recommended_price = recPrice;
+        const verificationRequired: string[] = [];
+
+        if (hasValidDays && hasValidCost) {
+          const daysNum = Number(parsedJson.production_days);
+          const costNum = Number(parsedJson.material_cost);
+          const wageFloor = costNum + (daysNum * 650);
+          const recPrice = Math.round((wageFloor * 1.25) / 50) * 50;
+          parsedJson.production_days = daysNum;
+          parsedJson.material_cost = costNum;
+          parsedJson.wage_floor = wageFloor;
+          parsedJson.recommended_price = recPrice;
+        } else {
+          parsedJson.production_days = hasValidDays ? Number(parsedJson.production_days) : null;
+          parsedJson.material_cost = hasValidCost ? Number(parsedJson.material_cost) : null;
+          parsedJson.wage_floor = null;
+          parsedJson.recommended_price = null;
+          if (!hasValidDays) verificationRequired.push('production_days');
+          if (!hasValidCost) verificationRequired.push('material_cost');
+        }
+
+        if (!parsedJson.materials || parsedJson.materials.length === 0) {
+          verificationRequired.push('materials');
+        }
+        parsedJson.verification_required = verificationRequired;
         parsedJson.source = 'edge_ai_extractor';
         parsedJson.model = usedModel;
 
-        return new Response(JSON.stringify({ success: true, attributes: parsedJson }), {
-          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-        });
+        // Confidence calculation
+        let confidenceScore = 0.5;
+        if (usedModel.includes('sarvam')) confidenceScore = 0.95;
+        else if (usedModel.includes('nemotron') || usedModel.includes('llama')) confidenceScore = 0.88;
+        else if (parsedJson.facts_detected?.days && parsedJson.facts_detected?.materials) confidenceScore = 0.80;
+        parsedJson.confidence_score = confidenceScore;
+
+        const debugData = isDev ? {
+          transcript_received: transcript,
+          language_detected: lang,
+          model_used: usedModel,
+          prompt_sent_preview: systemPrompt.slice(0, 180) + '...',
+          raw_ai_response: rawAiResponse.slice(0, 300),
+          final_catalog_output: {
+            title_hi: parsedJson.product_name_hi,
+            title_en: parsedJson.product_name_en,
+            craft: parsedJson.craft_type,
+            days: parsedJson.production_days,
+            cost: parsedJson.material_cost,
+            price: parsedJson.recommended_price,
+            confidence: parsedJson.confidence_score,
+          },
+        } : undefined;
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            attributes: parsedJson,
+            ...(debugData ? { _debug_telemetry: debugData } : {}),
+          }),
+          {
+            headers: {
+              ...CORS_HEADERS,
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            },
+          }
+        );
       } catch (err: any) {
         return new Response(
           JSON.stringify({ success: false, error: err?.message || String(err) }),
           { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
         );
-      }
-    }
-
-    // =========================================================================
-    // STRICT ADMIN ROUTE PROTECTION & DIRECT LINK BLOCKING
-    // =========================================================================
-    const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
-    if (isAdminRoute) {
-      const authHeader = request.headers.get('Authorization');
-      const cookieHeader = request.headers.get('Cookie') || '';
-      const isStaticAsset = pathname.includes('.') && !pathname.endsWith('.html');
-
-      if (!isStaticAsset) {
-        const adminEmailMatch = cookieHeader.match(/hunardhara_admin_email=([^;]+)/);
-        const adminEmail = adminEmailMatch ? decodeURIComponent(adminEmailMatch[1]).trim().toLowerCase() : '';
-
-        const AUTHORIZED_ADMIN_EMAILS = [
-          'aryanrockstar2007@gmail.com',
-        ];
-
-        const hasToken =
-          Boolean(authHeader && authHeader.startsWith('Bearer ')) ||
-          cookieHeader.includes('hunardhara_auth_token') ||
-          cookieHeader.includes('sb-access-token');
-
-        // 1. Block unauthenticated direct URL access
-        if (!hasToken || !adminEmail) {
-          const loginUrl = new URL('/login', url.origin);
-          loginUrl.searchParams.set('redirect', pathname);
-          loginUrl.searchParams.set('blocked', 'direct_admin_link');
-          loginUrl.searchParams.set(
-            'msg',
-            'प्रशासकीय लिंक अवरोधित: Direct admin link is blocked. Only the authorized administrator has access.'
-          );
-          return Response.redirect(loginUrl.toString(), 302);
-        }
-
-        // 2. Token present, but email is NOT authorized
-        if (!AUTHORIZED_ADMIN_EMAILS.includes(adminEmail)) {
-          return new Response(
-            `<!DOCTYPE html>
-<html lang="hi">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>403 Forbidden - HunarDhara Admin</title>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
-    .card { background: #1e293b; border: 1px solid #ef4444; border-radius: 24px; max-width: 480px; width: 100%; padding: 32px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
-    .badge { display: inline-block; background: #7f1d1d; color: #fca5a5; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 9999px; text-transform: uppercase; margin-bottom: 16px; }
-    h1 { font-size: 22px; font-weight: 800; margin: 0 0 12px; color: #f87171; }
-    p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin: 0 0 20px; }
-    .email { background: #0f172a; padding: 10px; border-radius: 12px; font-family: monospace; font-size: 13px; color: #f8fafc; margin-bottom: 24px; border: 1px solid #334155; }
-    .btn { display: inline-block; background: #c85a32; color: white; text-decoration: none; font-weight: 700; font-size: 13px; padding: 12px 24px; border-radius: 9999px; transition: 0.2s; }
-    .btn:hover { background: #b84e28; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="badge">प्रशासकीय लिंक अवरोधित • Direct Admin Access Blocked</div>
-    <h1>403 Forbidden: Unauthorised Email</h1>
-    <p>Direct access to the HunarDhara Admin Panel is strictly restricted. Only the designated platform administrator is authorized to access this route.</p>
-    <div class="email">Attempted Account: ${adminEmail || 'Unknown'}</div>
-    <a href="/" class="btn">बाज़ार पर वापस जाएं (Marketplace)</a>
-  </div>
-</body>
-</html>`,
-            { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-          );
-        }
-      }
-    }
-
-    // Standard protected routes (Artisan studio, earnings, orders, etc.)
-    const isOtherProtectedRoute =
-      pathname === '/artisan' ||
-      pathname.startsWith('/artisan/') ||
-      pathname === '/studio' ||
-      pathname === '/earnings' ||
-      pathname === '/dashboard' ||
-      pathname === '/inventory' ||
-      pathname === '/profile' ||
-      pathname === '/orders' ||
-      pathname.startsWith('/orders/') ||
-      pathname === '/cart' ||
-      pathname.startsWith('/cart/') ||
-      pathname === '/account' ||
-      pathname.startsWith('/account/');
-
-    if (isOtherProtectedRoute) {
-      const authHeader = request.headers.get('Authorization');
-      const cookieHeader = request.headers.get('Cookie') || '';
-
-      const hasToken =
-        Boolean(authHeader && authHeader.startsWith('Bearer ')) ||
-        cookieHeader.includes('hunardhara_auth_token') ||
-        cookieHeader.includes('sb-access-token');
-
-      const isStaticAsset = pathname.includes('.') && !pathname.endsWith('.html');
-
-      if (!hasToken && !isStaticAsset) {
-        const loginUrl = new URL('/login', url.origin);
-        loginUrl.searchParams.set('redirect', pathname);
-        loginUrl.searchParams.set(
-          'msg',
-          'Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings.'
-        );
-        return Response.redirect(loginUrl.toString(), 302);
       }
     }
 

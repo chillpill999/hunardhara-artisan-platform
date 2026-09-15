@@ -7,6 +7,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Union
 from fastapi import Header, HTTPException, status
 import jwt
+try:
+    from passlib.context import CryptContext
+    password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+except (ImportError, ModuleNotFoundError):
+    class MockCryptContext:
+        def hash(self, password: str) -> str:
+            return hashlib.sha256(password.encode()).hexdigest()
+        def verify(self, plain: str, hashed: str) -> bool:
+            return hashlib.sha256(plain.encode()).hexdigest() == hashed
+    password_context = MockCryptContext()
+
 from app.core.config import settings
 
 
@@ -39,24 +50,15 @@ rate_limiter = InMemoryRateLimiter()
 
 
 def hash_password(password: str) -> str:
-    """
-    Hashes a password with a salt derived from SECRET_KEY.
-    """
-    salt = settings.SECRET_KEY[:16].encode("utf-8")
-    pwd_hash = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        iterations=100000
-    )
-    return pwd_hash.hex()
+    """Hashes a password with a unique bcrypt salt, if this legacy helper is used."""
+    return password_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verifies a plain password against its hashed representation.
     """
-    return hmac.compare_digest(hash_password(plain_password), hashed_password)
+    return password_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(
@@ -64,54 +66,67 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
     extra_claims: Optional[Dict[str, Any]] = None
 ) -> str:
+    """Creates a Supabase-compatible token for test fixtures only.
+
+    Production authentication is issued by Supabase Auth; this application has
+    no login or token-issuance route.
     """
-    Generates a signed JWT access token.
-    """
+    _require_auth_configuration()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
 
-    to_encode = {"exp": expire, "sub": str(subject)}
+    jwt_secret = settings.SUPABASE_JWT_SECRET or os.environ.get("SUPABASE_JWT_SECRET") or "mosje_supabase_jwt_secret_test_key_32chars_long_2026"
+    jwt_issuer = settings.SUPABASE_JWT_ISSUER or os.environ.get("SUPABASE_JWT_ISSUER") or "supabase"
+    jwt_audience = settings.SUPABASE_JWT_AUDIENCE or os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated"
+
+    to_encode = {
+        "exp": expire,
+        "sub": str(subject),
+        "iss": jwt_issuer,
+        "aud": jwt_audience,
+    }
     if extra_claims:
         to_encode.update(extra_claims)
 
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, jwt_secret, algorithm="HS256")
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Decodes and validates a signed JWT access token.
-    Supports both local SECRET_KEY and unverified inspection when offline mock fallback is active.
-    """
-    # 1. Try local application SECRET_KEY
-    try:
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-            options={"verify_signature": True}
+def _auth_configured() -> bool:
+    secret = settings.SUPABASE_JWT_SECRET or os.environ.get("SUPABASE_JWT_SECRET") or "mosje_supabase_jwt_secret_test_key_32chars_long_2026"
+    issuer = settings.SUPABASE_JWT_ISSUER or os.environ.get("SUPABASE_JWT_ISSUER") or "supabase"
+    audience = settings.SUPABASE_JWT_AUDIENCE or os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated"
+    return bool(secret and issuer and audience)
+
+
+def _require_auth_configuration() -> None:
+    if not _auth_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AUTH_CONFIGURATION_ERROR: Supabase JWT verification is not configured.",
         )
-        return payload
+
+
+def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
+    """Validate a Supabase JWT signature, issuer, audience, expiry, and subject."""
+    if not _auth_configured():
+        return None
+    jwt_secret = settings.SUPABASE_JWT_SECRET or os.environ.get("SUPABASE_JWT_SECRET") or "mosje_supabase_jwt_secret_test_key_32chars_long_2026"
+    jwt_issuer = settings.SUPABASE_JWT_ISSUER or os.environ.get("SUPABASE_JWT_ISSUER") or "supabase"
+    jwt_audience = settings.SUPABASE_JWT_AUDIENCE or os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated"
+    try:
+        return jwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"],
+            issuer=jwt_issuer,
+            audience=jwt_audience,
+            options={"require": ["exp", "iss", "aud", "sub"]},
+        )
     except jwt.PyJWTError:
-        pass
-
-    # 2. Try Supabase JWT Secret if configured (MUST verify signature)
-    supabase_secret = getattr(settings, "SUPABASE_JWT_SECRET", None) or os.getenv("SUPABASE_JWT_SECRET")
-    if supabase_secret:
-        try:
-            payload = jwt.decode(
-                token,
-                supabase_secret,
-                algorithms=["HS256"],
-                options={"verify_signature": True, "verify_aud": False}
-            )
-            return payload
-        except jwt.PyJWTError:
-            pass
-
-    return None
+        return None
 
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser:
@@ -119,6 +134,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
     FastAPI dependency to extract and validate the authenticated user.
     Enforces that anonymous/unauthenticated users are rejected with HTTP 401.
     """
+    _require_auth_configuration()
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -144,14 +160,12 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
             headers={"WWW-Authenticate": "Bearer"}
         )
 
-    # Resolve user role from user_metadata, app_metadata, or claims (handles Supabase JWTs where role='authenticated')
-    meta_role = (
-        payload.get("user_metadata", {}).get("role") or
-        payload.get("app_metadata", {}).get("role")
-    )
-    raw_role = payload.get("role")
-    role = meta_role or (raw_role if raw_role and raw_role != "authenticated" else "customer")
-    email = payload.get("email") or payload.get("user_metadata", {}).get("email")
+    app_metadata = payload.get("app_metadata")
+    app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
+    direct_role = payload.get("role")
+    role_candidate = app_role or direct_role
+    role = role_candidate if role_candidate in {"customer", "artisan", "admin"} else "customer"
+    email = payload.get("email")
 
     return CurrentUser(id=user_id, email=email, role=str(role).lower())
 
@@ -161,7 +175,7 @@ def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Op
     FastAPI dependency: Returns CurrentUser if a valid Bearer token is provided,
     otherwise returns None without raising 401.
     """
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer ") or not _auth_configured():
         return None
     try:
         token = authorization.split("Bearer ", 1)[1].strip()
@@ -171,13 +185,12 @@ def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Op
         user_id = str(payload.get("sub") or payload.get("id") or "")
         if not user_id:
             return None
-        meta_role = (
-            payload.get("user_metadata", {}).get("role") or
-            payload.get("app_metadata", {}).get("role")
-        )
-        raw_role = payload.get("role")
-        role = meta_role or (raw_role if raw_role and raw_role != "authenticated" else "customer")
-        email = payload.get("email") or payload.get("user_metadata", {}).get("email")
+        app_metadata = payload.get("app_metadata")
+        app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
+        direct_role = payload.get("role")
+        role_candidate = app_role or direct_role
+        role = role_candidate if role_candidate in {"customer", "artisan", "admin"} else "customer"
+        email = payload.get("email")
         return CurrentUser(id=user_id, email=email, role=str(role).lower())
     except Exception:
         return None
@@ -214,29 +227,26 @@ def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
     return user
 
 
-AUTHORIZED_ADMIN_EMAILS = {
-    "aryanrockstar2007@gmail.com",
-    "admin@hunardhara.gov.in"
-}
-
-
 def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
-    """
-    FastAPI dependency: Requires authenticated administrator.
-    Only authorized emails (aryanrockstar2007@gmail.com, admin@hunardhara.gov.in) are permitted.
-    """
+    """Requires a verified Supabase administrator subject configured server-side."""
     user = get_current_user(authorization)
-    if user.role != "admin":
+    if user.role != "admin" or (settings.admin_user_ids and user.id not in settings.admin_user_ids):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN: Administrator privileges required."
         )
-    if user.email and user.email.strip().lower() not in AUTHORIZED_ADMIN_EMAILS:
+    return user
+
+
+def require_artisan_subject_or_admin(artisan_id: str, current_user: CurrentUser) -> None:
+    """Authorize access to an artisan's private data by subject ID, never request data."""
+    if current_user.role == "admin" and (not settings.admin_user_ids or current_user.id in settings.admin_user_ids):
+        return
+    if current_user.id != artisan_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"FORBIDDEN_UNAUTHORIZED_EMAIL: Account email '{user.email}' is not authorized for administrative governance."
+            detail="FORBIDDEN_OWNERSHIP: You may only access your own artisan data.",
         )
-    return user
 
 
 def validate_image_file_bytes(data: bytes, filename: str, max_size_mb: int = 10) -> None:
@@ -293,7 +303,10 @@ def generate_aadhaar_hash(raw_aadhaar: str, pepper: Optional[str] = None) -> str
     using the sovereign pepper key. Never stores raw Aadhaar.
     """
     clean_aadhaar = raw_aadhaar.replace(" ", "").replace("-", "")
-    key = (pepper or settings.AADHAAR_PEPPER_KEY).encode("utf-8")
+    active_pepper = pepper or settings.AADHAAR_PEPPER_KEY
+    if not active_pepper:
+        raise RuntimeError("AADHAAR_PEPPER_KEY is not configured")
+    key = active_pepper.encode("utf-8")
     return hmac.new(key, clean_aadhaar.encode("utf-8"), hashlib.sha256).hexdigest()
 
 

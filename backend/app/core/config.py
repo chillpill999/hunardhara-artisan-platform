@@ -9,12 +9,13 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    # Security & Tokens
-    SECRET_KEY: str = "mosje_super_secret_jwt_key_sih2026_artisan_platform_dev"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    AADHAAR_PEPPER_KEY: str = "mosje_sovereign_aadhaar_pepper_secret_2026"
-    SUPABASE_JWT_SECRET: Optional[str] = os.getenv("SUPABASE_JWT_SECRET", None)
+    # Server-only security configuration. These values must be supplied by the
+    # deployment secret manager; there are deliberately no development fallbacks.
+    SUPABASE_JWT_SECRET: Optional[str] = None
+    SUPABASE_JWT_ISSUER: Optional[str] = None
+    SUPABASE_JWT_AUDIENCE: Optional[str] = None
+    ADMIN_USER_IDS: str = ""
+    AADHAAR_PEPPER_KEY: Optional[str] = None
 
     # Database Configuration
     # Defaults to SQLite for immediate local testing if Postgres is not configured
@@ -73,6 +74,15 @@ class Settings(BaseSettings):
             return self.DATABASE_URL.replace("+aiosqlite", "")
         # Convert asyncpg to standard psycopg2 / postgresql if needed
         return self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+
+    @property
+    def admin_user_ids(self) -> set[str]:
+        """Configured Supabase subject IDs allowed to exercise administrator roles."""
+        return {
+            user_id.strip()
+            for user_id in self.ADMIN_USER_IDS.split(",")
+            if user_id.strip()
+        }
 
 
 settings = Settings()

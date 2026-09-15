@@ -3,10 +3,11 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import CurrentUser, get_current_user, require_artisan_subject_or_admin
 from app.models.consent_log import ConsentLog
 from app.models.artisan import Artisan
 from app.models.product import Product
@@ -24,17 +25,30 @@ router = APIRouter(prefix="/compliance", tags=["Security & DPDP 2023 Compliance"
 @router.post("/consent", response_model=dict, summary="Record DPDP Act 2023 Sovereign Consent")
 def record_consent(
     consent_in: ConsentLogCreate,
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     DPDP Act 2023 Consent Ledger:
     Records affirmative voice, visual, or digital consent with SHA256 cryptographic provenance.
     """
-    # Verify or generate cryptographic SHA256 artifact hash
-    artifact_hash = consent_in.consent_artifact_hash
-    if not artifact_hash:
-        raw_sig = f"{consent_in.artisan_id}:{consent_in.consent_type}:{consent_in.purpose}"
-        artifact_hash = hashlib.sha256(raw_sig.encode()).hexdigest()
+    require_artisan_subject_or_admin(consent_in.artisan_id, current_user)
+
+    # The server records the authenticated subject and event metadata. A supplied
+    # artifact digest is evidence supplied by the client, not proof of consent.
+    event_time = datetime.now(timezone.utc)
+    provenance = ":".join(
+        [
+            current_user.id,
+            consent_in.consent_type,
+            consent_in.purpose,
+            str(consent_in.granted),
+            consent_in.consent_artifact_hash or "",
+            event_time.isoformat(),
+        ]
+    )
+    artifact_hash = hashlib.sha256(provenance.encode()).hexdigest()
 
     consent_record = ConsentLog(
         id=f"consent-{uuid.uuid4().hex[:12]}",
@@ -45,8 +59,8 @@ def record_consent(
         language=consent_in.language,
         consent_artifact_type=consent_in.consent_artifact_type,
         consent_artifact_hash=artifact_hash,
-        ip_address=consent_in.ip_address,
-        user_agent=consent_in.user_agent
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent")
     )
     
     db.add(consent_record)
@@ -72,6 +86,7 @@ def record_consent(
 @router.post("/forget", response_model=RightToBeForgottenResponse, summary="Right to be Forgotten")
 def right_to_be_forgotten(
     req: RightToBeForgottenRequest,
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -79,6 +94,8 @@ def right_to_be_forgotten(
     Permanently purges personal identifiers, redacts PII, deactivates active listings,
     and creates an immutable cryptographic audit trail.
     """
+    require_artisan_subject_or_admin(req.artisan_id, current_user)
+
     if not req.confirmation:
         raise HTTPException(
             status_code=400,
@@ -132,7 +149,7 @@ def right_to_be_forgotten(
     return RightToBeForgottenResponse(
         status="success",
         artisan_id=req.artisan_id,
-        message="All personal identifiers and biometric audio artifacts have been purged in compliance with DPDP Act 2023.",
+        message="Database profile identifiers were redacted and product listings were deactivated. No claim is made about external files or artifacts not deleted by this operation.",
         records_redacted=redacted_count,
         timestamp=datetime.now(timezone.utc)
     )
@@ -141,9 +158,10 @@ def right_to_be_forgotten(
 @router.delete("/artisan/{artisan_id}", summary="Delete Artisan Personal Data (DPDP S12)")
 def delete_artisan_data(
     artisan_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Convenience alias for DPDP sovereign data erasure by artisan ID."""
     req = RightToBeForgottenRequest(artisan_id=artisan_id, confirmation=True)
-    return right_to_be_forgotten(req, db)
+    return right_to_be_forgotten(req, current_user, db)
 

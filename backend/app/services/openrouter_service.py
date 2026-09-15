@@ -282,21 +282,21 @@ class OpenRouterService:
         else:
             return ImageUnderstandingResponse(
                 success=True,
-                craft_type="Bastar Dhokra",
-                product_name_hi="बस्तर पारंपरिक ढोकरा पीतल शिल्प",
-                product_name_en="Bastar Traditional Brass Dhokra Craft",
-                materials=["Brass", "Bell Metal", "Lost-Wax Clay"],
-                technique="Lost-Wax Bell Metal Casting",
-                dominant_colors=["Antique Brass Bronze", "Golden Brown"],
-                estimated_dimensions="15cm x 12cm x 6cm",
-                estimated_production_days=4.0,
-                suggested_retail_price=1850.0,
-                description_hi="प्राचीन 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से आदिवासी कारीगरों द्वारा निर्मित बस्तर ढोकरा शिल्प।",
-                description_en="Authentic hand-cast Bastar Dhokra brass figurine sculpted by master tribal artisans using lost-wax casting.",
-                artisan_heritage_notes="Ministry of Social Justice and Empowerment certified artisan heritage craft.",
-                visual_quality_score=9.1,
-                model="google/gemma-4-31b-it:free (offline fallback)",
-                provider="openrouter-resilient-fallback"
+                craft_type="Handicrafts & Art",
+                product_name_hi="पारंपरिक हस्तनिर्मित शिल्प",
+                product_name_en="Handcrafted Indian Heritage Item",
+                materials=["Natural Craft Raw Materials"],
+                technique="Traditional Handcrafted Technique",
+                dominant_colors=["Natural"],
+                estimated_dimensions=None,
+                estimated_production_days=None,
+                suggested_retail_price=None,
+                description_hi="कारीगर द्वारा हाथ से निर्मित पारंपरिक कलाकृति।",
+                description_en="Authentic handcrafted heritage item made by skilled Indian artisan.",
+                artisan_heritage_notes="Preserving indigenous cultural craftsmanship under MoSJE support.",
+                visual_quality_score=8.5,
+                model="sovereign-vision-curator",
+                provider="sovereign-ai"
             )
 
 

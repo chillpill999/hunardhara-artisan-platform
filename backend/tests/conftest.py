@@ -20,6 +20,9 @@ os.environ.setdefault("INTEGRITY_MODE", "demo")
 os.environ.setdefault("OFFLINE_MODE", "true")
 os.environ.setdefault("MOCK_AI_SERVICES", "true")
 os.environ.setdefault("AADHAAR_PEPPER_KEY", "mosje_sovereign_aadhaar_pepper_secret_2026")
+os.environ.setdefault("SUPABASE_JWT_SECRET", "mosje_supabase_jwt_secret_test_key_32chars_long_2026")
+os.environ.setdefault("SUPABASE_JWT_ISSUER", "supabase")
+os.environ.setdefault("SUPABASE_JWT_AUDIENCE", "authenticated")
 
 TESTS_DIR = Path(__file__).resolve().parent
 FIXTURES_DIR = TESTS_DIR / "fixtures"

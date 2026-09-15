@@ -116,21 +116,21 @@ class RAGCraftKnowledgeService:
         best_match = None
 
         for key, record in VERIFIED_CRAFT_DATABASE.items():
-            if key in q or any(term in q for term in [record["canonical_name"].lower(), record["state"].lower()]):
+            if key in q or record["canonical_name"].lower() in q:
                 best_match = record
                 break
 
         if not best_match:
-            # Check secondary tokens
-            if "dhokra" in q or "metal" in q or "brass" in q:
+            # Check explicit cluster or GI craft terms only - NEVER map generic materials (brass, clay, wood) or generic items (saree, toy, cup) to specific GI clusters
+            if "dhokra" in q or "bastar" in q:
                 best_match = VERIFIED_CRAFT_DATABASE["bastar dhokra"]
-            elif "saree" in q or "silk" in q or "zari" in q or "banarasi" in q:
+            elif "banarasi" in q or "katan" in q or "varanasi silk" in q:
                 best_match = VERIFIED_CRAFT_DATABASE["varanasi silk"]
-            elif "pottery" in q or "ceramic" in q or "clay" in q or "cup" in q:
+            elif "khurja" in q:
                 best_match = VERIFIED_CRAFT_DATABASE["khurja pottery"]
-            elif "paint" in q or "mithila" in q or "madhubani" in q:
+            elif "madhubani" in q or "mithila" in q:
                 best_match = VERIFIED_CRAFT_DATABASE["madhubani painting"]
-            elif "toy" in q or "wood" in q or "channapatna" in q:
+            elif "channapatna" in q:
                 best_match = VERIFIED_CRAFT_DATABASE["channapatna toys"]
 
         if best_match:

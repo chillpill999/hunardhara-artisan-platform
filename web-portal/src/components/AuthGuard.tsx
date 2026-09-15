@@ -5,7 +5,6 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuth, UserRole } from '@/context/AuthContext';
 import { ShieldAlert, Lock, ArrowLeft, LogOut, ShoppingBag, ShieldX } from 'lucide-react';
 import Link from 'next/link';
-import { isAuthorisedAdminEmail, PRIMARY_ADMIN_EMAIL } from '@/lib/adminAuth';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -18,8 +17,7 @@ export default function AuthGuard({
   allowedRoles,
   redirectMessage = 'Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings.',
 }: AuthGuardProps) {
-  const { user, role, needsOnboarding, isLoading, signOut, switchToArtisanRole } = useAuth();
-  const [isSwitchingRole, setIsSwitchingRole] = React.useState(false);
+  const { user, role, needsOnboarding, isLoading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -103,10 +101,10 @@ export default function AuthGuard({
     );
   }
 
-  // Check Admin Authorization: STRICT EMAIL ENFORCEMENT
-  // Only applies when explicitly guarding the admin panel (/admin)
+  // Presentation-only guard. Sensitive admin operations are verified again by
+  // the backend against a signed Supabase token and configured subject ID.
   const isAdminTarget = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && allowedRoles[0] === 'admin');
-  if (isAdminTarget && !isAuthorisedAdminEmail(user.email)) {
+  if (isAdminTarget && role !== 'admin') {
     const isArtisan = role === 'artisan';
     return (
       <div className="min-h-[65vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-lg mx-auto">
@@ -205,27 +203,14 @@ export default function AuthGuard({
               क्या आप कारीगर / शिल्पकार हैं? (Are you an Artisan?)
             </p>
             <p className="text-[11px] text-[#545454] leading-relaxed">
-              यदि आप अपने हस्तशिल्प उत्पाद बेचना चाहते हैं, तो 1-क्लिक में अपने खाते को कारीगर खाते में बदलकर तुरंत स्टूडियो खोलें:
+              कारीगर बनने के लिए सत्यापन आवेदन जमा करें। भूमिका परिवर्तन केवल सर्वर-साइड अनुमोदन के बाद होता है।
             </p>
-            <button
-              type="button"
-              disabled={isSwitchingRole}
-              onClick={async () => {
-                setIsSwitchingRole(true);
-                const res = await switchToArtisanRole();
-                setIsSwitchingRole(false);
-                if (!res.error) {
-                  router.push('/artisan?tab=studio');
-                }
-              }}
-              className="w-full inline-flex items-center justify-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] disabled:opacity-50 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
+            <Link
+              href="/artisan/apply"
+              className="w-full inline-flex items-center justify-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white font-bold text-xs py-3 px-4 rounded-xl shadow-xs transition-all"
             >
-              {isSwitchingRole ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <span>🎨 मैं कारीगर हूँ — कारीगर स्टूडियो खोलें (Switch to Artisan & Enter Studio)</span>
-              )}
-            </button>
+              <span>कारीगर सत्यापन के लिए आवेदन करें (Apply for Artisan Verification)</span>
+            </Link>
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1 w-full">

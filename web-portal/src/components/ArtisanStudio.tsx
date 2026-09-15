@@ -38,7 +38,8 @@ import {
   Clock,
   Coins,
   Palette,
-  AlertCircle
+  AlertCircle,
+  Calculator
 } from 'lucide-react';
 
 interface ExtractedAttributes {
@@ -46,20 +47,30 @@ interface ExtractedAttributes {
   productNameHi: string;
   craftType: string;
   materials: string[];
-  color: string;
-  dimensions: string;
-  productionDays: number;
-  materialCost: number;
-  recommendedPrice: number;
-  wageFloor: number;
+  color: string | null;
+  dimensions: string | null;
+  productionDays: number | null;
+  materialCost: number | null;
+  recommendedPrice: number | null;
+  wageFloor: number | null;
   descriptionHi: string;
   descriptionEn: string;
   voiceScriptHi: string;
+  confidenceScore?: number;
+  verificationRequired?: string[];
+  factsDetected?: {
+    days?: boolean;
+    cost?: boolean;
+    materials?: boolean;
+    color?: boolean;
+  };
 }
 
 const INDIC_LANGUAGES = [
   { code: 'hi-IN', label: '🇮🇳 हिंदी (Hindi)' },
   { code: 'en-IN', label: '🇬🇧 English (India)' },
+  { code: 'bho-IN', label: 'भोजपुरी (Bhojpuri)' },
+  { code: 'mai-IN', label: 'मैथिली (Maithili)' },
   { code: 'mr-IN', label: 'मराठी (Marathi)' },
   { code: 'bn-IN', label: 'বাংলা (Bengali)' },
   { code: 'gu-IN', label: 'ગુજરાતી (Gujarati)' },
@@ -99,6 +110,94 @@ const VOICE_PRESETS = [
   }
 ];
 
+// Pure JS standard 16-bit PCM Mono WAV Encoder
+function encodeWAV(samples: Float32Array, sampleRate: number): Blob {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  /* RIFF chunk descriptor */
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+
+  /* FMT sub-chunk */
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, 1, true); // Mono channel
+  view.setUint32(24, sampleRate, true); // Sample rate (16000 Hz)
+  view.setUint32(28, sampleRate * 2, true); // Byte rate (16000 * 1 * 2)
+  view.setUint16(32, 2, true); // Block align (1 * 2)
+  view.setUint16(34, 16, true); // Bits per sample (16-bit)
+
+  /* DATA sub-chunk */
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  // Write 16-bit signed PCM samples
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+// Downsample Float32Array buffer to 16,000 Hz
+function downsampleBuffer(buffer: Float32Array, inputRate: number, outputRate = 16000): Float32Array {
+  if (outputRate >= inputRate) return buffer;
+  const sampleRateRatio = inputRate / outputRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+}
+
+// Calculate RMS energy of Float32Array audio samples
+function calculateRMS(samples: Float32Array): number {
+  if (!samples || samples.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i] * samples[i];
+  }
+  return Math.sqrt(sum / samples.length);
+}
+
+// Inline AudioWorkletProcessor script for zero-dependency raw PCM capture
+const AUDIO_WORKLET_PROCESSOR_CODE = `
+class PCMRecorderProcessor extends AudioWorkletProcessor {
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (input && input.length > 0) {
+      this.port.postMessage(input[0]);
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-recorder-processor', PCMRecorderProcessor);
+`;
+
 export default function ArtisanStudio() {
   const { user } = useAuth();
 
@@ -125,6 +224,20 @@ export default function ArtisanStudio() {
   const [rawTranscript, setRawTranscript] = useState('');
   const rawTranscriptRef = useRef<string>('');
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [clarificationNotice, setClarificationNotice] = useState<{
+    messageHi: string;
+    messageEn?: string;
+    transcript?: string;
+  } | null>(null);
+  const [quickEditField, setQuickEditField] = useState<string | null>(null);
+
+  // AudioWorklet, Web Audio & MediaRecorder Refs
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const recordingStartTimeRef = useRef<number>(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
@@ -139,22 +252,11 @@ export default function ArtisanStudio() {
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [aiProcessingStage, setAiProcessingStage] = useState('');
 
-  // AI Extracted Details (Defaults - Neutral Generic Craft, not locked to Varanasi Saree)
-  const [extractedData, setExtractedData] = useState<ExtractedAttributes>({
-    productName: 'Handcrafted Heritage Craft',
-    productNameHi: 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
-    craftType: 'Traditional Craft (हस्तशिल्प)',
-    materials: ['प्राकृतिक हस्तशिल्प सामग्री'],
-    color: 'प्राकृतिक पारंपरिक रंग',
-    dimensions: 'मानक हस्तशिल्प आकार',
-    productionDays: 4,
-    materialCost: 500,
-    wageFloor: 3100,
-    recommendedPrice: 3900,
-    descriptionHi: 'कुशल शिल्पकार द्वारा पारंपरिक तकनीक से निर्मित प्रामाणिक हस्तशिल्प।',
-    descriptionEn: 'Authentic handcrafted heritage item meticulously created by a skilled artisan.',
-    voiceScriptHi: 'बधाई हो! आपका उत्पाद तैयार है। आपकी मेहनत और सामग्री के आधार पर इसका उचित मूल्य तय किया गया है।'
-  });
+  // AI Extracted Details - Starts strictly EMPTY/NULL until speech or image is processed
+  const [extractedData, setExtractedData] = useState<ExtractedAttributes | null>(null);
+
+  // Client-side live interim speech preview (used ONLY for real-time visual feedback while mic is live)
+  const [livePreviewTranscript, setLivePreviewTranscript] = useState('');
 
   // Edit Mode on Step 5
   const [isEditMode, setIsEditMode] = useState(false);
@@ -163,12 +265,12 @@ export default function ArtisanStudio() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishedId, setPublishedId] = useState('prod-001');
 
-  // Google Gemma 4 31B Multimodal Vision State
+  // AI Multimodal Vision State
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [visionAnalysisDone, setVisionAnalysisDone] = useState(false);
   const [visionDetectedCraft, setVisionDetectedCraft] = useState<string | null>(null);
 
-  const runGemmaImageUnderstanding = async (imgData: string) => {
+  const runImageUnderstanding = async (imgData: string) => {
     setIsAnalyzingImage(true);
     try {
       const analysis = await analyzeCraftImage(imgData);
@@ -176,21 +278,24 @@ export default function ArtisanStudio() {
         setVisionAnalysisDone(true);
         setVisionDetectedCraft(analysis.craft_type);
         setExtractedData(prev => ({
-          ...prev,
-          productName: analysis.product_name_en || prev.productName,
-          productNameHi: analysis.product_name_hi || prev.productNameHi,
+          productName: analysis.product_name_en || prev?.productName || 'Handcrafted Heritage Item',
+          productNameHi: analysis.product_name_hi || prev?.productNameHi || 'हस्तनिर्मित शिल्प',
           craftType: analysis.craft_type,
-          materials: analysis.materials && analysis.materials.length > 0 ? analysis.materials : prev.materials,
-          dimensions: analysis.estimated_dimensions || prev.dimensions,
-          productionDays: analysis.estimated_production_days || prev.productionDays,
-          recommendedPrice: analysis.suggested_retail_price || prev.recommendedPrice,
-          descriptionHi: analysis.description_hi || prev.descriptionHi,
-          descriptionEn: analysis.description_en || prev.descriptionEn,
-          voiceScriptHi: `बधाई हो! आपका शिल्प ${analysis.product_name_hi} Google Gemma 4 AI द्वारा पहचाना गया है। इसका अनुशंसित मूल्य ₹${(analysis.suggested_retail_price || prev.recommendedPrice).toLocaleString('en-IN')} है।`
+          materials: analysis.materials && analysis.materials.length > 0 ? analysis.materials : (prev?.materials || []),
+          color: prev?.color || (analysis.dominant_colors?.[0] || ''),
+          dimensions: analysis.estimated_dimensions || prev?.dimensions || '',
+          productionDays: analysis.estimated_production_days ?? prev?.productionDays ?? null,
+          materialCost: prev?.materialCost ?? null,
+          wageFloor: prev?.wageFloor ?? null,
+          recommendedPrice: analysis.suggested_retail_price ?? prev?.recommendedPrice ?? null,
+          descriptionHi: analysis.description_hi || prev?.descriptionHi || 'कारीगर द्वारा निर्मित पारंपरिक कलाकृति।',
+          descriptionEn: analysis.description_en || prev?.descriptionEn || 'Authentic handcrafted heritage item.',
+          voiceScriptHi: `बधाई हो! आपका शिल्प ${analysis.product_name_hi} एआई द्वारा पहचाना गया है।`,
+          confidenceScore: 0.90
         }));
       }
     } catch (err) {
-      console.warn('Gemma image understanding note:', err);
+      console.warn('Image understanding note:', err);
     } finally {
       setIsAnalyzingImage(false);
     }
@@ -204,6 +309,14 @@ export default function ArtisanStudio() {
         audioPlayerRef.current.pause();
         audioPlayerRef.current = null;
       }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
     };
   }, []);
 
@@ -213,14 +326,18 @@ export default function ArtisanStudio() {
     const cost = Math.max(0, newCost);
     const wageFloor = cost + (days * 650);
     const fairPrice = Math.round((wageFloor * 1.25) / 50) * 50;
-    setExtractedData(prev => ({
-      ...prev,
-      productionDays: days,
-      materialCost: cost,
-      wageFloor,
-      recommendedPrice: fairPrice,
-      voiceScriptHi: `बधाई हो! आपका उत्पाद ${prev.productNameHi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${fairPrice.toLocaleString('en-IN')} तय किया गया है।`
-    }));
+    setExtractedData(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        productionDays: days,
+        materialCost: cost,
+        wageFloor,
+        recommendedPrice: fairPrice,
+        verificationRequired: (prev.verificationRequired || []).filter(v => v !== 'production_days' && v !== 'material_cost'),
+        voiceScriptHi: `बधाई हो! आपका उत्पाद ${prev.productNameHi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${fairPrice.toLocaleString('en-IN')} तय किया गया है।`
+      };
+    });
   };
 
   // Camera Handlers
@@ -277,7 +394,7 @@ export default function ArtisanStudio() {
         const dataUrl = canvas.toDataURL('image/jpeg');
         setPhotoUrl(dataUrl);
         stopCamera();
-        runGemmaImageUnderstanding(dataUrl);
+        runImageUnderstanding(dataUrl);
         setStep(2); // Advance to voice step
       }
     }
@@ -295,26 +412,33 @@ export default function ArtisanStudio() {
         const dataUrl = event.target?.result as string;
         setPhotoUrl(dataUrl);
         stopCamera();
-        runGemmaImageUnderstanding(dataUrl);
+        runImageUnderstanding(dataUrl);
         setStep(2); // Advance to voice step
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // Voice Recording Handlers with Real-Time Web Speech and Dual-Engine Edge ASR (Sarvam + Whisper)
+  // Voice Recording Handlers with AudioWorklet-First 16kHz PCM WAV Recording & Server/Edge ASR
   const startRecording = async () => {
     setVoiceError(null);
+    setClarificationNotice(null);
     rawTranscriptRef.current = '';
     setRawTranscript('');
+    setLivePreviewTranscript('');
+    setExtractedData(null);
+    setAudioUrl(null);
+    setTtsAudioBase64(null);
+    pcmChunksRef.current = [];
+    recordingStartTimeRef.current = Date.now();
 
     try {
       setRecordingSeconds(0);
       timerIntervalRef.current = setInterval(() => {
-        setRecordingSeconds(s => s + 1);
+        setRecordingSeconds((s) => s + 1);
       }, 1000);
 
-      // 1. Client-Side Live Speech Recognition for instant real-time feedback
+      // 1. Client-Side Live Speech Recognition for instantaneous real-time visual feedback ONLY
       if (typeof window !== 'undefined') {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
@@ -330,12 +454,11 @@ export default function ArtisanStudio() {
               }
               const cleaned = live.trim();
               if (cleaned) {
-                rawTranscriptRef.current = cleaned;
-                setRawTranscript(cleaned);
+                setLivePreviewTranscript(cleaned);
               }
             };
             recognition.onerror = (e: any) => {
-              console.warn('Web speech recognition note:', e);
+              console.warn('Web speech recognition preview note:', e);
             };
             recognition.start();
             recognitionRef.current = recognition;
@@ -345,49 +468,83 @@ export default function ArtisanStudio() {
         }
       }
 
-      // 2. High-Quality MediaRecorder for Server/Edge ASR
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      // 2. Request microphone stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
+      mediaStreamRef.current = stream;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      audioContextRef.current = audioCtx;
+      const source = audioCtx.createMediaStreamSource(stream);
 
-      mediaRecorder.onstop = async () => {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setAudioUrl(URL.createObjectURL(audioBlob));
-
-        // Use synchronous ref value to avoid stale state closure bug
-        let finalTranscript = rawTranscriptRef.current.trim();
-
-        // Call Dual-Engine Edge ASR (Sarvam Saarika + Cloudflare Whisper Fallback)
+      let workletRegistered = false;
+      if (audioCtx.audioWorklet) {
         try {
-          const asrResult = await transcribeAudio(audioBlob, selectedLanguage);
-          if (asrResult.success && asrResult.transcript && asrResult.transcript.trim()) {
-            finalTranscript = asrResult.transcript.trim();
-            rawTranscriptRef.current = finalTranscript;
-            setRawTranscript(finalTranscript);
-          }
-        } catch (err) {
-          console.warn('Server/Edge ASR transcription note:', err);
+          const blob = new Blob([AUDIO_WORKLET_PROCESSOR_CODE], { type: 'application/javascript' });
+          const workletUrl = URL.createObjectURL(blob);
+          await audioCtx.audioWorklet.addModule(workletUrl);
+          URL.revokeObjectURL(workletUrl);
+
+          const workletNode = new AudioWorkletNode(audioCtx, 'pcm-recorder-processor');
+          workletNode.port.onmessage = (e) => {
+            if (e.data && e.data.length > 0) {
+              pcmChunksRef.current.push(new Float32Array(e.data));
+            }
+          };
+
+          source.connect(workletNode);
+          // Connect to a 0-gain sink to keep audio processing alive without feedback
+          const silentGain = audioCtx.createGain();
+          silentGain.gain.value = 0;
+          workletNode.connect(silentGain);
+          silentGain.connect(audioCtx.destination);
+
+          workletNodeRef.current = workletNode;
+          workletRegistered = true;
+        } catch (workletErr) {
+          console.warn('AudioWorklet registration note, falling back to ScriptProcessor:', workletErr);
         }
+      }
 
-        if (!finalTranscript) {
-          // No speech detected - NEVER substitute a hardcoded Varanasi Saree!
-          setIsRecording(false);
-          setVoiceError('⚠️ आवाज़ स्पष्ट रूप से सुनाई नहीं दी (Voice not detected clearly). कृपया माइक के पास बोलें या नीचे दिए गए टेक्स्ट बॉक्स में विवरण लिखें।');
-          return;
+      // Fallback 1: ScriptProcessorNode
+      if (!workletRegistered) {
+        try {
+          const scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+          scriptNode.onaudioprocess = (e) => {
+            const channel = e.inputBuffer.getChannelData(0);
+            pcmChunksRef.current.push(new Float32Array(channel));
+          };
+          source.connect(scriptNode);
+          const silentGain = audioCtx.createGain();
+          silentGain.gain.value = 0;
+          scriptNode.connect(silentGain);
+          silentGain.connect(audioCtx.destination);
+          scriptProcessorRef.current = scriptNode;
+        } catch (spErr) {
+          console.warn('ScriptProcessor fallback note:', spErr);
         }
+      }
 
-        await processVoiceDescription(finalTranscript);
-      };
+      // Fallback 2: MediaRecorder for safety
+      try {
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+        mediaRecorder.start(250);
+      } catch (mrErr) {
+        console.warn('MediaRecorder init note:', mrErr);
+      }
 
-      mediaRecorder.start();
       setIsRecording(true);
     } catch (micErr) {
       console.warn('Microphone access note:', micErr);
@@ -397,7 +554,7 @@ export default function ArtisanStudio() {
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     if (recognitionRef.current) {
       try {
@@ -405,73 +562,204 @@ export default function ArtisanStudio() {
       } catch {}
       recognitionRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
+    setLivePreviewTranscript('');
+
+    const duration = (Date.now() - recordingStartTimeRef.current) / 1000;
     setIsRecording(false);
+
+    // Stop MediaRecorder if running
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+
+    // Stop media tracks
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+
+    // Disconnect worklet / script processor
+    if (workletNodeRef.current) {
+      try { workletNodeRef.current.disconnect(); } catch {}
+      workletNodeRef.current = null;
+    }
+    if (scriptProcessorRef.current) {
+      try { scriptProcessorRef.current.disconnect(); } catch {}
+      scriptProcessorRef.current = null;
+    }
+
+    const audioCtx = audioContextRef.current;
+    const inputSampleRate = audioCtx?.sampleRate || 44100;
+    if (audioCtx && audioCtx.state !== 'closed') {
+      audioCtx.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+
+    // Quality Gate 1: Check recording duration (must be >= 1.2 seconds)
+    if (duration < 1.2) {
+      setVoiceError(`⚠️ रिकॉर्डिंग बहुत छोटी थी (केवल ${duration.toFixed(1)} सेकंड)। कृपया कम से कम 2-3 सेकंड तक बोलें।`);
+      return;
+    }
+
+    // Merge Float32Array PCM chunks
+    const totalSamples = pcmChunksRef.current.reduce((acc, c) => acc + c.length, 0);
+    let wavBlob: Blob | null = null;
+    let rms = 0;
+
+    if (totalSamples > 0) {
+      const merged = new Float32Array(totalSamples);
+      let offset = 0;
+      for (const chunk of pcmChunksRef.current) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      rms = calculateRMS(merged);
+
+      // Quality Gate 2: Inspect RMS signal energy (reject pure silence / faint hiss < 0.008)
+      if (rms < 0.008) {
+        setVoiceError(`⚠️ आवाज़ बहुत धीमी या मौन है (Voice too faint or silent: RMS ${rms.toFixed(4)})। कृपया माइक के पास साफ़ आवाज़ में बोलें।`);
+        return;
+      }
+
+      // Downsample to 16,000 Hz and encode to 16-bit PCM WAV
+      const downsampled = downsampleBuffer(merged, inputSampleRate, 16000);
+      wavBlob = encodeWAV(downsampled, 16000);
+    } else if (audioChunksRef.current.length > 0) {
+      wavBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    }
+
+    if (!wavBlob) {
+      setVoiceError('⚠️ कोई ऑडियो रिकॉर्ड नहीं हुआ। कृपया पुनः प्रयास करें।');
+      return;
+    }
+
+    setAudioUrl(URL.createObjectURL(wavBlob));
+
+    // Telemetry: Milestone 1 (Audio Received) - sanitized in production
+    const isDev = process.env.NODE_ENV === 'development' || (typeof window !== 'undefined' && window.location.search.includes('debug=true'));
+    if (isDev) {
+      console.log('🎙️ [Hunardhara Telemetry] 1. Audio Received:', {
+        duration_sec: Number(duration.toFixed(2)),
+        rms_energy: Number(rms.toFixed(4)),
+        size_bytes: wavBlob.size,
+        sample_rate: 16000,
+        format: 'audio/wav',
+      });
+    }
+
+    let finalTranscript = '';
+
+    // Authoritative Server/Edge ASR (Sarvam Saarika + Cloudflare Fallback)
+    try {
+      const asrResult = await transcribeAudio(wavBlob, selectedLanguage);
+      if (asrResult.success && asrResult.transcript && asrResult.transcript.trim()) {
+        finalTranscript = asrResult.transcript.trim();
+        rawTranscriptRef.current = finalTranscript;
+        setRawTranscript(finalTranscript);
+      }
+    } catch (err) {
+      console.warn('Server/Edge ASR transcription note:', err);
+    }
+
+    if (!finalTranscript) {
+      setVoiceError('⚠️ आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें (Could not recognize speech. Please speak clearly again).');
+      return;
+    }
+
+    await processVoiceDescription(finalTranscript);
   };
 
   // Process Spoken Description with Sarvam 105B LLM & Bulbul TTS
   const processVoiceDescription = async (spokenText: string, presetImage?: string) => {
     setRawTranscript(spokenText);
+    setVoiceError(null);
+    setClarificationNotice(null);
+
+    const isDev = process.env.NODE_ENV === 'development' || (typeof window !== 'undefined' && window.location.search.includes('debug=true'));
+    if (isDev) {
+      console.log('📝 [Hunardhara Telemetry] 2. Transcript Received:', spokenText);
+      console.log('🌐 [Hunardhara Telemetry] 3. Language Detected:', selectedLanguage);
+      console.log('🤖 [Hunardhara Telemetry] 4. Prompt Sent to AI: Sarvam 105B Indic LLM pipeline');
+    }
+
+    // Call Craft Extraction Endpoint
+    const craftData = await extractCraftFromVoice(spokenText, selectedLanguage);
+
+    // Clarification & Quality Gating: If greeting-only or missing craft details, DO NOT advance!
+    if (craftData.requires_clarification) {
+      setClarificationNotice({
+        messageHi: craftData.message_hi || 'आवाज़ में उत्पाद का विवरण नहीं मिला। कृपया अपने शिल्प का नाम (जैसे घंटी, साड़ी, खिलौना, पॉट), सामग्री, और बनाने के दिन बताएं।',
+        messageEn: craftData.message_en || 'No craft details detected. Please mention your product name, materials, and days to make.',
+        transcript: spokenText
+      });
+      setStep(2); // Stay on Step 2
+      return;
+    }
+
     setStep(3);
     setIsAiProcessing(true);
-    setAiProcessingStage('सर्वम सारिका ASR: आवाज़ का सटीक विश्लेषण...');
+    setAiProcessingStage('आवाज़ का सटीक विश्लेषण...');
 
     try {
       setTimeout(() => {
-        setAiProcessingStage('सर्वम 105B LLM: सामग्री व उत्पादन दिवस निष्कर्षण...');
+        setAiProcessingStage('शिल्प विवरण व सामग्री का विश्लेषण...');
       }, 700);
 
       setTimeout(() => {
         setAiProcessingStage('सांविधिक मजदूरी (₹650/दिन) एवं न्यायसंगत मूल्य निर्धारण...');
       }, 1400);
 
-      // Extract attributes using Sarvam 105B or Indic heuristic
-      const craftData = await extractCraftFromVoice(spokenText, selectedLanguage);
-
-      // Set photo if artisan started with voice first
-      if (!photoUrl) {
-        if (presetImage) {
-          setPhotoUrl(presetImage);
-        } else if (craftData.craft_type.includes('Silk') || craftData.craft_type.includes('सिल्क')) {
-          setPhotoUrl('/static/studio/varanasi_silk.jpg');
-        } else if (craftData.craft_type.includes('Dhokra') || craftData.craft_type.includes('ढोकरा')) {
-          setPhotoUrl('/static/studio/bastar_dhokra.jpg');
-        } else if (craftData.craft_type.includes('Pottery') || craftData.craft_type.includes('खुर्जा')) {
-          setPhotoUrl('/static/studio/khurja_pottery.jpg');
-        } else if (craftData.craft_type.includes('Madhubani') || craftData.craft_type.includes('मधुबनी')) {
-          setPhotoUrl('/static/studio/madhubani_art.jpg');
-        } else {
-          setPhotoUrl('/static/studio/channapatna_toy.jpg');
-        }
+      // Only assign photo if user explicitly chose an optional demo example with an image
+      if (!photoUrl && presetImage) {
+        setPhotoUrl(presetImage);
       }
 
-      const days = craftData.production_days || 7;
-      const cost = craftData.material_cost || 1500;
-      const floor = craftData.wage_floor || (cost + days * 650);
-      const price = craftData.recommended_price || (Math.round((floor * 1.25) / 50) * 50);
-      const voiceScript = craftData.voice_script_hi || `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`;
+      const days = craftData.production_days ?? null;
+      const cost = craftData.material_cost ?? null;
+      const floor = craftData.wage_floor ?? (days !== null && cost !== null ? cost + days * 650 : null);
+      const price = craftData.recommended_price ?? (floor !== null ? Math.round((floor * 1.25) / 50) * 50 : null);
+      const voiceScript = craftData.voice_script_hi || (price !== null
+        ? `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`
+        : `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`);
 
-      setExtractedData({
+      const newExtracted: ExtractedAttributes = {
         productName: craftData.product_name_en || 'Handcrafted Artisan Craft',
         productNameHi: craftData.product_name_hi || 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
         craftType: craftData.craft_type || 'Traditional Indian Craft',
-        materials: craftData.materials && craftData.materials.length > 0 ? craftData.materials : ['प्राकृतिक हस्तशिल्प सामग्री'],
-        color: craftData.color || 'प्राकृतिक पारंपरिक रंग',
-        dimensions: craftData.dimensions || 'मानक हस्तशिल्प आकार',
+        materials: craftData.materials && craftData.materials.length > 0 ? craftData.materials : [],
+        color: craftData.color || '',
+        dimensions: craftData.dimensions || '',
         productionDays: days,
         materialCost: cost,
         wageFloor: floor,
         recommendedPrice: price,
         descriptionHi: craftData.description_hi || spokenText,
         descriptionEn: craftData.description_en || 'Authentic handcrafted heritage item.',
-        voiceScriptHi: voiceScript
-      });
+        voiceScriptHi: voiceScript,
+        confidenceScore: craftData.confidence_score ?? 0.92,
+        factsDetected: craftData.facts_detected,
+        verificationRequired: craftData.verification_required || []
+      };
 
-      // Pre-synthesize Sarvam Bulbul TTS Audio for Step 5
+      setExtractedData(newExtracted);
+
+      if (isDev) {
+        console.log('⚡ [Hunardhara Telemetry] 5. Raw AI Response:', craftData);
+        console.log('🏷️ [Hunardhara Telemetry] 6. Final Catalog Output:', {
+          title_hi: newExtracted.productNameHi,
+          title_en: newExtracted.productName,
+          craft: newExtracted.craftType,
+          days: newExtracted.productionDays,
+          cost: newExtracted.materialCost,
+          price: newExtracted.recommendedPrice,
+          confidence: newExtracted.confidenceScore,
+        });
+      }
+
+      // Pre-synthesize TTS Audio for Step 5
       setTimeout(() => {
-        setAiProcessingStage('सर्वम बुलबुल TTS: आवाज़ में पुष्टिकरण तैयार किया जा रहा है...');
+        setAiProcessingStage('आवाज़ में पुष्टिकरण तैयार किया जा रहा है...');
       }, 1900);
 
       const ttsRes = await synthesizeSpeech(voiceScript, selectedLanguage, 'shubh');
@@ -515,13 +803,15 @@ export default function ArtisanStudio() {
         setIsPlayingTts(false);
       });
     } else {
-      // Fallback: Browser Web Speech synthesis if Sarvam offline
+      // Fallback: Browser Web Speech synthesis if offline
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         if (isPlayingTts) {
           window.speechSynthesis.cancel();
           setIsPlayingTts(false);
         } else {
-          const utterance = new SpeechSynthesisUtterance(extractedData.voiceScriptHi || extractedData.descriptionHi);
+          const text = extractedData?.voiceScriptHi || extractedData?.descriptionHi || '';
+          if (!text) return;
+          const utterance = new SpeechSynthesisUtterance(text);
           utterance.lang = selectedLanguage;
           utterance.onend = () => setIsPlayingTts(false);
           utterance.onerror = () => setIsPlayingTts(false);
@@ -534,60 +824,53 @@ export default function ArtisanStudio() {
 
   // Publish to Database & Live Marketplace
   const handleConfirmAndPublish = async () => {
+    if (!extractedData) return;
     setIsPublishing(true);
     try {
       const newId = `prod-live-${Date.now().toString().slice(-6)}`;
 
-      // Resolve final studio image
-      let finalStudioImage = photoUrl;
-      if (!finalStudioImage) {
-        const ct = (extractedData.craftType || '').toLowerCase();
-        if (ct.includes('silk') || ct.includes('सिल्क')) {
-          finalStudioImage = '/static/studio/varanasi_silk.jpg';
-        } else if (ct.includes('dhokra') || ct.includes('ढोकरा')) {
-          finalStudioImage = '/static/studio/bastar_dhokra.jpg';
-        } else if (ct.includes('pottery') || ct.includes('खुर्जा') || ct.includes('मिट्टी')) {
-          finalStudioImage = '/static/studio/khurja_pottery.jpg';
-        } else if (ct.includes('madhubani') || ct.includes('मधुबनी')) {
-          finalStudioImage = '/static/studio/madhubani_art.jpg';
-        } else {
-          finalStudioImage = '/static/studio/channapatna_toy.jpg';
-        }
+      // Resolve final studio image (No keyword forcing; use actual captured photo or neutral craft placeholder)
+      const finalStudioImage = photoUrl || '/static/studio/placeholder_craft.jpg';
+
+      let clusterId = 'cluster-general-handicraft';
+      const ct = (extractedData.craftType || '').toLowerCase();
+      if (ct.includes('varanasi') || ct.includes('banarasi') || ct.includes('katan') || ct.includes('बनारसी')) {
+        clusterId = 'cluster-varanasi-silk';
+      } else if (ct.includes('bastar') || ct.includes('dhokra') || ct.includes('बस्तर') || ct.includes('ढोकरा')) {
+        clusterId = 'cluster-bastar-dhokra';
+      } else if (ct.includes('khurja') || ct.includes('खुर्जा')) {
+        clusterId = 'cluster-khurja-pottery';
+      } else if (ct.includes('madhubani') || ct.includes('mithila') || ct.includes('मधुबनी') || ct.includes('मिथिला')) {
+        clusterId = 'cluster-madhubani-painting';
+      } else if (ct.includes('channapatna') || ct.includes('चन्नापटना')) {
+        clusterId = 'cluster-channapatna-toys';
       }
 
       const newProduct: Product = {
         id: newId,
         artisan_id: user?.id || 'art-current-user',
-        cluster_id: extractedData.craftType.toLowerCase().includes('silk')
-          ? 'cluster-varanasi-silk'
-          : extractedData.craftType.toLowerCase().includes('dhokra')
-          ? 'cluster-bastar-dhokra'
-          : extractedData.craftType.toLowerCase().includes('pottery')
-          ? 'cluster-khurja-pottery'
-          : extractedData.craftType.toLowerCase().includes('madhubani')
-          ? 'cluster-madhubani-painting'
-          : 'cluster-channapatna-toys',
+        cluster_id: clusterId,
         title_en: extractedData.productName,
         title_hi: extractedData.productNameHi,
         craft_type: extractedData.craftType,
         materials: extractedData.materials,
-        dimensions: extractedData.dimensions || '5.5m x 1.2m',
-        production_time_days: extractedData.productionDays,
+        dimensions: extractedData.dimensions || '',
+        production_time_days: extractedData.productionDays ?? 1,
         technique: 'हस्तशिल्प कारीगरी (Artisanal Craftwork)',
-        color: extractedData.color,
+        color: extractedData.color || '',
         description_en: extractedData.descriptionEn,
         description_hi: extractedData.descriptionHi,
         seo_tags: [extractedData.craftType, 'Handmade', 'GI Craft', 'Hunardhara Live'],
         studio_image_url: finalStudioImage,
-        floor_price: extractedData.wageFloor,
-        recommended_retail_d2c: extractedData.recommendedPrice,
-        wholesale_b2b: Math.round(extractedData.recommendedPrice * 0.75),
+        floor_price: extractedData.wageFloor ?? 0,
+        recommended_retail_d2c: extractedData.recommendedPrice ?? 0,
+        wholesale_b2b: extractedData.recommendedPrice ? Math.round(extractedData.recommendedPrice * 0.75) : 0,
         available_stock: 5,
         is_published: true,
         created_at: new Date().toISOString(),
         artisan_name: user?.user_metadata?.full_name || 'राधेश्याम अंसारी (Master Artisan)',
         artisan_state: user?.user_metadata?.state || 'उत्तर प्रदेश',
-        gi_certified: true,
+        gi_certified: clusterId !== 'cluster-general-handicraft',
       };
 
       // 1. Immediately persist locally (Guaranteed zero-latency live presentation upload)
@@ -598,7 +881,6 @@ export default function ArtisanStudio() {
       try {
         const reviewPayload = {
           review_type: isEditMode ? 'WRONG' : 'CORRECT',
-          artisan_id: user?.id || 'artisan-default',
           craft_type: extractedData.craftType || 'Traditional Craft',
           input_data: {
             transcript: rawTranscript,
@@ -622,11 +904,18 @@ export default function ArtisanStudio() {
           language: selectedLanguage
         };
 
-        fetch('http://localhost:8000/api/v1/ai/assistant/review-outcome', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reviewPayload)
-        }).catch(() => {});
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1';
+          await fetch(`${apiBase}/ai/assistant/review-outcome`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify(reviewPayload),
+          });
+        }
       } catch (err) {
         console.warn('AI learning loop note:', err);
       }
@@ -798,6 +1087,55 @@ export default function ArtisanStudio() {
             </div>
           )}
 
+          {/* Clarification Gating Notice (When greeting-only or missing craft details) */}
+          {clarificationNotice && (
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-3 animate-in fade-in">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h4 className="font-bold text-sm text-amber-900 flex items-center gap-1.5">
+                    <span>⚠️ अतिरिक्त जानकारी आवश्यक है (Clarification Needed)</span>
+                  </h4>
+                  <p className="text-xs text-amber-800 leading-relaxed font-medium">
+                    {clarificationNotice.messageHi}
+                  </p>
+                  {clarificationNotice.messageEn && (
+                    <p className="text-[11px] text-amber-700 italic">
+                      {clarificationNotice.messageEn}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {clarificationNotice.transcript && (
+                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-200 text-xs text-[#231f1e]">
+                  <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block mb-0.5">
+                    सुना गया वाक्य (Detected):
+                  </span>
+                  <span className="italic font-medium">"{clarificationNotice.transcript}"</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  className="px-3.5 py-1.5 bg-[#c85a32] text-white rounded-xl text-xs font-bold hover:bg-[#b84e28] transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>दोबारा बोलें (Speak Again)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClarificationNotice(null)}
+                  className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-xl text-xs font-semibold hover:bg-amber-200 transition-colors cursor-pointer"
+                >
+                  बंद करें (Dismiss)
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 1-Tap Quick Bilingual Toggles */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-[#6f5f58]">
@@ -964,7 +1302,7 @@ export default function ArtisanStudio() {
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-[#6f5f58] uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-[#e9a83a]" />
-                <span>त्वरित परीक्षण विकल्प (1-Tap Voice Presets):</span>
+                <span>वैकल्पिक डेमो उदाहरण (Try an Example):</span>
               </span>
               <span className="text-[11px] text-[#2d6a4f] font-semibold">
                 डेमो के लिए एक टैप करें
@@ -991,7 +1329,7 @@ export default function ArtisanStudio() {
                       {preset.label}
                     </span>
                     <span className="text-[10px] text-[#6f5f58] block truncate">
-                      सर्वम AI ऑटो प्रोसेस
+                      एआई विश्लेषण डेमो
                     </span>
                   </div>
                 </button>
@@ -1139,7 +1477,7 @@ export default function ArtisanStudio() {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1b4332] bg-[#1b4332]/10 px-3 py-1 rounded-full">
               <Sparkles className="w-3.5 h-3.5 text-[#e9a83a]" />
-              <span>सर्वम एआई इंडिक सूट (Sarvam AI Suite)</span>
+              <span>एआई शिल्प विश्लेषक (AI Craft Studio)</span>
             </div>
             <h3 className="font-sans text-xl sm:text-2xl font-bold text-[#231f1e]">
               AI आपके उत्पाद को तैयार कर रहा है...
@@ -1155,16 +1493,74 @@ export default function ArtisanStudio() {
       )}
 
       {/* ===================================================================== */}
+      {/* ===================================================================== */}
       {/* STEP 5: SIMPLE CONFIRMATION SCREEN (ZERO FORCED TYPING + TTS PLAYER)  */}
       {/* ===================================================================== */}
-      {step === 5 && (
-        <div className="bg-white rounded-3xl border border-[#e6ded3] p-5 sm:p-7 space-y-6 bento-shadow">
-          {/* Top Banner */}
+      {step === 5 && !extractedData && (
+        <div className="bg-white rounded-3xl border border-[#e6ded3] p-8 text-center space-y-4 bento-shadow">
+          <div className="w-16 h-16 rounded-full bg-amber-50 text-[#c85a32] flex items-center justify-center mx-auto">
+            <Mic className="w-8 h-8" />
+          </div>
           <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1b4332] bg-[#1b4332]/10 px-3 py-1 rounded-full">
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#1b4332]" />
-              <span>कैटलॉग सारांश • Sarvam AI Extracted</span>
+            <h3 className="font-sans text-xl font-bold text-[#231f1e]">
+              कोई उत्पाद डेटा नहीं मिला (No Voice Data Found)
+            </h3>
+            <p className="text-xs sm:text-sm text-[#6f5f58] max-w-md mx-auto">
+              शिल्पकार जी, कृपया पहले अपने शिल्प के बारे में बोलकर बताएं या फोटो खींचें ताकि एआई आपका कैटलॉग तैयार कर सके।
+            </p>
+          </div>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="px-6 py-3 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-sm rounded-xl transition-all shadow-md inline-flex items-center gap-2 cursor-pointer"
+            >
+              <Mic className="w-4 h-4" />
+              <span>आवाज़ रिकॉर्ड करें (Record Voice)</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 5 && extractedData && (
+        <div className="bg-white rounded-3xl border border-[#e6ded3] p-5 sm:p-7 space-y-6 bento-shadow">
+          {/* Top Banner & Extraction Confidence Badge */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1b4332] bg-[#1b4332]/10 px-3 py-1 rounded-full">
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#1b4332]" />
+                <span>कैटलॉग सारांश (AI Catalog Summary)</span>
+              </div>
+
+              {/* Dynamic Extraction Confidence Badge */}
+              {(() => {
+                const conf = extractedData.confidenceScore ?? 0.92;
+                const pct = Math.round(conf * 100);
+                if (conf >= 0.85) {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-300 text-xs font-bold text-emerald-800 shadow-2xs">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>उच्च सटीकता (High Confidence {pct}%)</span>
+                    </span>
+                  );
+                } else if (conf >= 0.60) {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-300 text-xs font-bold text-amber-800 shadow-2xs">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      <span>मध्यम सटीकता (Medium Confidence {pct}%) • विवरण जाँचें</span>
+                    </span>
+                  );
+                } else {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 border border-rose-300 text-xs font-bold text-rose-800 shadow-2xs">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      <span>जाँच आवश्यक (Review Needed {pct}%)</span>
+                    </span>
+                  );
+                }
+              })()}
             </div>
+
             <h3 className="font-sans text-xl sm:text-2xl font-extrabold text-[#231f1e]">
               क्या यह जानकारी सही है?
             </h3>
@@ -1173,13 +1569,13 @@ export default function ArtisanStudio() {
             </p>
           </div>
 
-          {/* Sarvam AI Bulbul TTS Audio Player Card (Listen in Voice) */}
+          {/* Voice Summary TTS Player Card */}
           <div className="p-4 bg-gradient-to-r from-[#1b4332] to-[#2d6a4f] text-white rounded-2xl shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#e9a83a] animate-ping" />
                 <span className="text-xs font-bold uppercase tracking-wider text-[#e9a83a]">
-                  सर्वम बुलबुल TTS • आवाज़ में सुनें
+                  शिल्पकार ऑडियो • आवाज़ में सुनें
                 </span>
               </div>
               <span className="text-[10px] text-white/70 font-mono bg-white/10 px-2 py-0.5 rounded-md">
@@ -1234,113 +1630,287 @@ export default function ArtisanStudio() {
                 {visionDetectedCraft && (
                   <div className="absolute bottom-3 left-3 bg-[#1b4332]/90 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 border border-white/20">
                     <Sparkles className="w-3 h-3 text-[#e9a83a]" />
-                    <span>Gemma 4 31B Vision: {visionDetectedCraft}</span>
+                    <span>एआई विज़न: {visionDetectedCraft}</span>
                   </div>
                 )}
               </div>
             )}
 
             <div className="p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5">
-                <span className="text-xs font-bold text-[#6f5f58] uppercase">उत्पाद (Product):</span>
+              {/* Product Name Row */}
+              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5 gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-[#6f5f58] uppercase">उत्पाद (Product):</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                    ✓ सुना गया
+                  </span>
+                </div>
                 <span className="text-sm font-bold text-[#231f1e] text-right">
                   {extractedData.productNameHi}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5">
-                <span className="text-xs font-bold text-[#6f5f58] uppercase">शिल्प (Craft):</span>
+              {/* Craft Type Row */}
+              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5 gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-[#6f5f58] uppercase">शिल्प (Craft):</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                    ✓ पहचाना गया
+                  </span>
+                </div>
                 <span className="text-sm font-semibold text-[#1b4332] text-right">
                   {extractedData.craftType}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5">
-                <span className="text-xs font-bold text-[#6f5f58] uppercase">सामग्री (Materials):</span>
+              {/* Materials Row */}
+              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5 gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-[#6f5f58] uppercase">सामग्री (Materials):</span>
+                  {extractedData.factsDetected?.materials || (extractedData.materials && extractedData.materials.length > 0 && !extractedData.materials.includes('प्राकृतिक हस्तशिल्प सामग्री')) ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      ✓ सुना गया
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditMode(true)}
+                      className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer"
+                    >
+                      ✎ जाँच करें
+                    </button>
+                  )}
+                </div>
                 <span className="text-sm font-medium text-[#231f1e] text-right">
-                  {extractedData.materials.join(', ')}
+                  {extractedData.materials && extractedData.materials.length > 0 ? extractedData.materials.join(', ') : 'पारंपरिक सामग्री'}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5">
-                <span className="text-xs font-bold text-[#6f5f58] uppercase">रंग (Color):</span>
+              {/* Color Row */}
+              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5 gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-[#6f5f58] uppercase">रंग (Color):</span>
+                  {extractedData.factsDetected?.color || (extractedData.color && extractedData.color.trim()) ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      ✓ सुना गया
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditMode(true)}
+                      className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer"
+                    >
+                      ✎ रंग जोड़ें
+                    </button>
+                  )}
+                </div>
                 <span className="text-sm font-medium text-[#231f1e] text-right">
-                  {extractedData.color}
+                  {extractedData.color || 'पारंपरिक प्राकृतिक'}
                 </span>
               </div>
 
-              {/* Production Days Stepper (Zero typing adjustment) */}
+              {/* Production Days Stepper Row */}
               <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5">
                 <div>
-                  <span className="text-xs font-bold text-[#6f5f58] uppercase block">
-                    निर्माण समय (Making Time):
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[#6f5f58] uppercase block">
+                      निर्माण समय (Making Time):
+                    </span>
+                    {extractedData.productionDays !== null ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                        ✓ {extractedData.factsDetected?.days ? 'सुना गया' : 'दर्ज किया'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                        ✎ पुष्टि आवश्यक
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[10px] text-[#2d6a4f]">
                     @ ₹650/दिन कुशल मजदूरी
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                {extractedData.productionDays !== null ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updatePricing(Math.max(1, (extractedData.productionDays || 1) - 1), extractedData.materialCost || 0)}
+                      className="w-7 h-7 rounded-lg bg-white border border-[#e6ded3] hover:bg-[#e6ded3] flex items-center justify-center font-bold text-xs cursor-pointer"
+                      title="1 दिन कम करें"
+                    >
+                      -
+                    </button>
+                    <span className="text-sm font-bold text-[#231f1e] min-w-[50px] text-center">
+                      {extractedData.productionDays} दिन
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updatePricing((extractedData.productionDays || 0) + 1, extractedData.materialCost || 0)}
+                      className="w-7 h-7 rounded-lg bg-white border border-[#e6ded3] hover:bg-[#e6ded3] flex items-center justify-center font-bold text-xs cursor-pointer"
+                      title="1 दिन बढ़ाएं"
+                    >
+                      +
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => updatePricing(extractedData.productionDays - 1, extractedData.materialCost)}
-                    className="w-7 h-7 rounded-lg bg-white border border-[#e6ded3] hover:bg-[#e6ded3] flex items-center justify-center font-bold text-xs cursor-pointer"
-                    title="1 दिन कम करें"
+                    onClick={() => setIsEditMode(true)}
+                    className="inline-flex items-center gap-1 px-3 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                   >
-                    -
+                    <span>दिन भरें</span>
                   </button>
-                  <span className="text-sm font-bold text-[#231f1e] min-w-[50px] text-center">
-                    {extractedData.productionDays} दिन
+                )}
+              </div>
+
+              {/* Material Cost Row */}
+              <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[#6f5f58] uppercase block">
+                      सामग्री लागत (Material Cost):
+                    </span>
+                    {extractedData.materialCost !== null ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                        ✓ {extractedData.factsDetected?.cost ? 'सुना गया' : 'दर्ज किया'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                        ✎ पुष्टि आवश्यक
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-[#6f5f58]">
+                    कच्ची सामग्री का खर्च
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => updatePricing(extractedData.productionDays + 1, extractedData.materialCost)}
-                    className="w-7 h-7 rounded-lg bg-white border border-[#e6ded3] hover:bg-[#e6ded3] flex items-center justify-center font-bold text-xs cursor-pointer"
-                    title="1 दिन बढ़ाएं"
-                  >
-                    +
-                  </button>
+                </div>
+                <div className="flex items-center gap-1 text-sm font-bold text-[#231f1e]">
+                  {extractedData.materialCost !== null ? (
+                    <>
+                      <span>₹{extractedData.materialCost.toLocaleString('en-IN')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditMode(true)}
+                        className="ml-1 text-[11px] text-[#c85a32] hover:underline font-semibold cursor-pointer"
+                      >
+                        बदलें
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditMode(true)}
+                      className="inline-flex items-center gap-1 px-3 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      <span>लागत भरें</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Transparent Price Calculation Box */}
-              <div className="p-3.5 bg-white rounded-xl border border-[#e6ded3] space-y-2">
-                <div className="flex items-center justify-between text-xs text-[#6f5f58]">
-                  <span>कच्ची सामग्री लागत (Materials):</span>
-                  <span className="font-semibold text-[#231f1e]">₹{extractedData.materialCost.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-[#6f5f58]">
-                  <span>कारीगरी मजदूरी ({extractedData.productionDays} दिन × ₹650):</span>
-                  <span className="font-semibold text-[#231f1e]">₹{(extractedData.productionDays * 650).toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-[#6f5f58]">
-                  <span>जीआई शिल्प विरासत प्रीमियम (25%):</span>
-                  <span className="font-semibold text-[#2d6a4f]">
-                    +₹{(extractedData.recommendedPrice - (extractedData.materialCost + extractedData.productionDays * 650)).toLocaleString('en-IN')}
-                  </span>
-                </div>
-                <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-[#1b4332] uppercase block">
-                      सुझाई गई उचित कीमत (Fair Price):
-                    </span>
-                    <span className="text-[11px] text-[#2d6a4f] font-semibold">
-                      बिचौलियों से मुक्त सीधी बिक्री
+              {/* Transparent Price Calculation Box vs Confirmation Prompt */}
+              {extractedData.productionDays !== null && extractedData.materialCost !== null && extractedData.recommendedPrice !== null ? (
+                <div className="p-3.5 bg-white rounded-xl border border-[#e6ded3] space-y-2">
+                  <div className="flex items-center justify-between text-xs text-[#6f5f58]">
+                    <span>कच्ची सामग्री लागत (Materials):</span>
+                    <span className="font-semibold text-[#231f1e]">₹{(extractedData.materialCost || 0).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-[#6f5f58]">
+                    <span>कारीगरी मजदूरी ({extractedData.productionDays} दिन × ₹650):</span>
+                    <span className="font-semibold text-[#231f1e]">₹{((extractedData.productionDays || 0) * 650).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-[#6f5f58]">
+                    <span>जीआई शिल्प विरासत प्रीमियम (25%):</span>
+                    <span className="font-semibold text-[#2d6a4f]">
+                      +₹{Math.max(0, (extractedData.recommendedPrice || 0) - ((extractedData.materialCost || 0) + (extractedData.productionDays || 0) * 650)).toLocaleString('en-IN')}
                     </span>
                   </div>
-                  <div className="font-sans text-2xl font-extrabold text-[#c85a32]">
-                    ₹{extractedData.recommendedPrice.toLocaleString('en-IN')}
+                  <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-[#1b4332] uppercase block">
+                        सुझाई गई उचित कीमत (Fair Price):
+                      </span>
+                      <span className="text-[11px] text-[#2d6a4f] font-semibold">
+                        बिचौलियों से मुक्त सीधी बिक्री
+                      </span>
+                    </div>
+                    <div className="font-sans text-2xl font-extrabold text-[#c85a32]">
+                      ₹{(extractedData.recommendedPrice || 0).toLocaleString('en-IN')}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-4 bg-amber-50/90 border border-amber-300 rounded-2xl space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-sm font-bold text-amber-900">
+                        लागत व निर्माण समय की पुष्टि करें (Confirm Labor & Material Cost)
+                      </h4>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        आपकी आवाज़ में निर्माण के दिन या सामग्री खर्च का उल्लेख नहीं मिला। सरकारी वैधानिक न्यूनतम मजदूरी (₹650/दिन) के आधार पर पारदर्शी निष्पक्ष मूल्य तय करने के लिए विवरण दर्ज करें:
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-xs font-bold text-[#6f5f58] mb-1">
+                        कच्ची सामग्री खर्च (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="उदा: 300"
+                        value={extractedData.materialCost ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? null : Math.max(0, Number(e.target.value));
+                          setExtractedData(prev => prev ? ({ ...prev, materialCost: val }) : null);
+                        }}
+                        className="w-full px-3 py-2 text-sm border border-amber-300 rounded-xl bg-white font-semibold text-[#231f1e]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-[#6f5f58] mb-1">
+                        बनाने में लगे दिन
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="उदा: 2"
+                        value={extractedData.productionDays ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? null : Math.max(1, Number(e.target.value));
+                          setExtractedData(prev => prev ? ({ ...prev, productionDays: val }) : null);
+                        }}
+                        className="w-full px-3 py-2 text-sm border border-amber-300 rounded-xl bg-white font-semibold text-[#231f1e]"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const days = extractedData.productionDays ?? 1;
+                      const cost = extractedData.materialCost ?? 0;
+                      updatePricing(days, cost);
+                    }}
+                    className="w-full py-2.5 bg-[#1b4332] hover:bg-[#2d6a4f] text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Calculator className="w-3.5 h-3.5" />
+                    <span>उचित न्यूनतम मूल्य की गणना करें (Calculate Fair Price)</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Expandable Manual Edit Option */}
           {isEditMode && (
-            <div className="p-4 bg-white rounded-2xl border border-[#e6ded3] space-y-4">
+            <div className="p-4 bg-white rounded-2xl border border-[#e6ded3] space-y-4 animate-in fade-in">
               <h4 className="font-bold text-sm text-[#231f1e] flex items-center gap-1.5">
                 <Edit3 className="w-4 h-4 text-[#c85a32]" />
-                <span>विवरण में बदलाव करें (Optional Manual Edit)</span>
+                <span>विवरण में बदलाव करें (Manual Edit)</span>
               </h4>
 
               <div>
@@ -1360,13 +1930,49 @@ export default function ArtisanStudio() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-[#6f5f58] mb-1">
+                    रंग (Color)
+                  </label>
+                  <input
+                    type="text"
+                    value={extractedData.color || ''}
+                    onChange={(e) =>
+                      setExtractedData({ ...extractedData, color: e.target.value })
+                    }
+                    placeholder="उदा: लाल, सुनहरा, प्राकृतिक"
+                    className="w-full px-3 py-2 text-sm border border-[#e6ded3] rounded-xl bg-[#faf7f2]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#6f5f58] mb-1">
+                    सामग्री (Materials)
+                  </label>
+                  <input
+                    type="text"
+                    value={extractedData.materials.join(', ')}
+                    onChange={(e) =>
+                      setExtractedData({
+                        ...extractedData,
+                        materials: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      })
+                    }
+                    placeholder="उदा: पीतल, सिल्क, मिट्टी"
+                    className="w-full px-3 py-2 text-sm border border-[#e6ded3] rounded-xl bg-[#faf7f2]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#6f5f58] mb-1">
                     कच्ची सामग्री लागत (₹)
                   </label>
                   <input
                     type="number"
-                    value={extractedData.materialCost}
+                    value={extractedData.materialCost ?? ''}
                     onChange={(e) => {
-                      updatePricing(extractedData.productionDays, Number(e.target.value));
+                      const cost = e.target.value === '' ? 0 : Number(e.target.value);
+                      updatePricing(extractedData.productionDays || 1, cost);
                     }}
                     className="w-full px-3 py-2 text-sm border border-[#e6ded3] rounded-xl bg-[#faf7f2]"
                   />
@@ -1378,9 +1984,10 @@ export default function ArtisanStudio() {
                   </label>
                   <input
                     type="number"
-                    value={extractedData.productionDays}
+                    value={extractedData.productionDays ?? ''}
                     onChange={(e) => {
-                      updatePricing(Number(e.target.value), extractedData.materialCost);
+                      const days = e.target.value === '' ? 1 : Number(e.target.value);
+                      updatePricing(days, extractedData.materialCost || 0);
                     }}
                     className="w-full px-3 py-2 text-sm border border-[#e6ded3] rounded-xl bg-[#faf7f2]"
                   />
@@ -1433,7 +2040,7 @@ export default function ArtisanStudio() {
       {/* ===================================================================== */}
       {/* STEP 6: CELEBRATION SUCCESS SCREEN                                    */}
       {/* ===================================================================== */}
-      {step === 6 && (
+      {step === 6 && extractedData && (
         <div className="bg-white rounded-3xl border border-[#e6ded3] p-6 sm:p-10 text-center space-y-6 bento-shadow">
           <div className="w-20 h-20 rounded-full bg-[#e8f5e9] text-[#1b4332] flex items-center justify-center mx-auto text-4xl shadow-xs animate-bounce">
             🎉
@@ -1447,7 +2054,7 @@ export default function ArtisanStudio() {
               {extractedData.productNameHi} अब बाज़ार में खरीदारों को दिखाई देगा।
             </p>
             <p className="text-xs text-[#6f5f58] max-w-sm mx-auto">
-              आपकी {extractedData.productionDays} दिनों की मेहनत के लिए ₹{extractedData.recommendedPrice.toLocaleString('en-IN')} का उचित मूल्य सुरक्षित किया गया है।
+              आपकी {extractedData.productionDays ?? 1} दिनों की मेहनत के लिए ₹{(extractedData.recommendedPrice || 0).toLocaleString('en-IN')} का उचित मूल्य सुरक्षित किया गया है।
             </p>
           </div>
 
@@ -1455,7 +2062,7 @@ export default function ArtisanStudio() {
             <div className="text-left">
               <span className="text-[11px] font-bold text-[#6f5f58] uppercase block">लाइव मूल्य</span>
               <span className="text-lg font-bold text-[#c85a32]">
-                ₹{extractedData.recommendedPrice.toLocaleString('en-IN')}
+                ₹{(extractedData.recommendedPrice || 0).toLocaleString('en-IN')}
               </span>
             </div>
             <span className="bg-[#1b4332] text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
@@ -1480,6 +2087,8 @@ export default function ArtisanStudio() {
                 setAudioUrl(null);
                 setTtsAudioBase64(null);
                 setRawTranscript('');
+                setLivePreviewTranscript('');
+                setExtractedData(null);
                 setStep(2); // Start with voice again
               }}
               className="flex-1 bg-white hover:bg-[#faf7f2] text-[#231f1e] border border-[#e6ded3] font-semibold text-sm py-3.5 px-6 rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer"

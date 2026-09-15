@@ -128,10 +128,32 @@ class SarvamService:
     ) -> Dict[str, Any]:
         """
         Transcribes artisan Indic speech to text using Sarvam Saarika ASR.
+        Detects actual audio format from magic bytes without misrepresenting MIME type.
         """
         api_key = settings.SARVAM_API_KEY
         if not api_key:
-            return {"success": False, "transcript": "", "error": "SARVAM_API_KEY missing"}
+            return {"success": False, "transcript": "", "error": "SARVAM_API_KEY missing", "source": "none"}
+
+        # Detect genuine format from magic bytes
+        if audio_bytes.startswith(b"RIFF") and b"WAVE" in audio_bytes[:16]:
+            content_type = "audio/wav"
+            upload_filename = "recording.wav" if not filename.endswith(".wav") else filename
+        elif audio_bytes.startswith(b"OggS"):
+            content_type = "audio/ogg"
+            upload_filename = "recording.ogg" if not (filename.endswith(".ogg") or filename.endswith(".opus")) else filename
+        elif audio_bytes.startswith(b"\x1a\x45\xdf\xa3"):
+            content_type = "audio/webm"
+            upload_filename = "recording.webm" if not filename.endswith(".webm") else filename
+        else:
+            if filename.endswith(".wav"):
+                content_type = "audio/wav"
+            elif filename.endswith(".ogg") or filename.endswith(".opus"):
+                content_type = "audio/ogg"
+            elif filename.endswith(".webm"):
+                content_type = "audio/webm"
+            else:
+                content_type = "audio/wav"
+            upload_filename = filename
 
         boundary = "SarvamASRBoundary789456123"
         lines = [
@@ -142,8 +164,8 @@ class SarvamService:
             b'Content-Disposition: form-data; name="language_code"\r\n',
             language_code.encode("utf-8"),
             f"--{boundary}".encode("utf-8"),
-            f'Content-Disposition: form-data; name="file"; filename="{filename}"'.encode("utf-8"),
-            b"Content-Type: audio/wav\r\n",
+            f'Content-Disposition: form-data; name="file"; filename="{upload_filename}"'.encode("utf-8"),
+            f"Content-Type: {content_type}\r\n".encode("utf-8"),
             audio_bytes,
             f"--{boundary}--\r\n".encode("utf-8")
         ]
@@ -272,190 +294,296 @@ class SarvamService:
             logger.error(f"Sarvam chat error: {e}")
             return {"success": False, "reply": "", "error": str(e)}
 
-    def extract_craft_attributes(self, transcript: str, language_code: str = "hi-IN") -> Dict[str, Any]:
+    def extract_craft_attributes(
+        self,
+        transcript: str,
+        language_code: str = "hi-IN",
+        force_fallback: bool = False
+    ) -> Dict[str, Any]:
         """
         Extracts structured craft attributes and computes fair price recommendation
         from an artisan voice transcript using Sarvam 105B LLM.
         """
         api_key = settings.SARVAM_API_KEY
+        clean_t = (transcript or "").strip()
+
+        # Semantic & Quality Gating: Detect pure greetings or missing craft content
+        words = clean_t.split()
+        greeting_words = {
+            "hello", "hi", "hey", "namaste", "namaskar", "pranam", "नमस्ते", "प्रणाम",
+            "हेलो", "हाय", "नमस्कार", "good", "morning", "afternoon", "evening",
+            "haan", "ha", "theek", "hai", "ji", "जी", "हां", "हाँ", "ठीक", "है"
+        }
+        is_all_greetings = bool(words) and all(re.sub(r"[^\w\s]", "", w).lower() in greeting_words for w in words)
+        has_craft_term = bool(re.search(
+            r"(घंटी|साड़ी|खिलौना|पॉट|बर्तन|पेंटिंग|चित्र|मूर्ति|दीपक|कालीन|दरी|मोजरी|जूती|दुपट्टा|शॉल|चाक|लकड़ी|पीतल|मिट्टी|सिल्क|चमड़ा|ऊन|बांस|बॉक्स|डिब्बा|घैला|घइला|bell|saree|toy|pot|pottery|painting|statue|carpet|rug|leather|wood|brass|silk|clay|box|mojari)",
+            clean_t,
+            re.IGNORECASE
+        ))
+
+        if not clean_t or is_all_greetings or (len(words) < 3 and not has_craft_term):
+            return {
+                "success": True,
+                "requires_clarification": True,
+                "message_hi": "आवाज़ में उत्पाद का विवरण नहीं मिला। कृपया अपने शिल्प का नाम (जैसे घंटी, साड़ी, खिलौना, पॉट), सामग्री, और बनाने के दिन बताएं।",
+                "message_en": "No product craft details detected. Please describe your item name (e.g. bell, saree, toy, pottery), material used, and days to make.",
+                "transcript": clean_t,
+                "confidence_score": 0.2
+            }
+
         prompt = (
-            "You are an expert Indian Handicraft Cataloging AI for the Ministry of Social Justice and Empowerment (MoSJE).\n"
-            "Analyze the artisan's voice transcript and extract key product attributes into a strict JSON object.\n"
-            f"Transcript: \"{transcript}\"\n\n"
-            "Return ONLY valid JSON with these exact keys:\n"
+            "You are Hunardhara AI Artisan Commerce Assistant for the Ministry of Social Justice and Empowerment (MoSJE).\n"
+            "Analyze the artisan's voice transcript and extract ONLY explicit facts into a strict JSON object.\n"
+            f"Transcript: \"{clean_t}\"\n\n"
+            "STRICT TRUTHFULNESS RULES:\n"
+            "1. Extract ONLY attributes explicitly stated in the transcript. Do NOT guess or extrapolate missing attributes.\n"
+            "2. Do NOT infer region, cluster, or GI certification unless explicitly stated by the artisan.\n"
+            "3. Do NOT invent dimensions, materials, production time, or cost. If not stated, return null.\n"
+            "4. NEVER default to saree, silk, or Varanasi unless explicitly mentioned by the artisan.\n"
+            "5. Return ONLY raw valid JSON with these exact keys (no markdown, no backticks):\n"
             "{\n"
             '  "product_name_hi": "सटीक हिंदी नाम",\n'
-            '  "product_name_en": "Accurate English Title",\n'
-            '  "craft_type": "Specific Craft (e.g. Varanasi Silk, Bastar Dhokra, Khurja Pottery, Madhubani Painting, Channapatna Toys)",\n'
-            '  "materials": ["मुख्य सामग्री 1", "सामग्री 2"],\n'
-            '  "color": "रंग",\n'
-            '  "dimensions": "आकार या माप (e.g. 5.5m x 1.2m)",\n'
-            '  "production_days": 10,\n'
-            '  "material_cost": 2500,\n'
-            '  "recommended_price": 6000,\n'
-            '  "description_hi": "2-line descriptive summary in Hindi",\n'
-            '  "description_en": "2-line descriptive summary in English",\n'
-            '  "voice_script_hi": "बधाई हो! आपका उत्पाद तैयार है। इसका उचित बिक्री मूल्य... रुपये तय किया गया है।"\n'
+            '  "product_name_en": "Accurate English title",\n'
+            '  "craft_type": "Craft category if explicitly stated or obvious product category, else null",\n'
+            '  "materials": ["only explicitly mentioned materials"],\n'
+            '  "color": "only explicitly mentioned color or null",\n'
+            '  "dimensions": null,\n'
+            '  "production_days": null,\n'
+            '  "material_cost": null,\n'
+            '  "recommended_price": null,\n'
+            '  "description_hi": "सत्यनिष्ठ और आदरपूर्ण संक्षिप्त विवरण",\n'
+            '  "description_en": "Truthful and concise description",\n'
+            '  "voice_script_hi": "बधाई हो! आपके उत्पाद का विवरण तैयार है।",\n'
+            '  "confidence": {"overall": 0.9},\n'
+            '  "verification_required": ["production_days", "material_cost"]\n'
             "}\n"
-            "Ensure material_cost and production_days are numbers. Compute recommended_price as: material_cost + (production_days * 650) + 15% margin.\n"
-            "Do NOT include markdown formatting or backticks, return raw JSON only."
         )
 
-        # 1. Try OpenRouter Gemma 4 31B if configured
-        if settings.OPENROUTER_API_KEY and not settings.OFFLINE_MODE:
-            try:
-                from app.services.openrouter_service import openrouter_service
-                raw_cat = openrouter_service._call_openrouter([
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": f"Artisan Voice Transcript:\n{transcript}"}
-                ], max_tokens=1024, temperature=0.1)
-                if raw_cat:
-                    json_match = re.search(r"\{[\s\S]*\}", raw_cat)
-                    if json_match:
-                        parsed = json.loads(json_match.group(0))
-                        mat_cost = float(parsed.get("material_cost", 2000))
-                        days = int(parsed.get("production_days", 7))
-                        wage_floor = mat_cost + (days * 650.0)
-                        rec_price = max(float(parsed.get("recommended_price", wage_floor * 1.2)), wage_floor * 1.15)
-                        parsed["material_cost"] = int(mat_cost)
-                        parsed["production_days"] = days
-                        parsed["recommended_price"] = int(round(rec_price, -1))
-                        parsed["wage_floor"] = int(round(wage_floor, -1))
-                        parsed["source"] = "openrouter_gemma_4_31b"
-                        return {"success": True, "attributes": parsed}
-            except Exception as e:
-                logger.warning(f"OpenRouter Gemma extraction note: {e}")
+        if not force_fallback:
+            # 1. Primary: Sovereign Sarvam 105B Indic LLM
+            if api_key:
+                try:
+                    res = self.chat_completion(
+                        user_message=prompt,
+                        system_prompt="You are a strict JSON-only API. Never output preamble, explanation, or markdown backticks."
+                    )
+                    if res.get("success") and res.get("reply"):
+                        reply = res["reply"]
+                        json_match = re.search(r"\{[\s\S]*\}", reply)
+                        if json_match:
+                            parsed = json.loads(json_match.group(0))
+                            # Decouple pricing: Calculate only if genuine economic inputs are provided
+                            days = parsed.get("production_days")
+                            cost = parsed.get("material_cost")
+                            if days is not None:
+                                try: days = float(days)
+                                except: days = None
+                            if cost is not None:
+                                try: cost = float(cost)
+                                except: cost = None
 
-        # 2. Try Sarvam AI 105B LLM
-        if api_key:
-            try:
-                res = self.chat_completion(
-                    user_message=prompt,
-                    system_prompt="You are a strict JSON-only API. Never output preamble, explanation, or markdown backticks."
-                )
-                if res.get("success") and res.get("reply"):
-                    reply = res["reply"]
-                    # Extract JSON substring if needed
-                    json_match = re.search(r"\{[\s\S]*\}", reply)
-                    if json_match:
-                        parsed = json.loads(json_match.group(0))
-                        # Enforce statutory wage floor: material_cost + (days * 650)
-                        mat_cost = float(parsed.get("material_cost", 2000))
-                        days = int(parsed.get("production_days", 7))
-                        wage_floor = mat_cost + (days * 650.0)
-                        rec_price = max(float(parsed.get("recommended_price", wage_floor * 1.2)), wage_floor * 1.15)
-                        parsed["material_cost"] = int(mat_cost)
-                        parsed["production_days"] = days
-                        parsed["recommended_price"] = int(round(rec_price, -1))
-                        parsed["wage_floor"] = int(round(wage_floor, -1))
-                        parsed["source"] = "sarvam_105b"
-                        return {"success": True, "attributes": parsed}
-            except Exception as e:
-                logger.warning(f"Sarvam LLM extraction failed: {e}, using heuristic fallback")
+                            if days is not None and cost is not None:
+                                wage_floor = int(round(cost + (days * 650.0), -1))
+                                rec_price = int(round(wage_floor * 1.25, -1))
+                            else:
+                                wage_floor = None
+                                rec_price = None
 
-        # Deterministic Multi-Craft Indic Fallback parser
-        t_lower = transcript.lower()
+                            # Normalize craft category if cluster is explicitly identified in transcript
+                            ct_lower = (parsed.get("craft_type") or "").lower()
+                            if any(k in clean_t.lower() for k in ["वाराणसी", "बनारस", "varanasi", "banarasi", "कातान", "कतान"]):
+                                if any(s in ct_lower for s in ["saree", "silk", "textile", "handloom", "साड़ी", "सिल्क", "कतान", "कातान", "वस्त्र"]) or not ct_lower:
+                                    parsed["craft_type"] = "Varanasi Silk"
+                            elif any(k in clean_t.lower() for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]):
+                                if any(s in ct_lower for s in ["bell", "horse", "figurine", "brass", "metal", "घंटी", "घोड़ा", "मूर्ति", "पीतल", "धातु", "ढोकरा"]) or not ct_lower:
+                                    parsed["craft_type"] = "Bastar Dhokra"
+                            elif any(k in clean_t.lower() for k in ["खुर्जा", "khurja"]):
+                                if any(s in ct_lower for s in ["pottery", "pot", "vase", "ceramic", "मिट्टी", "बर्तन", "पॉट", "घड़ा", "फूलदान"]) or not ct_lower:
+                                    parsed["craft_type"] = "Khurja Pottery"
+                            elif any(k in clean_t.lower() for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]):
+                                if any(s in ct_lower for s in ["painting", "art", "folk", "पेंटिंग", "चित्र", "चित्रकला"]) or not ct_lower:
+                                    parsed["craft_type"] = "Madhubani Painting"
+                            elif any(k in clean_t.lower() for k in ["चन्नपटना", "चन्नापटना", "channapatna"]):
+                                if any(s in ct_lower for s in ["toy", "toys", "wood", "खिलौना", "काष्ठ", "लकड़ी"]) or not ct_lower:
+                                    parsed["craft_type"] = "Channapatna Toys"
 
-        # Extract days if spoken
-        days = 4
+                            parsed["production_days"] = days
+                            parsed["material_cost"] = cost
+                            parsed["wage_floor"] = wage_floor
+                            parsed["recommended_price"] = rec_price
+                            parsed["confidence_score"] = 0.95
+                            parsed["source"] = "sarvam_105b"
+                            return {"success": True, "attributes": parsed}
+                except Exception as e:
+                    logger.warning(f"Sarvam LLM extraction failed: {e}, attempting OpenRouter fallback")
+
+            # 2. Secondary: OpenRouter Indic/Multimodal LLM
+            if settings.OPENROUTER_API_KEY and not settings.OFFLINE_MODE:
+                try:
+                    from app.services.openrouter_service import openrouter_service
+                    raw_cat = openrouter_service._call_openrouter([
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": f"Artisan Voice Transcript:\n{clean_t}"}
+                    ], max_tokens=1024, temperature=0.1)
+                    if raw_cat:
+                        json_match = re.search(r"\{[\s\S]*\}", raw_cat)
+                        if json_match:
+                            parsed = json.loads(json_match.group(0))
+                            days = parsed.get("production_days")
+                            cost = parsed.get("material_cost")
+                            if days is not None:
+                                try: days = float(days)
+                                except: days = None
+                            if cost is not None:
+                                try: cost = float(cost)
+                                except: cost = None
+
+                            if days is not None and cost is not None:
+                                wage_floor = int(round(cost + (days * 650.0), -1))
+                                rec_price = int(round(wage_floor * 1.25, -1))
+                            else:
+                                wage_floor = None
+                                rec_price = None
+
+                            # Normalize craft category if cluster is explicitly identified in transcript
+                            ct_lower = (parsed.get("craft_type") or "").lower()
+                            if any(k in clean_t.lower() for k in ["वाराणसी", "बनारस", "varanasi", "banarasi", "कातान", "कतान"]):
+                                if any(s in ct_lower for s in ["saree", "silk", "textile", "handloom", "साड़ी", "सिल्क", "कतान", "कातान", "वस्त्र"]) or not ct_lower:
+                                    parsed["craft_type"] = "Varanasi Silk"
+                            elif any(k in clean_t.lower() for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]):
+                                if any(s in ct_lower for s in ["bell", "horse", "figurine", "brass", "metal", "घंटी", "घोड़ा", "मूर्ति", "पीतल", "धातु", "ढोकरा"]) or not ct_lower:
+                                    parsed["craft_type"] = "Bastar Dhokra"
+                            elif any(k in clean_t.lower() for k in ["खुर्जा", "khurja"]):
+                                if any(s in ct_lower for s in ["pottery", "pot", "vase", "ceramic", "मिट्टी", "बर्तन", "पॉट", "घड़ा", "फूलदान"]) or not ct_lower:
+                                    parsed["craft_type"] = "Khurja Pottery"
+                            elif any(k in clean_t.lower() for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]):
+                                if any(s in ct_lower for s in ["painting", "art", "folk", "पेंटिंग", "चित्र", "चित्रकला"]) or not ct_lower:
+                                    parsed["craft_type"] = "Madhubani Painting"
+                            elif any(k in clean_t.lower() for k in ["चन्नपटना", "चन्नापटना", "channapatna"]):
+                                if any(s in ct_lower for s in ["toy", "toys", "wood", "खिलौना", "काष्ठ", "लकड़ी"]) or not ct_lower:
+                                    parsed["craft_type"] = "Channapatna Toys"
+
+                            parsed["production_days"] = days
+                            parsed["material_cost"] = cost
+                            parsed["wage_floor"] = wage_floor
+                            parsed["recommended_price"] = rec_price
+                            parsed["confidence_score"] = 0.90
+                            parsed["source"] = "openrouter_llm"
+                            return {"success": True, "attributes": parsed}
+                except Exception as e:
+                    logger.warning(f"OpenRouter extraction note: {e}")
+
+        # 3. Deterministic Strict Explicit-Facts Indic Fallback parser (Zero Hallucination, Zero Canned Templates)
+        t_lower = clean_t.lower()
+
+        # Extract days if explicitly spoken (Default = None, NEVER hallucinate days!)
+        days = None
+        days_detected = False
         days_match = re.search(r"(\d+)\s*(दिन|हफ्ते|हफ्ता|din|day|days|week|weeks)", t_lower)
         if days_match:
             d_val = int(days_match.group(1))
             if 1 <= d_val <= 90:
                 days = d_val * 7 if any(w in days_match.group(2) for w in ["हफ्त", "week"]) else d_val
+                days_detected = True
+        elif "दो दिन" in t_lower or "2 days" in t_lower:
+            days = 2
+            days_detected = True
+        elif "तीन दिन" in t_lower or "3 days" in t_lower:
+            days = 3
+            days_detected = True
+        elif "चार दिन" in t_lower or "4 days" in t_lower:
+            days = 4
+            days_detected = True
+        elif "पाँच दिन" in t_lower or "पांच दिन" in t_lower or "5 days" in t_lower:
+            days = 5
+            days_detected = True
 
-        # Extract material cost if spoken
-        mat_cost = 600
-        cost_match = re.search(r"(?:₹|rs\.?|रुपये?|रू\.|cost|price|लागत)\s*(\d+)", t_lower) or re.search(r"(\d+)\s*(?:रुपये?|रू\.|rs\.?|लागत)", t_lower)
+        # Extract material cost if explicitly spoken (Default = None, NEVER hallucinate cost!)
+        mat_cost = None
+        cost_detected = False
+        cost_match = (
+            re.search(r"(?:₹|rs\.?|rupees?|rupee|रुपये?|रुपिया|रू\.|cost|price|लागत)\s*(\d+)", t_lower) or
+            re.search(r"(\d+)\s*(?:₹|rs\.?|rupees?|rupee|रुपये?|रुपिया|रू\.|cost|price|लागत)", t_lower)
+        )
         if cost_match:
             c_val = int(cost_match.group(1))
             if 50 <= c_val <= 500000:
                 mat_cost = c_val
+                cost_detected = True
 
-        is_wood = any(k in t_lower for k in ["लकड़ी", "काष्ठ", "खिलौना", "चन्नपटना", "सहारनपुर", "wood", "toy", "carving", "teak", "sheesham"])
-        is_dhokra = any(k in t_lower for k in ["ढोकरा", "पीतल", "धातु", "नंदी", "घंटी", "dhokra", "brass", "bell metal", "tribal", "bell"])
-        is_pottery = any(k in t_lower for k in ["मिट्टी", "बर्तन", "सिरेमिक", "पॉट", "खुर्जा", "घड़ा", "कुल्हड़", "pottery", "ceramic", "clay"])
-        is_madhubani = any(k in t_lower for k in ["मधुबनी", "वार्ली", "पेंटिंग", "चित्र", "तस्वीर", "कलमकारी", "madhubani", "painting", "art"])
-        is_leather = any(k in t_lower for k in ["चमड़ा", "चमड़े", "जूती", "चप्पल", "मोजड़ी", "कोल्हापुरी", "leather", "mojari", "wallet"])
-        is_carpet = any(k in t_lower for k in ["कालीन", "दरी", "गलीचा", "carpet", "rug", "dhurrie"])
-        is_cotton = any(k in t_lower for k in ["सूती", "कॉटन", "खादी", "दुपट्टा", "कुर्ता", "cotton", "khadi", "handloom"])
-        is_jewelry = any(k in t_lower for k in ["गहना", "आभूषण", "झुमका", "हार", "मीनाकारी", "jewelry", "necklace"])
-        is_bamboo = any(k in t_lower for k in ["बांस", "जूट", "टोकरी", "bamboo", "cane", "jute", "basket"])
-        is_silk = any(k in t_lower for k in ["सिल्क", "साड़ी", "रेशम", "कतान", "बनारसी", "silk", "saree", "katan", "brocade"])
+        # Extract explicit materials only
+        mat = []
+        if any(k in t_lower for k in ["पीतल", "brass"]): mat.append("पीतल (Brass)")
+        if any(k in t_lower for k in ["बेल मेटल", "bell metal"]): mat.append("बेल मेटल (Bell Metal)")
+        if any(k in t_lower for k in ["मिट्टी", "माटी", "clay", "terracotta"]): mat.append("मिट्टी (Terracotta Clay)")
+        if any(k in t_lower for k in ["शीशम", "सागवान", "लकड़ी", "wood", "rosewood"]): mat.append("प्राकृतिक काष्ठ (Wood)")
+        if any(k in t_lower for k in ["चमड़ा", "leather"]): mat.append("चर्म (Leather)")
+        if any(k in t_lower for k in ["बांस", "bamboo"]): mat.append("बांस (Bamboo)")
+        if any(k in t_lower for k in ["सिल्क", "silk", "रेशम"]): mat.append("शुद्ध सिल्क (Pure Silk)")
+        if any(k in t_lower for k in ["सूती", "कॉटन", "cotton"]): mat.append("सूती धागा (Cotton)")
 
-        if is_wood:
-            craft = "Channapatna Woodcraft & Toys"
-            name_hi = "चन्नपटना हस्तनिर्मित काष्ठ खिलौना / नक्काशी"
-            name_en = "Channapatna Handcrafted Lacquer Woodcraft"
-            mat = ["प्राकृतिक शीशम / सागवान की लकड़ी", "पारंपरिक गैर-विषाक्त लाख रंग"]
-            if not days_match: days = 4
-            if not cost_match: mat_cost = 450
-        elif is_dhokra:
-            craft = "Bastar Dhokra"
-            name_hi = "बस्तर ढोकरा जनजातीय पीतल शिल्प"
-            name_en = "Bastar Dhokra Tribal Bell Metal Craft"
-            mat = ["बेल मेटल", "पीतल", "प्राकृतिक मोम"]
-            if not days_match: days = 5
-            if not cost_match: mat_cost = 650
-        elif is_pottery:
-            craft = "Khurja Pottery"
-            name_hi = "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक पॉट"
-            name_en = "Khurja Handcrafted Glazed Ceramic Water Pot"
-            mat = ["टेराकोटा मिट्टी", "कोबाल्ट ग्लेज"]
-            if not days_match: days = 3
-            if not cost_match: mat_cost = 350
-        elif is_madhubani:
-            craft = "Madhubani Folk Painting"
-            name_hi = "मधुबनी हस्तचित्रित पारंपरिक पेंटिंग"
-            name_en = "Authentic Hand-Painted Madhubani Folk Art"
-            mat = ["हस्तनिर्मित पेपर / कैनवास", "प्राकृतिक वनस्पति रंग"]
-            if not days_match: days = 7
-            if not cost_match: mat_cost = 850
-        elif is_leather:
-            craft = "Kolhapuri Leather Craft"
-            name_hi = "कोल्हापुरी पारंपरिक हस्तनिर्मित चर्म शिल्प"
-            name_en = "Authentic Kolhapuri Handcrafted Leather Article"
-            mat = ["प्राकृतिक चर्म", "सूती धागा"]
-            if not days_match: days = 3
-            if not cost_match: mat_cost = 550
-        elif is_carpet:
-            craft = "Bhadohi Hand-Knotted Carpet"
-            name_hi = "भदोही हस्तनिर्मित ऊनी कालीन"
-            name_en = "Bhadohi Hand-Knotted Woolen Carpet"
-            mat = ["शुद्ध ऊन", "सूती ताना"]
-            if not days_match: days = 12
-            if not cost_match: mat_cost = 2200
-        elif is_cotton:
-            craft = "Handloom Cotton Weaving"
-            name_hi = "हथकरघा शुद्ध सूती वस्त्र / दुपट्टा"
-            name_en = "Handloom Pure Cotton Woven Article"
-            mat = ["शुद्ध कॉटन सूत", "प्राकृतिक रंग"]
-            if not days_match: days = 4
-            if not cost_match: mat_cost = 500
-        elif is_bamboo:
-            craft = "Assam Bamboo & Cane Craft"
-            name_hi = "असम हस्तनिर्मित बांस व केन शिल्प"
-            name_en = "Handcrafted Eco-Friendly Bamboo Craft"
-            mat = ["प्राकृतिक असमिया बांस", "केन फाइबर"]
-            if not days_match: days = 3
-            if not cost_match: mat_cost = 300
-        elif is_silk:
-            craft = "Varanasi Silk"
-            name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी"
-            name_en = "Varanasi Pure Katan Silk Handloom Saree"
-            mat = ["शुद्ध कतान सिल्क", "स्वर्ण ज़री धागा"]
-            if not days_match: days = 10
-            if not cost_match: mat_cost = 2800
+        # Extract explicit color only
+        color = None
+        if any(k in t_lower for k in ["लाल", "red"]): color = "लाल (Red)"
+        elif any(k in t_lower for k in ["नीला", "blue"]): color = "नीला (Blue)"
+        elif any(k in t_lower for k in ["हरा", "green"]): color = "हरा (Green)"
+        elif any(k in t_lower for k in ["पीला", "yellow"]): color = "पीला (Yellow)"
+        elif any(k in t_lower for k in ["काला", "black"]): color = "काला (Black)"
+        elif any(k in t_lower for k in ["सफेद", "white"]): color = "सफेद (White)"
+        elif any(k in t_lower for k in ["सुनहरा", "gold", "golden"]): color = "सुनहरा (Golden)"
+
+        # Product Noun & Truthful Craft Category - NO GI GUESSES (Zero Canned Templates)
+        if any(k in t_lower for k in ["घंटी", "bell"]):
+            craft = "Bastar Dhokra" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Metal Craft"
+            name_hi = "हाथ से बनी पीतल की घंटी" if any(k in t_lower for k in ["पीतल", "brass"]) else "हाथ से बनी घंटी"
+            name_en = "Handcrafted Brass Bell" if any(k in t_lower for k in ["पीतल", "brass"]) else "Handcrafted Bell"
+        elif any(k in t_lower for k in ["फूलदान", "vase"]):
+            craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja"]) else "Pottery"
+            name_hi = "मिट्टी का फूलदान" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "हस्तनिर्मित फूलदान"
+            name_en = "Handcrafted Earthen Clay Vase" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "Handcrafted Vase"
+        elif any(k in t_lower for k in ["घड़ा", "घैला", "घइला", "पॉट", "pottery", "कुल्हड़"]):
+            craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja"]) else "Pottery"
+            name_hi = "चाक पर बना हस्तनिर्मित माटी का घड़ा"
+            name_en = "Handcrafted Earthen Clay Pot"
+        elif any(k in t_lower for k in ["डिब्बा", "बॉक्स", "box", "jewelry box"]):
+            craft = "Woodcraft"
+            name_hi = "काष्ठ आभूषण डिब्बा" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "हस्तनिर्मित डिब्बा"
+            name_en = "Hand-Carved Wooden Jewelry Box" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "Handcrafted Box"
+        elif any(k in t_lower for k in ["खिलौना", "toy"]):
+            craft = "Channapatna Toys" if any(k in t_lower for k in ["चन्नपटना", "channapatna"]) else "Woodcraft"
+            name_hi = "हस्तनिर्मित काष्ठ खिलौना" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "हस्तनिर्मित खिलौना"
+            name_en = "Handcrafted Wooden Toy" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "Handcrafted Toy"
+        elif any(k in t_lower for k in ["मधुबनी", "मिथिला", "painting", "चित्रकला", "पेंटिंग"]):
+            craft = "Madhubani Painting" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "Folk Art"
+            name_hi = "हस्तचित्रित मिथिला/मधुबनी पेंटिंग" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "हस्तचित्रित पारंपरिक पेंटिंग"
+            name_en = "Handpainted Mithila Folk Painting" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "Handpainted Folk Art"
+        elif any(k in t_lower for k in ["मोजरी", "जूती", "mojari"]):
+            craft = "Leather Craft"
+            name_hi = "हस्तनिर्मित पारंपरिक लेदर मोजरी"
+            name_en = "Handcrafted Traditional Leather Mojari"
+        elif any(k in t_lower for k in ["साड़ी", "saree"]):
+            craft = "Varanasi Silk" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "Handloom Weaving"
+            name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "हस्तनिर्मित हथकरघा साड़ी"
+            name_en = "Varanasi Pure Katan Silk Handloom Saree" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "Handloom Woven Saree"
         else:
-            craft = "Indian Traditional Handicraft"
+            craft = None
             name_hi = "हस्तनिर्मित पारंपरिक भारतीय शिल्प"
             name_en = "Authentic Indian Handcrafted Heritage Item"
-            mat = ["प्राकृतिक हस्तशिल्प सामग्री"]
-            if not days_match: days = 4
-            if not cost_match: mat_cost = 600
 
-        wage_floor = mat_cost + (days * 650.0)
-        rec_price = int(round(wage_floor * 1.25, -1))
+        # Separate pricing engine: Calculate ONLY if genuine numbers are provided
+        if days_detected and cost_detected and days is not None and mat_cost is not None:
+            wage_floor = int(round(mat_cost + (days * 650.0), -1))
+            rec_price = int(round(wage_floor * 1.25, -1))
+        else:
+            wage_floor = None
+            rec_price = None
+
+        verification_required = []
+        if not days_detected: verification_required.append("production_days")
+        if not cost_detected: verification_required.append("material_cost")
+        if not color: verification_required.append("color")
+        if not mat: verification_required.append("materials")
+        if not craft: verification_required.append("craft_type")
 
         return {
             "success": True,
@@ -464,17 +592,26 @@ class SarvamService:
                 "product_name_en": name_en,
                 "craft_type": craft,
                 "materials": mat,
-                "color": "पारंपरिक प्राकृतिक रंग",
-                "dimensions": "मानक हस्तशिल्प आकार",
+                "color": color,
+                "dimensions": None,  # Strictly null - never invent!
                 "production_days": days,
                 "material_cost": mat_cost,
-                "wage_floor": int(round(wage_floor, -1)),
+                "wage_floor": wage_floor,
                 "recommended_price": rec_price,
-                "description_hi": f"हस्तशिल्पकार द्वारा {days} दिनों के समर्पित परिश्रम से निर्मित प्रामाणिक {craft}।",
-                "description_en": f"Authentic {craft} meticulously created by master artisan over {days} days of skilled craftsmanship.",
-                "voice_script_hi": f"बधाई हो! आपका उत्पाद {name_hi} तैयार है। आपकी {days} दिनों की मेहनत और कच्चे माल को जोड़कर इसका उचित बिक्री मूल्य ₹{rec_price} तय किया गया है।",
+                "description_hi": f"कारीगर द्वारा स्वयं वर्णित प्रामाणिक विवरण: \"{clean_t}\"",
+                "description_en": f"Authentic artisan product described as: \"{clean_t}\"",
+                "voice_script_hi": f"बधाई हो! आपके उत्पाद '{name_hi}' की जानकारी तैयार है।" if not rec_price else f"बधाई हो! आपके उत्पाद '{name_hi}' की जानकारी तैयार है। इसका उचित बिक्री मूल्य ₹{rec_price} है।",
+                "confidence_score": 0.85 if (days_detected and mat) else 0.65,
+                "facts_detected": {
+                    "days": days_detected,
+                    "cost": cost_detected,
+                    "materials": len(mat) > 0,
+                    "color": bool(color)
+                },
+                "verification_required": verification_required,
                 "source": "indic_heuristics_fallback"
-            }
+            },
+            "verification_required": verification_required
         }
 
     def normalize_codemixed_speech(self, text: str) -> str:

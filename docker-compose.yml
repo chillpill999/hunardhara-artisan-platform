@@ -6,9 +6,9 @@ services:
     container_name: sih_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: artisan_platform
-      POSTGRES_USER: artisan_admin
-      POSTGRES_PASSWORD: artisan_secure_password_2026
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be supplied by the deployment environment}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be supplied by the deployment environment}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be supplied by the deployment environment}
     ports:
       - "5432:5432"
     volumes:
@@ -46,15 +46,20 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql+asyncpg://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
-      - SYNC_DATABASE_URL=postgresql://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be supplied by the deployment environment}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:?SYNC_DATABASE_URL must be supplied by the deployment environment}
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - OFFLINE_MODE=true
       - MOCK_AI_SERVICES=true
-      - AADHAAR_PEPPER_KEY=mosje_sovereign_aadhaar_pepper_secret_2026
-      - SECRET_KEY=mosje_super_secret_jwt_key_sih2026_artisan_platform
+      - AADHAAR_PEPPER_KEY=${AADHAAR_PEPPER_KEY:?AADHAAR_PEPPER_KEY must be supplied by the deployment environment}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:?SUPABASE_JWT_SECRET must be supplied by the deployment environment}
+      - SUPABASE_JWT_ISSUER=${SUPABASE_JWT_ISSUER:?SUPABASE_JWT_ISSUER must be supplied by the deployment environment}
+      - SUPABASE_JWT_AUDIENCE=${SUPABASE_JWT_AUDIENCE:?SUPABASE_JWT_AUDIENCE must be supplied by the deployment environment}
+      - ADMIN_USER_IDS=${ADMIN_USER_IDS:?ADMIN_USER_IDS must be supplied by the deployment environment}
+      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - STATIC_DIR=/app/static
     ports:
       - "8000:8000"
@@ -77,15 +82,20 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql+asyncpg://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
-      - SYNC_DATABASE_URL=postgresql://artisan_admin:artisan_secure_password_2026@db:5432/artisan_platform
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be supplied by the deployment environment}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:?SYNC_DATABASE_URL must be supplied by the deployment environment}
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - OFFLINE_MODE=true
       - MOCK_AI_SERVICES=true
-      - AADHAAR_PEPPER_KEY=mosje_sovereign_aadhaar_pepper_secret_2026
-      - SECRET_KEY=mosje_super_secret_jwt_key_sih2026_artisan_platform
+      - AADHAAR_PEPPER_KEY=${AADHAAR_PEPPER_KEY:?AADHAAR_PEPPER_KEY must be supplied by the deployment environment}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:?SUPABASE_JWT_SECRET must be supplied by the deployment environment}
+      - SUPABASE_JWT_ISSUER=${SUPABASE_JWT_ISSUER:?SUPABASE_JWT_ISSUER must be supplied by the deployment environment}
+      - SUPABASE_JWT_AUDIENCE=${SUPABASE_JWT_AUDIENCE:?SUPABASE_JWT_AUDIENCE must be supplied by the deployment environment}
+      - ADMIN_USER_IDS=${ADMIN_USER_IDS:?ADMIN_USER_IDS must be supplied by the deployment environment}
+      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - STATIC_DIR=/app/static
     volumes:
       - ./backend:/app

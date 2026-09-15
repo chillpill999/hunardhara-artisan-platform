@@ -4,7 +4,7 @@ FastAPI Router exposing the multi-module AI Commerce Assistant, RAG lookup,
 semantic search, feedback loop, and observability telemetry.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ from app.services.sarvam_service import sarvam_service
 from app.services.semantic_search_service import semantic_search_service
 from app.services.correction_feedback_service import correction_feedback_service
 from app.core.version_registry import version_registry
+from app.core.security import CurrentUser, require_admin, require_artisan
 
 router = APIRouter(prefix="/ai/assistant", tags=["Hunardhara AI Commerce Assistant"])
 
@@ -21,7 +22,6 @@ router = APIRouter(prefix="/ai/assistant", tags=["Hunardhara AI Commerce Assista
 class OrchestrateRequest(BaseModel):
     raw_input: str = Field(..., description="Artisan voice transcript or text description", example="यह बस्तर का पारंपरिक ढोकरा पीतल का घोड़ा है जो चार दिन में लॉस्ट वैक्स तकनीक से बना है।")
     image_base64: Optional[str] = Field(None, description="Optional raw or base64 craft photo")
-    artisan_id: Optional[str] = Field("artisan-default", description="Authenticated artisan identifier")
     region: Optional[str] = Field(None, description="Craft cluster district or state")
     language: str = Field("hi", description="Artisan language preference")
 
@@ -32,7 +32,6 @@ class VoiceUnderstandRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    artisan_id: str = Field(..., description="Artisan reporting the correction")
     craft_type: str = Field(..., description="Craft category")
     field_name: str = Field(..., description="Attribute field modified (e.g. 'material', 'production_time_days')")
     ai_prediction: Any = Field(..., description="Original value predicted by AI")
@@ -46,7 +45,10 @@ class SearchQueryRequest(BaseModel):
 
 
 @router.post("/orchestrate", response_model=HunardharaCatalogOutput)
-def orchestrate_artisan_listing(req: OrchestrateRequest):
+def orchestrate_artisan_listing(
+    req: OrchestrateRequest,
+    current_user: CurrentUser = Depends(require_artisan),
+):
     """
     Primary AI Gateway Endpoint:
     Transforms rough artisan spoken/text input + photo into a truthful, dignified, market-ready listing.
@@ -55,7 +57,7 @@ def orchestrate_artisan_listing(req: OrchestrateRequest):
         return ai_orchestrator.orchestrate_listing_pipeline(
             raw_text_or_transcript=req.raw_input,
             image_base64=req.image_base64,
-            artisan_id=req.artisan_id,
+            artisan_id=current_user.id,
             stated_region=req.region,
             language=req.language
         )
@@ -64,7 +66,10 @@ def orchestrate_artisan_listing(req: OrchestrateRequest):
 
 
 @router.post("/voice-understand")
-def understand_and_normalize_voice(req: VoiceUnderstandRequest):
+def understand_and_normalize_voice(
+    req: VoiceUnderstandRequest,
+    current_user: CurrentUser = Depends(require_artisan),
+):
     """
     Module A: Normalizes code-mixed Indian speech, traditional units, and colloquial numbers.
     """
@@ -77,13 +82,16 @@ def understand_and_normalize_voice(req: VoiceUnderstandRequest):
 
 
 @router.post("/feedback")
-def submit_artisan_correction(req: FeedbackRequest):
+def submit_artisan_correction(
+    req: FeedbackRequest,
+    current_user: CurrentUser = Depends(require_artisan),
+):
     """
     Module 13: Submits an artisan correction to the pending human-in-the-loop review queue.
     Prevents model hallucination and creates curated data for future fine-tuning.
     """
     record = correction_feedback_service.record_artisan_correction(
-        artisan_id=req.artisan_id,
+        artisan_id=current_user.id,
         craft_type=req.craft_type,
         field_name=req.field_name,
         ai_prediction=req.ai_prediction,
@@ -99,16 +107,19 @@ def submit_artisan_correction(req: FeedbackRequest):
 
 
 @router.get("/feedback/pending")
-def list_pending_feedback():
+def list_pending_feedback(current_user: CurrentUser = Depends(require_admin)):
     """Returns all pending corrections requiring expert curation."""
     items = correction_feedback_service.list_pending_corrections()
     return {"status": "success", "count": len(items), "pending_corrections": items}
 
 
 @router.post("/feedback/{correction_id}/approve")
-def approve_artisan_feedback(correction_id: str, reviewer: str = "admin-curator"):
+def approve_artisan_feedback(
+    correction_id: str,
+    current_user: CurrentUser = Depends(require_admin),
+):
     """Validates an artisan correction and marks it as approved training data."""
-    approved = correction_feedback_service.approve_correction(correction_id, reviewer_id=reviewer)
+    approved = correction_feedback_service.approve_correction(correction_id, reviewer_id=current_user.id)
     if not approved:
         raise HTTPException(status_code=404, detail="Correction ID not found")
     return {"status": "success", "approved_sample": approved}
@@ -130,7 +141,7 @@ def natural_language_search(req: SearchQueryRequest):
 
 
 @router.get("/observability")
-def get_ai_observability_dashboard():
+def get_ai_observability_dashboard(current_user: CurrentUser = Depends(require_admin)):
     """
     Module 38: Returns real-time AI metrics, latency, acceptance rate, and version tracking.
     """
@@ -138,8 +149,7 @@ def get_ai_observability_dashboard():
 
 
 class ReviewOutcomeRequest(BaseModel):
-    review_type: str = Field(..., description="'CORRECT' or 'WRONG'", example="CORRECT")
-    artisan_id: str = Field("artisan-default", description="Artisan identifier")
+    review_type: Literal["CORRECT", "WRONG"] = Field(..., description="Artisan review outcome", example="CORRECT")
     craft_type: str = Field(..., description="Craft category", example="Bastar Dhokra")
     input_data: Dict[str, Any] = Field(..., description="Input photo/voice context")
     ai_product_card: Dict[str, Any] = Field(..., description="Original AI product card")
@@ -148,7 +158,10 @@ class ReviewOutcomeRequest(BaseModel):
 
 
 @router.post("/review-outcome")
-def process_artisan_review_outcome(req: ReviewOutcomeRequest):
+def process_artisan_review_outcome(
+    req: ReviewOutcomeRequest,
+    current_user: CurrentUser = Depends(require_artisan),
+):
     """
     Dual-path Learning Loop Endpoint:
     Captures both 'Correct' (positive ground truth) and 'Wrong' (feedback data delta)
@@ -156,7 +169,7 @@ def process_artisan_review_outcome(req: ReviewOutcomeRequest):
     """
     entry = correction_feedback_service.record_artisan_review_outcome(
         review_type=req.review_type,
-        artisan_id=req.artisan_id,
+        artisan_id=current_user.id,
         craft_type=req.craft_type,
         input_data=req.input_data,
         ai_product_card=req.ai_product_card,
@@ -171,7 +184,7 @@ def process_artisan_review_outcome(req: ReviewOutcomeRequest):
 
 
 @router.get("/learning-loop/status")
-def get_learning_loop_status():
+def get_learning_loop_status(current_user: CurrentUser = Depends(require_admin)):
     """
     Returns the real-time stage status of the entire artisan learning loop:
     Input -> AI Processing -> Artisan Review (Correct / Wrong) -> Dataset -> Human Validation -> Fine-tuning.
@@ -183,7 +196,7 @@ def get_learning_loop_status():
 
 
 @router.post("/dataset/export-finetuning")
-def export_dataset_for_finetuning():
+def export_dataset_for_finetuning(current_user: CurrentUser = Depends(require_admin)):
     """
     Compiles validated dataset samples into QLoRA/Alpaca format ready for train_colab.py.
     """
@@ -192,4 +205,3 @@ def export_dataset_for_finetuning():
         "status": "success",
         "export_details": result
     }
-

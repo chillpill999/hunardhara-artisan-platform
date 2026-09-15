@@ -33,7 +33,6 @@ function LoginFormContent() {
     signInWithMagicLink,
     verifyOtp,
     signUp,
-    loginWithDemoAccount,
     user,
     role,
     needsOnboarding,
@@ -257,20 +256,6 @@ function LoginFormContent() {
       } else {
         setErrorMsg(errMsg || 'Google authentication failed. Please try again.');
       }
-    }
-  };
-
-  // Fast Demo Logins
-  const handleFastDemoLogin = async (targetRole: UserRole) => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    setIsSubmitting(true);
-    const { error } = await loginWithDemoAccount(targetRole);
-    if (error) {
-      setErrorMsg(error.message || 'Failed to authenticate with demo account.');
-      setIsSubmitting(false);
-    } else {
-      router.push(redirectTarget);
     }
   };
 
@@ -778,42 +763,6 @@ function LoginFormContent() {
           </form>
         )}
 
-        {/* FAST EVALUATOR & ADMIN DEMO LOGINS */}
-        <div className="pt-4 border-t border-[#e4e4e7] space-y-3">
-          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[#71717a]">
-            <span>Fast Logins (Click to Test)</span>
-            <span className="bg-amber-100 text-[#b45309] px-2 py-0.5 rounded-md text-[10px]">Instant Access</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-
-            <button
-              type="button"
-              onClick={() => handleFastDemoLogin('artisan')}
-              disabled={isSubmitting}
-              className="p-2.5 rounded-xl border border-[#e4e4e7] hover:border-[#F5A941] hover:bg-[#fafafa] text-left transition-all group"
-            >
-              <div className="flex items-center gap-1 text-[11px] font-bold text-[#1c1917] group-hover:text-[#b45309]">
-                <UserCheck className="w-3.5 h-3.5 text-[#F5A941]" />
-                <span>Verified Master Artisan</span>
-              </div>
-              <p className="text-[10px] text-[#71717a] mt-0.5 truncate">Varanasi Silk Cluster</p>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleFastDemoLogin('customer')}
-              disabled={isSubmitting}
-              className="p-2.5 rounded-xl border border-[#e4e4e7] hover:border-[#1c1917] hover:bg-[#fafafa] text-left transition-all group"
-            >
-              <div className="flex items-center gap-1 text-[11px] font-bold text-[#1c1917]">
-                <ShoppingBag className="w-3.5 h-3.5 text-[#1c1917]" />
-                <span>Institutional Patron</span>
-              </div>
-              <p className="text-[10px] text-[#71717a] mt-0.5 truncate">TRIFED Bulk Procurement</p>
-            </button>
-          </div>
-        </div>
       </div>
 
       <div className="text-center mt-6 text-xs text-[#71717a]">

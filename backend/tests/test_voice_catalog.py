@@ -103,3 +103,246 @@ class TestVoiceToCatalogEngine:
         assert res.status_code == 400
         assert "AUDIO_SILENT" in res.json()["detail"]
 
+    def test_voice_corrupt_wav_header_rejection(self):
+        """TC-VOICE-08: Corrupt WAV bytes raise INVALID_AUDIO_FORMAT_OR_CORRUPT."""
+        corrupt_wav_bytes = b"RIFF\x20\x00\x00\x00WAVEfmt \x10\x00\x00\x00CORRUPT_HEADER_TRUNCATED"
+        with pytest.raises(ValueError) as exc:
+            voice_service.process_audio_bytes(corrupt_wav_bytes, filename="corrupt_audio.wav")
+        assert "INVALID_AUDIO_FORMAT_OR_CORRUPT" in str(exc.value)
+
+    def test_voice_greeting_clarification_gating(self):
+        """TC-VOICE-09: Pure greetings or silence must require clarification and never invent a craft catalog."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        # Pure Hindi greeting
+        res_hi = svc.extract_craft_attributes("नमस्ते")
+        assert res_hi["requires_clarification"] is True
+        assert "आवाज़ में उत्पाद का विवरण नहीं मिला" in res_hi["message_hi"]
+
+        # Pure English greeting
+        res_en = svc.extract_craft_attributes("Hello good morning")
+        assert res_en["requires_clarification"] is True
+        assert res_en.get("attributes") is None
+
+        # Short acknowledgement without craft facts
+        res_short = svc.extract_craft_attributes("haan theek hai")
+        assert res_short["requires_clarification"] is True
+
+    def test_multi_dialect_distinct_extraction(self):
+        """TC-VOICE-10: Verifies 5 distinct regional language/dialect inputs produce distinct catalogs with ZERO repetitions."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        test_cases = [
+            {
+                "lang": "hi",
+                "input": "हाथ से बनी पीतल की घंटी है, 2 दिन लगे, 300 रुपये लागत",
+                "expected_craft": "Metal Craft",
+                "expected_name_keyword": "घंटी",
+                "expected_days": 2,
+                "expected_cost": 300
+            },
+            {
+                "lang": "en",
+                "input": "This is a hand-carved wooden jewelry box made of rosewood, 4 days of work, 600 cost",
+                "expected_craft": "Woodcraft",
+                "expected_name_keyword": "Box",
+                "expected_days": 4,
+                "expected_cost": 600
+            },
+            {
+                "lang": "bho",
+                "input": "ई हमनी के माटी के घैला हवे, 3 दिन लागल, 200 रुपिया लागत",
+                "expected_craft": "Pottery",
+                "expected_name_keyword": "घड़ा",
+                "expected_days": 3,
+                "expected_cost": 200
+            },
+            {
+                "lang": "mai",
+                "input": "ई मिथिला के हस्तचित्रित मधुबनी पेंटिंग अइछ, 5 दिन में बनल, 400 रुपिया लागत",
+                "expected_craft": "Madhubani",
+                "expected_name_keyword": "मधुबनी",
+                "expected_days": 5,
+                "expected_cost": 400
+            },
+            {
+                "lang": "hinglish",
+                "input": "Maine yeh leather mojari banayi hai, 3 din mein, 500 rupees cost",
+                "expected_craft": "Leather",
+                "expected_name_keyword": "मोजरी",
+                "expected_days": 3,
+                "expected_cost": 500
+            }
+        ]
+
+        extracted_titles = []
+        extracted_crafts = []
+
+        for tc in test_cases:
+            result = svc.extract_craft_attributes(tc["input"], force_fallback=True)
+            assert result.get("success") is True, f"Failed for {tc['lang']}"
+            assert result.get("requires_clarification") is not True, f"Should not require clarification for {tc['lang']}"
+
+            attrs = result["attributes"]
+            # 1. Assert craft type matches expected domain
+            assert tc["expected_craft"].lower() in attrs["craft_type"].lower()
+
+            # 2. Assert specific keyword is in title
+            assert (
+                tc["expected_name_keyword"].lower() in attrs["product_name_hi"].lower() or
+                tc["expected_name_keyword"].lower() in attrs["product_name_en"].lower()
+            )
+
+            # 3. Assert extraction of days and cost
+            assert attrs["production_days"] == tc["expected_days"]
+            assert attrs["material_cost"] == tc["expected_cost"]
+
+            # 4. Strict check: NEVER default to Varanasi Silk for non-saree crafts!
+            assert "saree" not in attrs["craft_type"].lower()
+            assert "saree" not in attrs["product_name_en"].lower()
+
+            # 5. Statutory wage floor calculation
+            expected_floor = tc["expected_cost"] + (tc["expected_days"] * 650.0)
+            assert attrs["wage_floor"] == int(round(expected_floor, -1))
+            assert attrs["recommended_price"] >= attrs["wage_floor"]
+
+            extracted_titles.append(attrs["product_name_en"])
+            extracted_crafts.append(attrs["craft_type"])
+
+        # 6. Verify zero repetitive/identical outputs across all 5 dialects
+        assert len(set(extracted_titles)) == 5, f"Expected 5 unique titles, got: {extracted_titles}"
+        assert len(set(extracted_crafts)) == 5, f"Expected 5 unique crafts, got: {extracted_crafts}"
+
+    def test_fallback_extracts_explicit_facts_only(self):
+        """TC-VOICE-11: Rule-based fallback extracts only explicit facts; never invents dimensions or color."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        # Input without dimensions or color
+        text = "यह हाथ से बनी पीतल की घंटी है, 2 दिन लगे, 300 रुपये लागत"
+        result = svc.extract_craft_attributes(text, force_fallback=True)
+        attrs = result["attributes"]
+
+        # Color and dimensions must be None (not hallucinated)
+        assert attrs["color"] is None
+        assert attrs["dimensions"] is None
+        assert "पीतल (Brass)" in attrs["materials"]
+        assert attrs["facts_detected"]["days"] is True
+        assert attrs["facts_detected"]["cost"] is True
+
+    def test_5_distinct_voice_inputs(self):
+        """TC-VOICE-12: Verifies 5 distinct artisan handicraft voice inputs produce 5 distinct structured outputs."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        inputs = [
+            {
+                "text": "यह हाथ से बनी पीतल की घंटी है, 2 दिन लगे, 300 रुपये लागत",
+                "name": "Handcrafted Brass Bell",
+                "craft": "Metal Craft",
+                "days": 2,
+                "cost": 300
+            },
+            {
+                "text": "लाल मिट्टी का फूलदान है, 1 दिन में बना, 150 रुपये लागत",
+                "name": "Handcrafted Earthen Clay Vase",
+                "craft": "Pottery",
+                "days": 1,
+                "cost": 150
+            },
+            {
+                "text": "गुलाब की लकड़ी का नक्काशीदार आभूषण बॉक्स, 4 दिन लगे, 600 रुपये लागत",
+                "name": "Handcrafted Wooden Jewelry Box",
+                "craft": "Woodcraft",
+                "days": 4,
+                "cost": 600
+            },
+            {
+                "text": "चाक पर बना मिट्टी का घड़ा है, 3 दिन लगे, 200 रुपये लागत",
+                "name": "Handcrafted Earthen Clay Pot",
+                "craft": "Pottery",
+                "days": 3,
+                "cost": 200
+            },
+            {
+                "text": "मिथिला की हस्तनिर्मित मधुबनी पेंटिंग है, 5 दिन लगे, 400 रुपये लागत",
+                "name": "Handcrafted Madhubani Painting",
+                "craft": "Madhubani",
+                "days": 5,
+                "cost": 400
+            }
+        ]
+
+        results = []
+        for item in inputs:
+            res = svc.extract_craft_attributes(item["text"], force_fallback=True)
+            assert res["success"] is True
+            attrs = res["attributes"]
+            assert attrs["production_days"] == item["days"]
+            assert attrs["material_cost"] == item["cost"]
+            assert item["craft"].lower() in attrs["craft_type"].lower()
+            assert "saree" not in attrs["craft_type"].lower()
+            results.append(attrs["product_name_en"])
+
+        # All 5 items must have distinct product names
+        assert len(set(results)) == 5
+
+    def test_voice_idempotence_and_anti_repetition(self):
+        """TC-VOICE-13: Same audio transcript produces identical output (idempotence); different audios produce distinct outputs."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        sample_a = "यह हाथ से बनी पीतल की घंटी है, 2 दिन लगे, 300 रुपये लागत"
+        res_a1 = svc.extract_craft_attributes(sample_a, force_fallback=True)["attributes"]
+        res_a2 = svc.extract_craft_attributes(sample_a, force_fallback=True)["attributes"]
+
+        # Idempotence: exactly equal
+        assert res_a1["product_name_en"] == res_a2["product_name_en"]
+        assert res_a1["production_days"] == res_a2["production_days"]
+        assert res_a1["material_cost"] == res_a2["material_cost"]
+        assert res_a1["wage_floor"] == res_a2["wage_floor"]
+
+        sample_b = "गुलाब की लकड़ी का आभूषण बॉक्स है, 4 दिन लगे, 600 रुपये लागत"
+        res_b = svc.extract_craft_attributes(sample_b, force_fallback=True)["attributes"]
+
+        # Distinctness: A != B
+        assert res_a1["product_name_en"] != res_b["product_name_en"]
+        assert res_a1["craft_type"] != res_b["craft_type"]
+        assert res_a1["material_cost"] != res_b["material_cost"]
+
+    def test_decoupled_economic_verification(self):
+        """TC-VOICE-14: If labor days or material cost are not spoken, wage floor & price are NOT calculated and verification is flagged."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        # Case 1: Only craft stated, no days or cost
+        res_none = svc.extract_craft_attributes("यह हाथ से बनी पीतल की घंटी है", force_fallback=True)
+        attrs_none = res_none["attributes"]
+        assert attrs_none["production_days"] is None
+        assert attrs_none["material_cost"] is None
+        assert attrs_none["wage_floor"] is None
+        assert attrs_none["recommended_price"] is None
+        assert "production_days" in res_none.get("verification_required", [])
+        assert "material_cost" in res_none.get("verification_required", [])
+
+        # Case 2: Only days stated, no cost
+        res_days = svc.extract_craft_attributes("यह हाथ से बनी पीतल की घंटी है, 2 दिन लगे", force_fallback=True)
+        attrs_days = res_days["attributes"]
+        assert attrs_days["production_days"] == 2
+        assert attrs_days["material_cost"] is None
+        assert attrs_days["wage_floor"] is None
+        assert attrs_days["recommended_price"] is None
+        assert "material_cost" in res_days.get("verification_required", [])
+
+        # Case 3: Only cost stated, no days
+        res_cost = svc.extract_craft_attributes("यह हाथ से बनी पीतल की घंटी है, 300 रुपये लागत", force_fallback=True)
+        attrs_cost = res_cost["attributes"]
+        assert attrs_cost["production_days"] is None
+        assert attrs_cost["material_cost"] == 300
+        assert attrs_cost["wage_floor"] is None
+        assert attrs_cost["recommended_price"] is None
+        assert "production_days" in res_cost.get("verification_required", [])
+
+

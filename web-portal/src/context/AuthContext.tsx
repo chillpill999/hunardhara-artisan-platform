@@ -4,12 +4,6 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
-import {
-  PRIMARY_ADMIN_EMAIL,
-  isAuthorisedAdminEmail,
-  setAdminAuthCookie,
-  clearAdminAuthCookie,
-} from '@/lib/adminAuth';
 
 export type UserRole = 'customer' | 'artisan' | 'admin';
 
@@ -47,19 +41,9 @@ interface AuthContextType {
     interest?: string;
   }) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
-  loginWithDemoAccount: (targetRole: UserRole, customEmail?: string) => Promise<{ error: Error | null }>;
-  switchToArtisanRole: () => Promise<{ error: Error | null }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Cryptographic SHA-256 verification of designated platform administrator
-// Ensures zero plaintext exposure in client-side bundles while preserving authoritative admin access
-const MASTER_ADMIN_SHA256 = '7ff3d1bed21cccf1c06b5f4fa10c08d2c4567a5c92291a60d68dfb8a48beed7c';
-
-async function verifyIsPlatformAdmin(email?: string | null): Promise<boolean> {
-  return isAuthorisedAdminEmail(email);
-}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -72,11 +56,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   const fetchProfile = useCallback(async (userId: string, authUser: User): Promise<{ role: UserRole | null; profile: UserProfile; needsOnboarding: boolean }> => {
-    const isMaster = isAuthorisedAdminEmail(authUser.email);
-
-    if (isMaster && authUser.email) {
-      setAdminAuthCookie(authUser.email);
-    }
+    // Browser state is presentation-only. Roles are read exclusively from
+    // signed Supabase app_metadata; the API verifies them again server-side.
+    const appMetadataRole = authUser.app_metadata?.role;
+    const resolvedRole: UserRole = ['customer', 'artisan', 'admin'].includes(appMetadataRole)
+      ? appMetadataRole as UserRole
+      : 'customer';
 
     try {
       const { data, error } = await supabase
@@ -86,14 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .single();
 
       if (!error && data) {
-        // STRICT SECURITY: A user can ONLY have 'admin' role if their email is on the authorized admin list
-        const rawRole = data.role || authUser.user_metadata?.role;
-        const resolvedRole: UserRole | null = isMaster
-          ? 'admin'
-          : (rawRole === 'admin' ? 'customer' : (['customer', 'artisan'].includes(rawRole) ? (rawRole as UserRole) : null));
-
-        // User needs onboarding ONLY IF they do not have any defined role yet (e.g. fresh Google OAuth signup)
-        const needsOnboarding = !isMaster && resolvedRole === null;
+        const needsOnboarding = data.onboarding_completed !== true;
 
         return {
           role: resolvedRole,
@@ -101,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           profile: {
             id: data.id,
             role: resolvedRole,
-            full_name: data.full_name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || (resolvedRole === 'admin' ? 'Lead Administrator (Aryan)' : 'Hunardhara Member'),
+            full_name: data.full_name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Hunardhara Member',
             avatar_url: data.avatar_url || authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
             phone: data.phone || authUser.user_metadata?.phone,
             state: data.state || authUser.user_metadata?.state,
@@ -115,21 +93,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Fallback
     }
 
-    // Fallback to user metadata - STRICT SECURITY: only authorized emails get admin role
-    const rawMetaRole = authUser.user_metadata?.role;
-    const metaRole: UserRole | null = isMaster
-      ? 'admin'
-      : (rawMetaRole === 'admin' ? 'customer' : (['customer', 'artisan'].includes(rawMetaRole) ? (rawMetaRole as UserRole) : null));
-
-    const needsOnboarding = !isMaster && metaRole === null;
+    const needsOnboarding = authUser.user_metadata?.onboarding_completed !== true;
 
     return {
-      role: metaRole,
+      role: resolvedRole,
       needsOnboarding,
       profile: {
         id: userId,
-        role: metaRole,
-        full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (metaRole === 'admin' ? 'Lead Administrator (Aryan)' : 'Hunardhara Member'),
+        role: resolvedRole,
+        full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Hunardhara Member',
         avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
         phone: authUser.user_metadata?.phone,
         state: authUser.user_metadata?.state,
@@ -146,28 +118,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: { session: currentSession }, error } = await supabase.auth.getSession();
 
       if (error || !currentSession?.user) {
-        if (typeof window !== 'undefined') {
-          const localAdmin = localStorage.getItem('hunardhara_local_admin_session');
-          if (localAdmin) {
-            try {
-              const parsed = JSON.parse(localAdmin);
-              if (parsed && isAuthorisedAdminEmail(parsed.email)) {
-                setUser(parsed);
-                setSession(null);
-                setRole('admin');
-                setProfile({
-                  id: parsed.id || 'admin-aryan-2007',
-                  role: 'admin',
-                  full_name: parsed.user_metadata?.full_name || 'Aryan (Lead Administrator)',
-                });
-                setNeedsOnboarding(false);
-                setAdminAuthCookie(parsed.email);
-                setIsLoading(false);
-                return;
-              }
-            } catch {}
-          }
-        }
         setUser(null);
         setSession(null);
         setRole(null);
@@ -187,14 +137,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfile(userProfile);
       setNeedsOnboarding(requiresOnboarding);
 
-      // Persist browser cookie for Cloudflare Edge Worker validation
-      if (typeof document !== 'undefined') {
-        const maxAge = 60 * 60 * 24 * 7;
-        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
-        if (userRole === 'admin') {
-          setAdminAuthCookie(currentSession.user.email || '');
-        }
-      }
     } catch {
       setUser(null);
       setSession(null);
@@ -220,12 +162,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setNeedsOnboarding(false);
         setIsLoading(false);
 
-        // Clear edge cookies on signout
-        if (typeof document !== 'undefined') {
-          document.cookie = 'hunardhara_auth_token=; path=/; max-age=0; SameSite=Lax';
-          clearAdminAuthCookie();
-        }
-
         // If on protected page, redirect out
         if (pathname?.startsWith('/artisan') || pathname?.startsWith('/admin')) {
           router.push(`/login?redirect=${encodeURIComponent(pathname || '/')}`);
@@ -242,14 +178,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setNeedsOnboarding(requiresOnboarding);
         setIsLoading(false);
 
-        // Keep edge cookies fresh on session refresh
-        if (typeof document !== 'undefined') {
-          const maxAge = 60 * 60 * 24 * 7;
-          document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
-          if (userRole === 'admin') {
-            setAdminAuthCookie(newSession.user.email || '');
-          }
-        }
       }
     });
 
@@ -277,13 +205,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(userRole);
       setProfile(userProfile);
 
-      if (typeof document !== 'undefined') {
-        const maxAge = 60 * 60 * 24 * 7;
-        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
-        if (userRole === 'admin') {
-          setAdminAuthCookie(data.user.email || '');
-        }
-      }
     }
 
     setIsLoading(false);
@@ -369,13 +290,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(userRole);
       setProfile(userProfile);
 
-      if (typeof document !== 'undefined') {
-        const maxAge = 60 * 60 * 24 * 7;
-        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
-        if (userRole === 'admin') {
-          setAdminAuthCookie(data.user.email || '');
-        }
-      }
     }
 
     setIsLoading(false);
@@ -390,15 +304,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     extraMeta?: Record<string, any>
   ) => {
     setIsLoading(true);
-    const isMaster = await verifyIsPlatformAdmin(email);
-    const effectiveRole: UserRole = isMaster ? 'admin' : (roleToAssign === 'artisan' ? 'artisan' : 'customer');
+    // New registrations begin as customers. Artisan and administrator roles
+    // are granted only by server-side Supabase administration workflows.
+    const effectiveRole: UserRole = 'customer';
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           full_name: fullName,
-          role: effectiveRole,
           onboarding_completed: true,
           ...(extraMeta || {}),
         },
@@ -453,13 +367,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('Profile upsert note:', upsertErr);
       }
 
-      if (typeof document !== 'undefined') {
-        const maxAge = 60 * 60 * 24 * 7;
-        document.cookie = `hunardhara_auth_token=valid; path=/; max-age=${maxAge}; SameSite=Lax`;
-        if (effectiveRole === 'admin') {
-          setAdminAuthCookie(data.user.email || '');
-        }
-      }
     }
 
     setIsLoading(false);
@@ -479,15 +386,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
 
     try {
-      const isMaster = isAuthorisedAdminEmail(user.email);
-      const assignedRole: UserRole = isMaster ? 'admin' : (details.role === 'artisan' ? 'artisan' : 'customer');
+      const appMetadataRole = user.app_metadata?.role;
+      const assignedRole: UserRole = ['customer', 'artisan', 'admin'].includes(appMetadataRole)
+        ? appMetadataRole as UserRole
+        : 'customer';
 
       // 1. Update user metadata in auth.users
       await supabase.auth.updateUser({
         data: {
           full_name: details.fullName,
           phone: details.phone,
-          role: assignedRole,
           state: details.state,
           craft_category: details.craft_category,
           preferred_language: details.preferred_language,
@@ -547,129 +455,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Continue cleanup
     }
-    clearAdminAuthCookie();
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('hunardhara_local_admin_session');
-    }
     setUser(null);
     setSession(null);
     setRole(null);
     setProfile(null);
     setIsLoading(false);
     router.push('/login');
-  };
-
-  const loginWithDemoAccount = async (targetRole: UserRole) => {
-    if (targetRole === 'admin') {
-      setIsLoading(true);
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: PRIMARY_ADMIN_EMAIL,
-          password: 'HunarDhara@2026!',
-        });
-        if (!error && data.user) {
-          setUser(data.user);
-          setSession(data.session);
-          const { role: userRole, profile: userProfile } = await fetchProfile(data.user.id, data.user);
-          setRole(userRole);
-          setProfile(userProfile);
-          setAdminAuthCookie(PRIMARY_ADMIN_EMAIL);
-          setIsLoading(false);
-          return { error: null };
-        }
-      } catch {
-        // Fallback to trusted local session
-      }
-
-      // Sovereign reliable session for Aryan (Lead Administrator)
-      const adminMockUser: any = {
-        id: 'admin-aryan-2007',
-        email: PRIMARY_ADMIN_EMAIL,
-        aud: 'authenticated',
-        role: 'authenticated',
-        user_metadata: {
-          full_name: 'Aryan (Lead Administrator)',
-          role: 'admin',
-          email: PRIMARY_ADMIN_EMAIL,
-        },
-        created_at: new Date().toISOString(),
-      };
-      setUser(adminMockUser);
-      setSession(null);
-      setRole('admin');
-      setProfile({
-        id: 'admin-aryan-2007',
-        role: 'admin',
-        full_name: 'Aryan (Lead Administrator)',
-      });
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('hunardhara_local_admin_session', JSON.stringify(adminMockUser));
-      }
-      setAdminAuthCookie(PRIMARY_ADMIN_EMAIL);
-      setIsLoading(false);
-      return { error: null };
-    }
-
-    const demoCredentials: Record<UserRole, { email: string; pass: string }> = {
-      artisan: { email: 'artisan@hunardhara.gov.in', pass: 'HunarDhara@2026!' },
-      admin: { email: PRIMARY_ADMIN_EMAIL, pass: 'HunarDhara@2026!' },
-      customer: { email: 'buyer@hunardhara.gov.in', pass: 'HunarDhara@2026!' },
-    };
-
-    const creds = demoCredentials[targetRole];
-    return signIn(creds.email, creds.pass);
-  };
-
-  const switchToArtisanRole = async () => {
-    if (!user) return { error: new Error('No active user session') };
-    setIsLoading(true);
-    try {
-      const isMaster = isAuthorisedAdminEmail(user.email);
-      const targetRole: UserRole = isMaster ? 'admin' : 'artisan';
-
-      // 1. Update user metadata
-      await supabase.auth.updateUser({
-        data: {
-          role: targetRole,
-          onboarding_completed: true,
-        },
-      });
-
-      // 2. Update public.profiles table
-      await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          role: targetRole,
-          full_name: profile?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || 'Master Artisan',
-          phone: profile?.phone || user.user_metadata?.phone || '9876543210',
-          state: profile?.state || user.user_metadata?.state || 'Uttar Pradesh',
-          craft_category: profile?.craft_category || user.user_metadata?.craft_category || 'Varanasi Silk Brocade',
-          preferred_language: profile?.preferred_language || user.user_metadata?.preferred_language || 'Hindi (हिंदी)',
-          onboarding_completed: true,
-          updated_at: new Date().toISOString(),
-        });
-
-      setRole(targetRole);
-      setNeedsOnboarding(false);
-      setProfile((prev) => ({
-        id: user.id,
-        role: targetRole,
-        full_name: prev?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || 'Master Artisan',
-        phone: prev?.phone || user.user_metadata?.phone || '9876543210',
-        state: prev?.state || user.user_metadata?.state || 'Uttar Pradesh',
-        craft_category: prev?.craft_category || user.user_metadata?.craft_category || 'Varanasi Silk Brocade',
-        preferred_language: prev?.preferred_language || user.user_metadata?.preferred_language || 'Hindi (हिंदी)',
-        avatar_url: prev?.avatar_url || user.user_metadata?.avatar_url,
-        onboarding_completed: true,
-      }));
-
-      setIsLoading(false);
-      return { error: null };
-    } catch (err: any) {
-      setIsLoading(false);
-      return { error: err };
-    }
   };
 
   return (
@@ -688,8 +479,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         completeOnboarding,
         signOut,
-        loginWithDemoAccount,
-        switchToArtisanRole,
       }}
     >
       {children}
