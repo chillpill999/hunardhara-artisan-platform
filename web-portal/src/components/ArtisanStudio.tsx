@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import {
+  speakToCatalog,
   transcribeAudio,
   extractCraftFromVoice,
   synthesizeSpeech,
@@ -648,26 +649,111 @@ export default function ArtisanStudio() {
       });
     }
 
-    let finalTranscript = '';
+    // Wipe previous transcript and extracted data before processing
+    rawTranscriptRef.current = '';
+    setRawTranscript('');
+    setExtractedData(null);
+    setVoiceError(null);
+    setClarificationNotice(null);
 
-    // Authoritative Server/Edge ASR (Sarvam Saarika + Cloudflare Fallback)
+    setIsAiProcessing(true);
+    setStep(3);
+    setAiProcessingStage('आवाज़ का विश्लेषण एवं शिल्प पहचान (Sarvam Saarika ASR)...');
+
     try {
-      const asrResult = await transcribeAudio(wavBlob, selectedLanguage);
-      if (asrResult.success && asrResult.transcript && asrResult.transcript.trim()) {
-        finalTranscript = asrResult.transcript.trim();
-        rawTranscriptRef.current = finalTranscript;
-        setRawTranscript(finalTranscript);
+      // ONE Canonical Speak-to-Catalog Pipeline: 16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review
+      const speakResult = await speakToCatalog(wavBlob, selectedLanguage);
+
+      if (!speakResult.success) {
+        setIsAiProcessing(false);
+        setStep(2);
+        setVoiceError(`⚠️ ${speakResult.error || 'आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें।'}`);
+        return;
       }
-    } catch (err) {
-      console.warn('Server/Edge ASR transcription note:', err);
-    }
 
-    if (!finalTranscript) {
-      setVoiceError('⚠️ आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें (Could not recognize speech. Please speak clearly again).');
-      return;
-    }
+      if (speakResult.requires_clarification) {
+        setIsAiProcessing(false);
+        setStep(2);
+        const spoken = (speakResult.transcript || '').trim();
+        setRawTranscript(spoken);
+        rawTranscriptRef.current = spoken;
+        setClarificationNotice({
+          messageHi: speakResult.message_hi || 'आवाज़ में उत्पाद का विवरण नहीं मिला। कृपया अपने शिल्प का नाम (जैसे घंटी, साड़ी, खिलौना, पॉट), सामग्री, और बनाने के दिन बताएं।',
+          messageEn: speakResult.message_en || 'No craft details detected. Please mention your product name, materials, and days to make.',
+          transcript: spoken
+        });
+        return;
+      }
 
-    await processVoiceDescription(finalTranscript);
+      const spokenText = (speakResult.transcript || '').trim();
+      if (!spokenText) {
+        setIsAiProcessing(false);
+        setStep(2);
+        setVoiceError('⚠️ आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें।');
+        return;
+      }
+
+      rawTranscriptRef.current = spokenText;
+      setRawTranscript(spokenText);
+
+      const craftData = speakResult.attributes;
+      if (!craftData) {
+        setIsAiProcessing(false);
+        setStep(2);
+        setVoiceError('⚠️ शिल्प विवरण प्राप्त नहीं हो सका। कृपया पुनः प्रयास करें।');
+        return;
+      }
+
+      setAiProcessingStage('सांविधिक मजदूरी (₹650/दिन) एवं न्यायसंगत मूल्य निर्धारण...');
+
+      const days = craftData.production_days ?? null;
+      const cost = craftData.material_cost ?? null;
+      const floor = craftData.wage_floor ?? (days !== null && cost !== null ? cost + days * 650 : null);
+      const price = craftData.recommended_price ?? (floor !== null ? Math.round((floor * 1.25) / 50) * 50 : null);
+      const voiceScript = craftData.voice_script_hi || (price !== null
+        ? `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`
+        : `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`);
+
+      const newExtracted: ExtractedAttributes = {
+        productName: craftData.product_name_en || 'Handcrafted Artisan Craft',
+        productNameHi: craftData.product_name_hi || 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
+        craftType: craftData.craft_type || 'Traditional Indian Craft',
+        materials: craftData.materials && craftData.materials.length > 0 ? craftData.materials : [],
+        color: craftData.color || '',
+        dimensions: craftData.dimensions || '',
+        productionDays: days,
+        materialCost: cost,
+        wageFloor: floor,
+        recommendedPrice: price,
+        descriptionHi: craftData.description_hi || spokenText,
+        descriptionEn: craftData.description_en || 'Authentic handcrafted heritage item.',
+        voiceScriptHi: voiceScript,
+        confidenceScore: craftData.confidence_score ?? 0.95,
+        factsDetected: craftData.facts_detected,
+        verificationRequired: craftData.verification_required || []
+      };
+
+      setExtractedData(newExtracted);
+
+      // Pre-cache confirmation TTS audio for playback in Step 5
+      if (speakResult.confirmation_audio_base64) {
+        setTtsAudioBase64(speakResult.confirmation_audio_base64);
+      } else {
+        synthesizeSpeech(voiceScript, selectedLanguage, 'shubh')
+          .then((ttsRes) => {
+            if (ttsRes.success && ttsRes.audio_base64) {
+              setTtsAudioBase64(ttsRes.audio_base64);
+            }
+          })
+          .catch(() => {});
+      }
+
+      setIsAiProcessing(false);
+    } catch (err: any) {
+      setIsAiProcessing(false);
+      setStep(2);
+      setVoiceError(`⚠️ आवाज़ प्रसंस्करण में त्रुटि: ${err?.message || 'अज्ञात त्रुटि'}`);
+    }
   };
 
   // Process Spoken Description with Sarvam 105B LLM & Bulbul TTS
@@ -675,6 +761,7 @@ export default function ArtisanStudio() {
     setRawTranscript(spokenText);
     setVoiceError(null);
     setClarificationNotice(null);
+    setExtractedData(null);
 
     const isDev = process.env.NODE_ENV === 'development' || (typeof window !== 'undefined' && window.location.search.includes('debug=true'));
     if (isDev) {

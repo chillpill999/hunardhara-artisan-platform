@@ -413,6 +413,17 @@ class SarvamService:
                             parsed["recommended_price"] = rec_price
                             parsed["confidence_score"] = 0.95
                             parsed["source"] = "sarvam_105b"
+
+                            if not parsed.get("craft_type") and not parsed.get("materials") and not (parsed.get("product_name_hi") or parsed.get("product_name_en")):
+                                return {
+                                    "success": True,
+                                    "requires_clarification": True,
+                                    "message_hi": parsed.get("description_hi") or "आवाज़ में उत्पाद या शिल्प का विवरण नहीं मिला। कृपया अपने शिल्प का नाम, सामग्री और बनाने के दिन बताएं।",
+                                    "message_en": parsed.get("description_en") or "No product craft details detected. Please describe your item name, material used, and days to make.",
+                                    "transcript": clean_t,
+                                    "confidence_score": 0.2
+                                }
+
                             return {"success": True, "attributes": parsed}
                 except Exception as e:
                     logger.warning(f"Sarvam LLM extraction failed: {e}, attempting OpenRouter fallback")
@@ -469,6 +480,17 @@ class SarvamService:
                             parsed["recommended_price"] = rec_price
                             parsed["confidence_score"] = 0.90
                             parsed["source"] = "openrouter_llm"
+
+                            if not parsed.get("craft_type") and not parsed.get("materials") and not (parsed.get("product_name_hi") or parsed.get("product_name_en")):
+                                return {
+                                    "success": True,
+                                    "requires_clarification": True,
+                                    "message_hi": parsed.get("description_hi") or "आवाज़ में उत्पाद या शिल्प का विवरण नहीं मिला। कृपया अपने शिल्प का नाम, सामग्री और बनाने के दिन बताएं।",
+                                    "message_en": parsed.get("description_en") or "No product craft details detected. Please describe your item name, material used, and days to make.",
+                                    "transcript": clean_t,
+                                    "confidence_score": 0.2
+                                }
+
                             return {"success": True, "attributes": parsed}
                 except Exception as e:
                     logger.warning(f"OpenRouter extraction note: {e}")
@@ -569,6 +591,17 @@ class SarvamService:
             craft = None
             name_hi = "हस्तनिर्मित पारंपरिक भारतीय शिल्प"
             name_en = "Authentic Indian Handcrafted Heritage Item"
+
+        # If zero craft attributes, materials, or economics were mentioned, prompt for clarification
+        if craft is None and not mat and not days_detected and not cost_detected:
+            return {
+                "success": True,
+                "requires_clarification": True,
+                "message_hi": "आवाज़ में शिल्प या उत्पाद का विवरण स्पष्ट नहीं है। कृपया अपने उत्पाद का नाम (जैसे घंटी, साड़ी, खिलौना, पॉट), सामग्री, और बनाने के दिन बताएं।",
+                "message_en": "No specific craft or product details were detected in the description. Please mention the craft name, material used, and days required.",
+                "transcript": clean_t,
+                "confidence_score": 0.2
+            }
 
         # Separate pricing engine: Calculate ONLY if genuine numbers are provided
         if days_detected and cost_detected and days is not None and mat_cost is not None:

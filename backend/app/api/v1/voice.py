@@ -2,8 +2,11 @@ import logging
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
+from app.core.config import settings
 from app.services.sarvam_service import sarvam_service
+from app.services.offline_mock_engine import offline_voice_engine
 
 logger = logging.getLogger("artisan_platform.api.voice")
 router = APIRouter(prefix="/voice", tags=["Indic Voice & TTS (हुनर साथी)"])
@@ -154,45 +157,124 @@ async def speak_to_catalog(
     language_code: str = Form("hi-IN", description="Language code")
 ):
     """
-    Complete Speak-to-Catalog Pipeline:
-    1. Transcribes audio via Sarvam Saarika ASR
-    2. Extracts structured attributes & fair pricing via Sarvam 105B LLM
-    3. Synthesizes confirmation audio via Sarvam Bulbul TTS
+    Canonical Speak-to-Catalog Pipeline:
+    16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review.
+    Zero canned defaults; proper HTTP errors on upstream failure; clarification gating for empty/greeting speech.
     """
     audio_bytes = await audio.read()
-    if not audio_bytes or len(audio_bytes) < 10:
-        return {"success": False, "error": "Audio file empty"}
+    filename = audio.filename or "recording.wav"
 
-    # 1. Transcribe
+    if not audio_bytes or len(audio_bytes) < 10:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "AUDIO_EMPTY_OR_CORRUPT"}
+        )
+
+    # 1. Validate audio integrity & acoustic levels
+    err, warning = offline_voice_engine.validate_audio(audio_bytes, filename)
+    if err:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": err, "warning": warning}
+        )
+
+    # 2. Offline mock mode check (test/demo only)
+    if settings.OFFLINE_MODE:
+        mock_res = offline_voice_engine.process_audio(audio_bytes, filename=filename)
+        return {
+            "success": True,
+            "requires_clarification": False,
+            "transcript": mock_res.transcript_original,
+            "attributes": mock_res.attributes.model_dump(),
+            "confirmation_audio_base64": None,
+            "source": "offline_mock_engine"
+        }
+
+    # 3. Production credentials check: never silently drop into mock
+    if not settings.SARVAM_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "CONFIGURATION_ERROR: SARVAM_API_KEY is missing. Production mode requires valid Sarvam credentials."
+            }
+        )
+
+    # 4. Authoritative ASR via Sarvam Saarika
+    lang_code = "hi-IN" if language_code.startswith("hi") else language_code
     asr_res = sarvam_service.transcribe_speech(
         audio_bytes=audio_bytes,
-        filename=audio.filename or "recording.wav",
-        language_code=language_code
+        filename=filename,
+        language_code=lang_code
     )
-    transcript = asr_res.get("transcript", "")
-    if not transcript:
-        return {"success": False, "error": "Speech could not be recognized", "details": asr_res}
 
-    # 2. Extract
+    if not asr_res.get("success"):
+        err_detail = asr_res.get("error", "ASR transcription failed")
+        logger.error(f"Sarvam ASR provider failure: {err_detail}")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "success": False,
+                "error": f"ASR_TRANSCRIPTION_FAILED: {err_detail}",
+                "details": asr_res
+            }
+        )
+
+    transcript = (asr_res.get("transcript") or "").strip()
+    if not transcript:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "AUDIO_SILENT_OR_INCOMPREHENSIBLE"}
+        )
+
+    # 5. Extract structured craft attributes
     extract_res = sarvam_service.extract_craft_attributes(
         transcript=transcript,
-        language_code=language_code
+        language_code=lang_code
     )
-    attributes = extract_res.get("attributes", {})
 
-    # 3. Synthesize voice confirmation
-    voice_script = attributes.get("voice_script_hi", f"आपका उत्पाद {attributes.get('product_name_hi', '')} तैयार है।")
-    tts_res = sarvam_service.synthesize_speech(
-        text=voice_script,
-        language_code=language_code,
-        speaker="shubh"
+    # Clarification Gating: greetings-only or missing craft details
+    extracted_attrs = extract_res.get("attributes")
+    is_empty_craft = (
+        extracted_attrs and
+        not extracted_attrs.get("craft_type") and
+        not extracted_attrs.get("materials") and
+        not (extracted_attrs.get("product_name_hi") or extracted_attrs.get("product_name_en"))
     )
+
+    if extract_res.get("requires_clarification") or is_empty_craft:
+        return {
+            "success": True,
+            "requires_clarification": True,
+            "transcript": transcript,
+            "message_hi": extract_res.get("message_hi") or (extracted_attrs or {}).get("description_hi") or "आवाज़ में उत्पाद का विवरण नहीं मिला। कृपया अपने शिल्प का नाम, सामग्री और बनाने के दिन बताएं।",
+            "message_en": extract_res.get("message_en") or (extracted_attrs or {}).get("description_en") or "No product craft details detected. Please describe your item name, material used, and days to make.",
+            "attributes": None,
+            "source": "sarvam_ai_suite"
+        }
+
+    attributes = extracted_attrs or {}
+
+    # 6. Synthesize voice confirmation (best-effort, non-blocking)
+    confirmation_audio = None
+    try:
+        voice_script = attributes.get("voice_script_hi", f"आपका उत्पाद {attributes.get('product_name_hi', '')} तैयार है।")
+        tts_res = sarvam_service.synthesize_speech(
+            text=voice_script,
+            language_code=lang_code,
+            speaker="shubh"
+        )
+        if tts_res.get("success"):
+            confirmation_audio = tts_res.get("audio_base64")
+    except Exception as tts_err:
+        logger.warning(f"Voice confirmation TTS synthesis skipped: {tts_err}")
 
     return {
         "success": True,
+        "requires_clarification": False,
         "transcript": transcript,
         "attributes": attributes,
-        "confirmation_audio_base64": tts_res.get("audio_base64"),
+        "confirmation_audio_base64": confirmation_audio,
         "source": "sarvam_ai_suite"
     }
 

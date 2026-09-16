@@ -1051,79 +1051,92 @@ export async function chatWithHunarSaathi(
   };
 }
 
+export interface SpeakCatalogResponse {
+  success: boolean;
+  transcript?: string;
+  attributes?: ExtractedVoiceCraft | null;
+  requires_clarification?: boolean;
+  message_hi?: string;
+  message_en?: string;
+  confirmation_audio_base64?: string | null;
+  source?: string;
+  error?: string;
+}
+
 /**
- * Transcribe recorded voice audio to Indic/English text via Dual-Engine Edge ASR (Sarvam + Whisper).
+ * ONE Canonical End-to-End Speak-to-Catalog Pipeline:
+ * 16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review.
+ * Connects directly to backend /voice/speak-catalog without production fallback chains.
+ */
+export async function speakToCatalog(
+  audioBlob: Blob,
+  languageCode: string = "hi-IN"
+): Promise<SpeakCatalogResponse> {
+  const isWebm = audioBlob.type?.includes("webm");
+  const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
+
+  const formData = new FormData();
+  formData.append("audio", audioBlob, fileName);
+  formData.append("language_code", languageCode);
+
+  try {
+    const res = await fetch(`${API_BASE}/voice/speak-catalog`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || data.detail || `Voice service error (HTTP ${res.status})`,
+      };
+    }
+
+    return data;
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || "Network error connecting to voice service",
+    };
+  }
+}
+
+/**
+ * Canonical audio transcription via backend Sarvam Saarika ASR.
  */
 export async function transcribeAudio(
   audioBlob: Blob,
   languageCode: string = "hi-IN"
-): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string }> {
+): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string; error?: string }> {
   const isWebm = audioBlob.type?.includes("webm");
   const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
 
-  // 1. First priority: Dual-Engine Edge ASR (/api/edge/sarvam-asr -> Sarvam + Cloudflare Whisper)
+  const formData = new FormData();
+  formData.append("audio", audioBlob, fileName);
+  formData.append("language_code", languageCode);
+
   try {
-    const authorization = await getSupabaseAuthorizationHeader();
-    const formData = new FormData();
-    formData.append("audio", audioBlob, fileName);
-    formData.append("language_code", languageCode);
-
-    const edgeRes = await fetch("/api/edge/sarvam-asr", {
-      method: "POST",
-      headers: authorization,
-      body: formData
-    });
-    if (edgeRes.ok) {
-      const data = await edgeRes.json();
-      if (data.success && data.transcript && data.transcript.trim()) {
-        return data;
-      }
-    }
-  } catch (edgeErr) {
-    console.warn("Dual-engine edge ASR note:", edgeErr);
-  }
-
-  // 2. Second priority: Render Backend Sarvam Saarika
-  try {
-    const formData = new FormData();
-    formData.append("audio", audioBlob, fileName);
-    formData.append("language_code", languageCode);
-
     const res = await fetch(`${API_BASE}/voice/transcribe`, {
       method: "POST",
-      body: formData
+      body: formData,
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.transcript && data.transcript.trim()) {
-        return data;
-      }
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        transcript: "",
+        error: data.detail || data.error || `HTTP ${res.status}`,
+      };
     }
-  } catch (e) {
-    console.warn("Backend audio transcription note:", e);
+    return data;
+  } catch (err: any) {
+    return {
+      success: false,
+      transcript: "",
+      error: err?.message || "Network error",
+    };
   }
-
-  // 3. Third priority: Edge Whisper direct arrayBuffer
-  try {
-    const authorization = await getSupabaseAuthorizationHeader();
-    const whisperRes = await fetch("/api/edge/transcribe", {
-      method: "POST",
-      headers: authorization,
-      body: audioBlob
-    });
-    if (whisperRes.ok) {
-      const data = await whisperRes.json();
-      if (data.success && data.transcript && data.transcript.trim()) {
-        return {
-          success: true,
-          transcript: data.transcript.trim(),
-          source: "cloudflare_whisper"
-        };
-      }
-    }
-  } catch {}
-
-  return { success: false, transcript: "" };
 }
 
 export interface ExtractedVoiceCraft {
@@ -1156,33 +1169,46 @@ export interface ExtractedVoiceCraft {
 }
 
 /**
- * Extract structured craft attributes and statutory fair pricing from voice transcript.
- * Powered by Sovereign Sarvam 105B Indic LLM, OpenRouter, and Strict Explicit-Facts Fallback.
+ * Canonical craft extraction from voice transcript via backend /voice/extract-catalog.
+ * Does NOT run frontend regex fallbacks or fabricate canned products.
  */
 export async function extractCraftFromVoice(
   transcript: string,
   languageCode: string = "hi-IN"
 ): Promise<ExtractedVoiceCraft> {
   const cleanTranscript = (transcript || "").trim();
-  const isDev = typeof window !== 'undefined' && (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1'
-  );
+  if (!cleanTranscript) {
+    return {
+      product_name_hi: "",
+      product_name_en: "",
+      craft_type: "",
+      materials: [],
+      color: null,
+      dimensions: null,
+      production_days: null,
+      material_cost: null,
+      recommended_price: null,
+      wage_floor: null,
+      description_hi: "",
+      description_en: "",
+      requires_clarification: true,
+      message_hi: "कृपया अपने शिल्प का विवरण बोलें या लिखें।",
+      message_en: "Please speak or write your craft description.",
+    };
+  }
 
-  // 1. First priority: Edge AI Extractor (/api/edge/extract-craft -> Sarvam 105B Indic LLM)
   try {
-    const authorization = await getSupabaseAuthorizationHeader();
-    const edgeRes = await fetch('/api/edge/extract-craft', {
+    const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
-        ...authorization,
       },
-      body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode })
+      body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode }),
     });
-    if (edgeRes.ok) {
-      const data = await edgeRes.json();
+
+    if (res.ok) {
+      const data = await res.json();
       if (data.requires_clarification) {
         return {
           product_name_hi: "",
@@ -1199,182 +1225,33 @@ export async function extractCraftFromVoice(
           description_en: "",
           requires_clarification: true,
           message_hi: data.message_hi,
-          message_en: data.message_en
+          message_en: data.message_en,
         };
       }
-      if (data.success && data.attributes) {
-        if (isDev && data._debug_telemetry) {
-          console.groupCollapsed("[VOICE PIPELINE: 6. FINAL CATALOG OUTPUT (EDGE INDIC EXTRACTOR)]");
-          console.log("Telemetry:", data._debug_telemetry);
-          console.groupEnd();
-        }
-        return data.attributes;
-      }
-    }
-  } catch (err) {
-    if (isDev) console.warn("Edge craft extractor notice:", err);
-  }
-
-  // 2. Second priority: Backend Sarvam / Voice extraction
-  try {
-    const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache"
-      },
-      body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode })
-    });
-    if (res.ok) {
-      const data = await res.json();
       if (data.success && data.attributes) {
         return data.attributes;
       }
     }
   } catch (e) {
-    if (isDev) console.warn("Backend voice catalog call notice:", e);
-  }
-
-  // 3. Strict Explicit-Facts-Only Fallback (Zero Hallucination, Zero Canned Templates)
-  const t = cleanTranscript.toLowerCase();
-
-  // Extract production days explicitly stated
-  let detectedDays: number | null = null;
-  let daysDetected = false;
-  const daysMatch = t.match(/(\d+)\s*(din|दिन|day|days|hafte|हफ्ते|हफ्ता|week|weeks)/);
-  if (daysMatch) {
-    const num = parseInt(daysMatch[1], 10);
-    if (num > 0 && num <= 90) {
-      detectedDays = daysMatch[2].includes("haft") || daysMatch[2].includes("हफ्") || daysMatch[2].includes("week")
-        ? num * 7
-        : num;
-      daysDetected = true;
-    }
-  } else if (t.includes("हफ्ता") || t.includes("one week")) {
-    detectedDays = 7;
-    daysDetected = true;
-  } else if (t.includes("दो दिन") || t.includes("2 days")) {
-    detectedDays = 2;
-    daysDetected = true;
-  } else if (t.includes("तीन दिन") || t.includes("3 days")) {
-    detectedDays = 3;
-    daysDetected = true;
-  }
-
-  // Extract material cost explicitly stated
-  let detectedCost: number | null = null;
-  let costDetected = false;
-  const costMatch = t.match(/(₹|rs\.?|रुपये?|रू\.|cost|price|लागत)\s*(\d+)/) || t.match(/(\d+)\s*(रुपये?|रू\.|rs\.?|ki lagat|लागत)/);
-  if (costMatch) {
-    const cost = parseInt(costMatch[1] && /^\d+$/.test(costMatch[1]) ? costMatch[1] : costMatch[2], 10);
-    if (cost >= 50 && cost <= 500000) {
-      detectedCost = cost;
-      costDetected = true;
-    }
-  } else if (t.includes("दो सौ") || t.includes("200")) {
-    detectedCost = 200;
-    costDetected = true;
-  } else if (t.includes("तीन सौ") || t.includes("300")) {
-    detectedCost = 300;
-    costDetected = true;
-  } else if (t.includes("पांच सौ") || t.includes("500")) {
-    detectedCost = 500;
-    costDetected = true;
-  }
-
-  // Explicit materials only
-  const materials: string[] = [];
-  if (t.includes("पीतल") || t.includes("brass")) materials.push("पीतल (Brass)");
-  if (t.includes("बेल मेटल") || t.includes("bell metal")) materials.push("बेल मेटल (Bell Metal)");
-  if (t.includes("मिट्टी") || t.includes("clay") || t.includes("terracotta")) materials.push("प्राकृतिक मिट्टी (Clay)");
-  if (t.includes("शीशम") || t.includes("सागवान") || t.includes("लकड़ी") || t.includes("wood")) materials.push("काष्ठ (Natural Wood)");
-  if (t.includes("चमड़ा") || t.includes("leather")) materials.push("चर्म (Leather)");
-  if (t.includes("बांस") || t.includes("bamboo")) materials.push("बांस (Bamboo)");
-  if (t.includes("सिल्क") || t.includes("silk") || t.includes("रेशम")) materials.push("शुद्ध सिल्क (Pure Silk)");
-  if (t.includes("कॉटन") || t.includes("सूती") || t.includes("cotton")) materials.push("सूती धागा (Cotton)");
-  if (t.includes("प्राकृतिक रंग") || t.includes("natural color")) materials.push("प्राकृतिक रंग (Natural Pigments)");
-
-  // Explicit colors only
-  let color: string | null = null;
-  if (t.includes("लाल") || t.includes("red")) color = "लाल (Red)";
-  else if (t.includes("नीला") || t.includes("blue")) color = "नीला (Blue)";
-  else if (t.includes("हरा") || t.includes("green")) color = "हरा (Green)";
-  else if (t.includes("पीला") || t.includes("yellow")) color = "पीला (Yellow)";
-  else if (t.includes("काला") || t.includes("black")) color = "काला (Black)";
-  else if (t.includes("सफेद") || t.includes("white")) color = "सफेद (White)";
-  else if (t.includes("सुनहरा") || t.includes("golden") || t.includes("gold")) color = "सुनहरा (Golden)";
-
-  // Specific craft identification only if explicit keywords present
-  let craft = "पारंपरिक हस्तशिल्प (Handicraft)";
-  let nameHi = "हस्तनिर्मित शिल्प";
-  let nameEn = "Handcrafted Artisan Item";
-
-  if (t.includes("घंटी") || t.includes("bell")) {
-    craft = "धातु शिल्प (Metal Craft)";
-    nameHi = "हाथ से बनी पीतल की घंटी";
-    nameEn = "Handcrafted Brass Bell";
-  } else if (t.includes("घड़ा") || t.includes("घइला") || t.includes("घैला") || t.includes("पॉट") || t.includes("pottery") || t.includes("कुल्हड़")) {
-    craft = "मृत्तिका शिल्प (Pottery)";
-    nameHi = "चाक पर बना हस्तनिर्मित घड़ा / पॉट";
-    nameEn = "Handcrafted Clay Pot";
-  } else if (t.includes("खिलौना") || t.includes("toy")) {
-    craft = "काष्ठ खिलौना शिल्प (Wooden Toy Craft)";
-    nameHi = "हस्तनिर्मित लकड़ी का खिलौना";
-    nameEn = "Handcrafted Wooden Toy";
-  } else if (t.includes("पेंटिंग") || t.includes("चित्र") || t.includes("मधुबनी") || t.includes("painting")) {
-    craft = t.includes("मधुबनी") ? "मधुबनी लोक चित्रकला" : "पारंपरिक हस्तचित्रकला";
-    nameHi = t.includes("मधुबनी") ? "हस्तचित्रित मधुबनी पेंटिंग" : "हस्तचित्रित पारंपरिक पेंटिंग";
-    nameEn = t.includes("मधुबनी") ? "Handpainted Madhubani Folk Art" : "Handpainted Traditional Painting";
-  } else if (t.includes("मोजरी") || t.includes("जूती") || t.includes("चप्पल") || t.includes("leather")) {
-    craft = "चर्म शिल्प (Leather Craft)";
-    nameHi = "हस्तनिर्मित लेदर मोजरी";
-    nameEn = "Handcrafted Leather Mojari";
-  } else if (t.includes("साड़ी") || t.includes("saree")) {
-    craft = t.includes("सिल्क") || t.includes("बनारस") ? "बनारसी सिल्क हथकरघा" : "हथकरघा साड़ी";
-    nameHi = t.includes("सिल्क") ? "पारंपरिक शुद्ध सिल्क साड़ी" : "हस्तनिर्मित हथकरघा साड़ी";
-    nameEn = t.includes("सिल्क") ? "Traditional Pure Silk Saree" : "Handloom Woven Saree";
-  }
-
-  // Decoupled Statutory Wage Floor: only when both days and cost are known
-  const verificationRequired: string[] = [];
-  let wageFloor: number | null = null;
-  let recommendedPrice: number | null = null;
-
-  if (detectedDays !== null && detectedCost !== null) {
-    wageFloor = detectedCost + (detectedDays * 650);
-    recommendedPrice = Math.round((wageFloor * 1.25) / 50) * 50;
-  } else {
-    if (detectedDays === null) verificationRequired.push("production_days");
-    if (detectedCost === null) verificationRequired.push("material_cost");
-  }
-
-  if (materials.length === 0) {
-    verificationRequired.push("materials");
+    console.warn("Backend voice extraction error:", e);
   }
 
   return {
-    product_name_hi: nameHi,
-    product_name_en: nameEn,
-    craft_type: craft,
-    materials: materials,
-    color: color,
-    dimensions: null, // Never invent dimensions in fallback!
-    production_days: detectedDays,
-    material_cost: detectedCost,
-    wage_floor: wageFloor,
-    recommended_price: recommendedPrice,
-    description_hi: `कारीगर द्वारा स्वयं वर्णित विवरण: "${cleanTranscript}"`,
-    description_en: `Authentic artisan product described as: "${cleanTranscript}"`,
-    voice_script_hi: recommendedPrice ? `बधाई हो! आपका उत्पाद '${nameHi}' तैयार है। आपकी मेहनत और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${recommendedPrice.toLocaleString('en-IN')} तय किया गया है।` : `बधाई हो! आपका उत्पाद '${nameHi}' पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`,
-    source: "indic_explicit_facts_engine",
-    confidence_score: (daysDetected && materials.length > 0) ? 0.80 : 0.65,
-    verification_required: verificationRequired,
-    facts_detected: {
-      days: daysDetected,
-      cost: costDetected,
-      materials: materials.length > 0,
-      color: Boolean(color),
-    }
+    product_name_hi: "",
+    product_name_en: "",
+    craft_type: "",
+    materials: [],
+    color: null,
+    dimensions: null,
+    production_days: null,
+    material_cost: null,
+    recommended_price: null,
+    wage_floor: null,
+    description_hi: "",
+    description_en: "",
+    requires_clarification: true,
+    message_hi: "शिल्प विवरण का विश्लेषण नहीं हो सका। कृपया पुनः प्रयास करें।",
+    message_en: "Could not analyze craft details. Please try again.",
   };
 }
 

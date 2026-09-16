@@ -453,4 +453,153 @@ class TestVoiceToCatalogEngine:
         assert "CONFIGURATION_ERROR" in str(exc.value)
         assert "SARVAM_API_KEY is missing" in str(exc.value)
 
+    def test_speak_catalog_endpoint_silence_returns_400(self, client, sample_silence_audio_path):
+        """TC-VOICE-20: /voice/speak-catalog returns HTTP 400 on pure silence."""
+        with open(sample_silence_audio_path, "rb") as f:
+            res = client.post(
+                "/api/v1/voice/speak-catalog",
+                files={"audio": ("silence.wav", f, "audio/wav")},
+                data={"language_code": "hi-IN"}
+            )
+        assert res.status_code == 400
+        data = res.json()
+        assert data["success"] is False
+        assert "AUDIO_SILENT" in data.get("error", "")
+
+    def test_speak_catalog_endpoint_corrupt_audio_returns_400(self, client):
+        """TC-VOICE-21: /voice/speak-catalog returns HTTP 400 on truncated/corrupt audio."""
+        corrupt_wav = b"RIFF\x20\x00\x00\x00WAVEfmt \x10\x00\x00\x00CORRUPT_BYTES_DATA"
+        res = client.post(
+            "/api/v1/voice/speak-catalog",
+            files={"audio": ("corrupt.wav", corrupt_wav, "audio/wav")},
+            data={"language_code": "hi-IN"}
+        )
+        assert res.status_code == 400
+        data = res.json()
+        assert data["success"] is False
+        assert "INVALID_AUDIO_FORMAT_OR_CORRUPT" in data.get("error", "")
+
+    def test_speak_catalog_endpoint_asr_failure_returns_502(self, client, monkeypatch, sample_dhokra_audio_path):
+        """TC-VOICE-22: /voice/speak-catalog returns HTTP 502 on upstream ASR failure with zero mock fallback."""
+        from app.services.sarvam_service import sarvam_service
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(
+            sarvam_service,
+            "transcribe_speech",
+            lambda *args, **kwargs: {"success": False, "transcript": "", "error": "Upstream Sarvam 502 Bad Gateway"}
+        )
+
+        with open(sample_dhokra_audio_path, "rb") as f:
+            res = client.post(
+                "/api/v1/voice/speak-catalog",
+                files={"audio": ("artisan.wav", f, "audio/wav")},
+                data={"language_code": "hi-IN"}
+            )
+
+        assert res.status_code == 502
+        data = res.json()
+        assert data["success"] is False
+        assert "ASR_TRANSCRIPTION_FAILED" in data.get("error", "")
+        # Must never return canned product data
+        assert "attributes" not in data or data["attributes"] is None
+
+    def test_speak_catalog_endpoint_missing_credentials_returns_500(self, client, monkeypatch, sample_dhokra_audio_path):
+        """TC-VOICE-23: /voice/speak-catalog returns HTTP 500 when SARVAM_API_KEY is missing in production."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", None)
+
+        with open(sample_dhokra_audio_path, "rb") as f:
+            res = client.post(
+                "/api/v1/voice/speak-catalog",
+                files={"audio": ("artisan.wav", f, "audio/wav")},
+                data={"language_code": "hi-IN"}
+            )
+
+        assert res.status_code == 500
+        data = res.json()
+        assert data["success"] is False
+        assert "CONFIGURATION_ERROR" in data.get("error", "")
+        assert "SARVAM_API_KEY is missing" in data.get("error", "")
+
+    def test_speak_catalog_endpoint_clarification_gating(self, client, monkeypatch, sample_dhokra_audio_path):
+        """TC-VOICE-24: Greeting-only speech returns requires_clarification=True and null attributes."""
+        from app.services.sarvam_service import sarvam_service
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(
+            sarvam_service,
+            "transcribe_speech",
+            lambda *args, **kwargs: {"success": True, "transcript": "नमस्ते, क्या आप मेरी मदद कर सकते हैं", "language_code": "hi-IN"}
+        )
+
+        with open(sample_dhokra_audio_path, "rb") as f:
+            res = client.post(
+                "/api/v1/voice/speak-catalog",
+                files={"audio": ("artisan.wav", f, "audio/wav")},
+                data={"language_code": "hi-IN"}
+            )
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["success"] is True
+        assert data["requires_clarification"] is True
+        assert data["attributes"] is None
+        assert "message_hi" in data
+
+    def test_speak_catalog_endpoint_success_offline_mode(self, client, sample_dhokra_audio_path):
+        """TC-VOICE-25: /voice/speak-catalog in explicit OFFLINE_MODE returns valid structured response."""
+        from app.core.config import settings
+        original_offline = settings.OFFLINE_MODE
+        try:
+            settings.OFFLINE_MODE = True
+            with open(sample_dhokra_audio_path, "rb") as f:
+                res = client.post(
+                    "/api/v1/voice/speak-catalog",
+                    files={"audio": ("dhokra.wav", f, "audio/wav")},
+                    data={"language_code": "hi-IN"}
+                )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["attributes"]["craft_type"] == "Bastar Dhokra"
+            assert "transcript" in data
+        finally:
+            settings.OFFLINE_MODE = original_offline
+
+    def test_speak_catalog_endpoint_two_recordings_no_leakage(self, client, sample_dhokra_audio_path, sample_khurja_opus_path):
+        """TC-VOICE-26: Sequential calls to /voice/speak-catalog exhibit zero state leakage across requests."""
+        from app.core.config import settings
+        original_offline = settings.OFFLINE_MODE
+        try:
+            settings.OFFLINE_MODE = True
+            with open(sample_dhokra_audio_path, "rb") as f1:
+                res1 = client.post(
+                    "/api/v1/voice/speak-catalog",
+                    files={"audio": ("dhokra.wav", f1, "audio/wav")},
+                    data={"language_code": "hi-IN"}
+                )
+            assert res1.status_code == 200
+            data1 = res1.json()
+            assert data1["attributes"]["craft_type"] == "Bastar Dhokra"
+
+            with open(sample_khurja_opus_path, "rb") as f2:
+                res2 = client.post(
+                    "/api/v1/voice/speak-catalog",
+                    files={"audio": ("khurja.opus", f2, "audio/ogg")},
+                    data={"language_code": "hi-IN"}
+                )
+            assert res2.status_code == 200
+            data2 = res2.json()
+            assert data2["attributes"]["craft_type"] == "Khurja Pottery"
+            assert "Dhokra" not in data2["attributes"]["craft_type"]
+            assert "Brass" not in str(data2["attributes"]["materials"])
+        finally:
+            settings.OFFLINE_MODE = original_offline
+
+
 
