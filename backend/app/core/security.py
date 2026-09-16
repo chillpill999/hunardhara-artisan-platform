@@ -20,6 +20,14 @@ class CurrentUser:
     email: Optional[str] = None
     role: str = 'customer'  # 'customer', 'artisan', 'admin'
 
+    @property
+    def is_admin(self) -> bool:
+        return (
+            self.role == "admin"
+            and bool(settings.admin_user_ids)
+            and self.id in settings.admin_user_ids
+        )
+
 
 # In-memory sliding-window rate limiter
 class InMemoryRateLimiter:
@@ -159,7 +167,11 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
     role = app_role if app_role in {"customer", "artisan", "admin"} else "customer"
     email = payload.get("email")
 
-    return CurrentUser(id=user_id, email=email, role=str(role).lower())
+    role_str = str(role).lower()
+    if role_str == "admin" and (not settings.admin_user_ids or user_id not in settings.admin_user_ids):
+        role_str = "customer"
+
+    return CurrentUser(id=user_id, email=email, role=role_str)
 
 
 def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Optional[CurrentUser]:
@@ -181,7 +193,12 @@ def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Op
         app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
         role = app_role if app_role in {"customer", "artisan", "admin"} else "customer"
         email = payload.get("email")
-        return CurrentUser(id=user_id, email=email, role=str(role).lower())
+
+        role_str = str(role).lower()
+        if role_str == "admin" and (not settings.admin_user_ids or user_id not in settings.admin_user_ids):
+            role_str = "customer"
+
+        return CurrentUser(id=user_id, email=email, role=role_str)
     except Exception:
         return None
 
@@ -206,10 +223,10 @@ def mask_email(email: Optional[str]) -> Optional[str]:
 
 def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
     """
-    FastAPI dependency: Requires authenticated artisan or administrator.
+    FastAPI dependency: Requires authenticated artisan or verified administrator.
     """
     user = get_current_user(authorization)
-    if user.role not in ["artisan", "admin"]:
+    if user.role != "artisan" and not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN: Artisan or Administrator role required to access this resource."
@@ -220,11 +237,7 @@ def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
 def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
     """Requires a verified Supabase administrator subject configured server-side."""
     user = get_current_user(authorization)
-    if (
-        user.role != "admin"
-        or not settings.admin_user_ids
-        or user.id not in settings.admin_user_ids
-    ):
+    if not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN: Administrator privileges required."
@@ -234,12 +247,9 @@ def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
 
 def require_artisan_subject_or_admin(artisan_id: str, current_user: CurrentUser) -> None:
     """Authorize access to an artisan's private data by subject ID, never request data."""
-    if (
-        current_user.role == "admin"
-        and current_user.id in settings.admin_user_ids
-    ):
+    if current_user.is_admin:
         return
-    if current_user.id != artisan_id:
+    if current_user.role != "artisan" or current_user.id != artisan_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN_OWNERSHIP: You may only access your own artisan data.",

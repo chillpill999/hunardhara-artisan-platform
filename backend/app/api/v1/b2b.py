@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_optional_current_user, CurrentUser, mask_email
+from app.core.security import get_current_user, get_optional_current_user, CurrentUser, mask_email
 from app.models.b2b_rfq import B2BRFQ, B2BMatchRecord
 from app.models.artisan import Artisan
 from app.schemas.b2b import (
@@ -30,7 +30,7 @@ def _filter_buyer_email(raw_email: Optional[str], current_user: Optional[Current
     if not raw_email:
         return None
     if current_user:
-        if current_user.role == "admin":
+        if current_user.is_admin:
             return raw_email
         if current_user.email and current_user.email.strip().lower() == raw_email.strip().lower():
             return raw_email
@@ -315,4 +315,37 @@ def get_b2b_rfq(
         consortium_feasible=match_result.consortium_feasible,
         consortium_option=match_result.consortium_option
     )
+
+
+@router.delete(
+    "/rfq/{rfq_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete/Withdraw B2B RFQ"
+)
+def delete_b2b_rfq(
+    rfq_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Withdraws or deletes an RFQ with strict ownership verification:
+    Only the creating organization (matching email) or a verified administrator can delete an RFQ.
+    """
+    rfq = db.query(B2BRFQ).filter(B2BRFQ.id == rfq_id).first()
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ with ID '{rfq_id}' not found."
+        )
+
+    is_owner = bool(current_user.email and current_user.email.strip().lower() == rfq.buyer_email.strip().lower())
+    if not current_user.is_admin and not is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="FORBIDDEN_OWNERSHIP: You are not authorized to delete this RFQ."
+        )
+
+    db.delete(rfq)
+    db.commit()
+    return {"status": "deleted", "id": rfq_id}
 

@@ -22,7 +22,7 @@ def list_customer_orders(
     Returns only the authenticated customer's own order history.
     Admins can view all orders.
     """
-    if current_user.role == "admin":
+    if current_user.is_admin:
         return db.query(Order).order_by(Order.created_at.desc()).all()
     return db.query(Order).filter(Order.customer_id == current_user.id).order_by(Order.created_at.desc()).all()
 
@@ -72,6 +72,80 @@ def list_artisan_orders(
     Returns only orders placed for crafts created by the authenticated artisan.
     Admins can view all orders.
     """
-    if current_user.role == "admin":
+    if current_user.is_admin:
         return db.query(Order).order_by(Order.created_at.desc()).all()
     return db.query(Order).filter(Order.artisan_id == current_user.id).order_by(Order.created_at.desc()).all()
+
+
+@router.get("/{order_id}", response_model=OrderResponse, summary="Get Order by ID")
+def get_order(
+    order_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieves single order with strict ownership validation:
+    Only the purchasing customer, fulfilling artisan, or a verified administrator can view the order.
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Order with ID '{order_id}' not found")
+
+    if not current_user.is_admin and current_user.id != order.customer_id and current_user.id != order.artisan_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="FORBIDDEN_OWNERSHIP: You are not authorized to view this order."
+        )
+    return order
+
+
+@router.put("/{order_id}/status", response_model=OrderResponse, summary="Update Order Status")
+def update_order_status(
+    order_id: str,
+    status_payload: dict,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Updates order status with role-scoped state transitions:
+    - Verified Admin: full status modification authority.
+    - Fulfilling Artisan: can update status to processing, shipped, delivered, cancelled.
+    - Purchasing Customer: can only cancel order if it has not shipped.
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Order with ID '{order_id}' not found")
+
+    new_status = str(status_payload.get("status") or "").lower().strip()
+    valid_statuses = {"pending", "confirmed", "processing", "shipped", "delivered", "cancelled"}
+    if new_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"INVALID_STATUS: Allowed statuses are {sorted(list(valid_statuses))}"
+        )
+
+    if current_user.is_admin:
+        order.status = new_status
+    elif current_user.id == order.artisan_id and current_user.role == "artisan":
+        order.status = new_status
+    elif current_user.id == order.customer_id:
+        if new_status != "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="FORBIDDEN: Customers can only cancel unfulfilled orders."
+            )
+        if order.status in {"shipped", "delivered"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CANNOT_CANCEL: Order has already been shipped or delivered."
+            )
+        order.status = "cancelled"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="FORBIDDEN_OWNERSHIP: You are not authorized to update this order."
+        )
+
+    db.commit()
+    db.refresh(order)
+    return order

@@ -137,7 +137,7 @@ def create_product(
     Requires authenticated artisan or admin role.
     Rejects any marketplace listing priced below the certified cost-plus anti-exploitation floor.
     """
-    if current_user.role != "admin":
+    if not current_user.is_admin:
         product_in.artisan_id = current_user.id
     # 1. Resolve cluster statutory wage rate
     cluster = db.query(CraftCluster).filter(CraftCluster.id == product_in.cluster_id).first()
@@ -278,7 +278,7 @@ def update_product(
     if not prod:
         raise HTTPException(status_code=404, detail=f"Product with ID '{product_id}' not found")
 
-    if current_user.role != "admin" and prod.artisan_id != current_user.id:
+    if not current_user.is_admin and prod.artisan_id != current_user.id:
         raise HTTPException(
             status_code=403,
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to modify products belonging to another artisan."
@@ -307,7 +307,7 @@ def delete_product(
     if not prod:
         raise HTTPException(status_code=404, detail=f"Product with ID '{product_id}' not found")
 
-    if current_user.role != "admin" and prod.artisan_id != current_user.id:
+    if not current_user.is_admin and prod.artisan_id != current_user.id:
         raise HTTPException(
             status_code=403,
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to delete products belonging to another artisan."

@@ -154,11 +154,14 @@ async function verifySupabaseRequest(
   }
 
   const appRole = claims.app_metadata?.role;
-  const role: VerifiedIdentity['role'] = ['customer', 'artisan', 'admin'].includes(appRole)
+  let role: VerifiedIdentity['role'] = ['customer', 'artisan', 'admin'].includes(appRole)
     ? appRole
     : 'customer';
   const adminIds = (env.ADMIN_USER_IDS || '').split(',').map((value) => value.trim()).filter(Boolean);
-  if (requireAdmin && (role !== 'admin' || !adminIds.includes(claims.sub))) {
+  if (role === 'admin' && !adminIds.includes(claims.sub)) {
+    role = 'customer';
+  }
+  if (requireAdmin && role !== 'admin') {
     return { response: authFailure(403, 'FORBIDDEN') };
   }
   return { identity: { subject: claims.sub, role } };

@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import CurrentUser, get_current_user, require_artisan_subject_or_admin
+from app.core.security import CurrentUser, get_current_user, require_artisan, require_artisan_subject_or_admin
 from app.models.consent_log import ConsentLog
 from app.models.artisan import Artisan
 from app.models.product import Product
+from app.models.order import Order
 from app.schemas.compliance import (
     ConsentLogCreate,
     ConsentLogResponse,
@@ -158,10 +159,52 @@ def right_to_be_forgotten(
 @router.delete("/artisan/{artisan_id}", summary="Delete Artisan Personal Data (DPDP S12)")
 def delete_artisan_data(
     artisan_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_artisan),
     db: Session = Depends(get_db)
 ):
     """Convenience alias for DPDP sovereign data erasure by artisan ID."""
     req = RightToBeForgottenRequest(artisan_id=artisan_id, confirmation=True)
     return right_to_be_forgotten(req, current_user, db)
 
+
+@router.delete("/customer/{customer_id}", summary="Delete Customer Personal Data (DPDP S12)")
+def delete_customer_data(
+    customer_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    DPDP Act 2023 Section 12 Customer Data Erasure:
+    Allows a customer to delete their personal account data and redact order personal identifiers.
+    Enforces strict ownership: caller must be the customer or a verified administrator.
+    """
+    if not current_user.is_admin and current_user.id != customer_id:
+        raise HTTPException(
+            status_code=403,
+            detail="FORBIDDEN_OWNERSHIP: You may only erase your own customer data."
+        )
+
+    orders = db.query(Order).filter(Order.customer_id == customer_id).all()
+    redacted_orders = len(orders)
+    for o in orders:
+        o.customer_id = f"REDACTED_{uuid.uuid4().hex[:8]}"
+
+    audit_entry = ConsentLog(
+        id=f"forget-cust-{uuid.uuid4().hex[:12]}",
+        artisan_id=f"customer-{customer_id}",
+        consent_type="RIGHT_TO_BE_FORGOTTEN",
+        granted=True,
+        purpose="Customer Sovereign Data Erasure under DPDP Act 2023 Section 12",
+        language="en",
+        consent_artifact_type="ERASURE_DIRECTIVE",
+        consent_artifact_hash=hashlib.sha256(f"ERASE_CUSTOMER:{customer_id}".encode()).hexdigest()
+    )
+    db.add(audit_entry)
+    db.commit()
+
+    return {
+        "status": "success",
+        "customer_id": customer_id,
+        "records_redacted": redacted_orders,
+        "message": "Customer personal identifiers redacted successfully under DPDP Act 2023."
+    }

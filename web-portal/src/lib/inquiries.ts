@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 
 const STORAGE_KEY = 'hunardhara_artisan_inquiries';
 
-// Initial realistic baseline inquiries for standard artisan demo crafts
+// Initial realistic baseline inquiries for standard artisan demo crafts with PII masked
 const SEED_INQUIRIES: ArtisanInquiry[] = [
   {
     id: 'inq-seed-001',
@@ -13,8 +13,8 @@ const SEED_INQUIRIES: ArtisanInquiry[] = [
     artisan_id: '11111111-1111-1111-1111-111111111111',
     artisan_name: 'Radheshyam Ansari (राधेश्याम अंसारी)',
     customer_name: 'अनामिका बनर्जी (Anamika Banerjee)',
-    customer_phone: '+91 98201 45678',
-    customer_email: 'anamika.banerjee@gmail.com',
+    customer_phone: '+91 98*** 45678',
+    customer_email: 'a***e@gmail.com',
     inquiry_type: 'customization',
     message: 'नमस्ते राधेश्याम जी, क्या यह बनारसी साड़ी गहरे जामुनी (Deep Wine / Purple) रंग में और बिना ज़री बॉर्डर के कस्टमाइज़ हो सकती है? मुझे अगले महीने शादी के लिए 2 साड़ियाँ चाहिए।',
     quantity: 2,
@@ -29,8 +29,8 @@ const SEED_INQUIRIES: ArtisanInquiry[] = [
     artisan_id: '11111111-1111-1111-1111-111111111111',
     artisan_name: 'Radheshyam Ansari',
     customer_name: 'हॉस्पिटैलिटी डेकोर समूह (FabIndia Boutique Buyer)',
-    customer_phone: '+91 91122 33445',
-    customer_email: 'sourcing@boutiqueheritage.in',
+    customer_phone: '+91 91*** 33445',
+    customer_email: 's***g@boutiqueheritage.in',
     inquiry_type: 'bulk_order',
     message: 'हम दिल्ली शोरूम के लिए 15 बनारसी कतान सिल्क साड़ियों का थोक ऑर्डर देना चाहते हैं। कृपया थोक दर (Wholesale Rate) और अनुमानित डिलीवरी समय बताएं।',
     quantity: 15,
@@ -45,8 +45,8 @@ const SEED_INQUIRIES: ArtisanInquiry[] = [
     artisan_id: 'artisan-sukhruram-02',
     artisan_name: 'सुखराम बघेल (Sukhram Baghel)',
     customer_name: 'राजेश वर्मा (Rajesh Verma)',
-    customer_phone: '+91 94150 99887',
-    customer_email: 'rajesh.verma@tcs.com',
+    customer_phone: '+91 94*** 99887',
+    customer_email: 'r***a@tcs.com',
     inquiry_type: 'delivery_time',
     message: 'क्या यह ढोकरा कलाकृति बेंगलुरु में 4 दिनों के भीतर सुरक्षित पैकेजिंग के साथ डिलीवर हो सकती है? कॉर्पोरेट उपहार के लिए चाहिए।',
     quantity: 5,
@@ -72,8 +72,7 @@ export function getAllInquiries(): ArtisanInquiry[] {
 
 /**
  * Retrieves inquiries specifically addressed to the given artisan.
- * Matches by artisan_id, artisan_email, or default artisan identifiers.
- * Falls back to realistic craft inquiries so newly registered artisans can test the query box.
+ * Enforces strict artisan identity matching to prevent cross-artisan inquiry leakage.
  */
 export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquiry[] {
   const all = getAllInquiries();
@@ -82,25 +81,16 @@ export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquir
   const target = artisanIdOrEmail.toLowerCase().trim();
   const isDefaultDemoArtisan =
     target === 'artisan@hunardhara.gov.in' ||
-    target === '11111111-1111-1111-1111-111111111111' ||
-    target.includes('radheshyam') ||
-    target.includes('artisan');
+    target === '11111111-1111-1111-1111-111111111111';
 
   const filtered = all.filter((inq) => {
     const inqArtisanId = (inq.artisan_id || '').toLowerCase();
     const inqArtisanName = (inq.artisan_name || '').toLowerCase();
 
     if (inqArtisanId === target) return true;
-    if (inqArtisanId && target.includes(inqArtisanId)) return true;
-    if (inqArtisanName && inqArtisanName.includes(target)) return true;
     if (isDefaultDemoArtisan && (inqArtisanId === '11111111-1111-1111-1111-111111111111' || inqArtisanName.includes('radheshyam'))) return true;
     return false;
   });
-
-  // If newly registered artisan has no direct customer inquiries yet, show cluster sample queries for immediate workshop evaluation
-  if (filtered.length === 0) {
-    return all;
-  }
 
   return filtered;
 }

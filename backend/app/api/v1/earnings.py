@@ -20,6 +20,6 @@ def get_artisan_earnings(
     Ensures complete isolation: Artisan A cannot see Artisan B's earnings.
     Customers cannot access earnings (HTTP 403).
     """
-    if current_user.role == "admin":
+    if current_user.is_admin:
         return db.query(ArtisanEarning).order_by(ArtisanEarning.payout_date.desc()).all()
     return db.query(ArtisanEarning).filter(ArtisanEarning.artisan_id == current_user.id).order_by(ArtisanEarning.payout_date.desc()).all()

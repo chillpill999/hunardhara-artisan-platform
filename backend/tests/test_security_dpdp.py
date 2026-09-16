@@ -3,11 +3,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, init_db
 from app.core.security import create_access_token
 from app.models.artisan import Artisan
 from app.models.consent_log import ConsentLog
 from app.services.pricing_service import pricing_service
+
+
+@pytest.fixture(autouse=True)
+def initialize_test_db():
+    init_db()
 
 
 @pytest.fixture
@@ -65,10 +70,24 @@ class TestSecurityAndDPDPCompliance:
 
     def test_sovereign_data_erasure_success(self, client, db):
         """TC-SEC-03: Confirmed erasure purges PII and creates audit log."""
-        artisan = db.query(Artisan).filter(Artisan.id == "art-varanasi-001").first()
+        artisan = db.query(Artisan).first()
         if not artisan:
-            artisan = db.query(Artisan).first()
-        assert artisan is not None, "At least one artisan must exist in DB for DPDP erasure test"
+            artisan = Artisan(
+                id="art-varanasi-001",
+                full_name="Security Test Artisan",
+                phone_number="9000000001",
+                masked_aadhaar="XXXXXXXX0001",
+                aadhaar_hash="test-aadhaar-hash-0001",
+                cluster_id="cluster-bastar-dhokra-01",
+                state="Chhattisgarh",
+                district="Bastar",
+                latitude=19.07,
+                longitude=82.03,
+                primary_craft="Bastar Dhokra",
+            )
+            db.add(artisan)
+            db.commit()
+            db.refresh(artisan)
         artisan_id = artisan.id
         token = create_access_token(artisan_id, extra_claims={"app_metadata": {"role": "artisan"}})
 

@@ -342,33 +342,45 @@ export function getRemovedProductIds(): string[] {
 
 /**
  * Administrative action: Remove a product from the marketplace.
- * Works seamlessly across both uploaded crafts and seed catalog products.
+ * Enforces server-side authorization: requires a valid authenticated session
+ * and rejects client-side simulation when backend deletion fails (HTTP 401/403).
  */
 export async function removeProduct(productId: string): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
-    // 1. Add to blacklist of removed products
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) {
+      console.error("Authorization required: No authenticated session found.");
+      return false;
+    }
+
+    // Enforce server-side authorization check: only authorized artisan or admin can delete
+    const res = await fetch(`${API_BASE}/products/${productId}`, {
+      method: "DELETE",
+      headers: {
+        ...authHeaders,
+      },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error(`Server rejected product deletion [${res.status}]: ${errText}`);
+      return false;
+    }
+
+    // Server-side authorization confirmed and product deleted. Now update client state.
     const current = getRemovedProductIds();
     if (!current.includes(productId)) {
       current.push(productId);
       localStorage.setItem(REMOVED_PRODUCTS_KEY, JSON.stringify(current));
     }
 
-    // 2. Remove from uploaded products cache if present
     const uploaded = getUploadedProducts();
     const filteredUploaded = uploaded.filter((p) => p.id !== productId);
     localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(filteredUploaded));
 
-    // 3. Dispatch events to notify UI immediately across all open tabs
     window.dispatchEvent(new CustomEvent("hunardhara_product_removed", { detail: { id: productId } }));
     window.dispatchEvent(new CustomEvent("hunardhara_product_published", { detail: { id: productId } }));
-
-    // 4. Try backend deletion if available
-    try {
-      await fetch(`${API_BASE}/products/${productId}`, {
-        method: "DELETE"
-      });
-    } catch {}
 
     return true;
   } catch (err) {
