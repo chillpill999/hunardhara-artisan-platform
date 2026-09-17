@@ -3,70 +3,17 @@ import { supabase } from './supabase';
 
 const STORAGE_KEY = 'hunardhara_artisan_inquiries';
 
-// Initial realistic baseline inquiries for standard artisan demo crafts with PII masked
-const SEED_INQUIRIES: ArtisanInquiry[] = [
-  {
-    id: 'inq-seed-001',
-    product_id: 'prod-001',
-    product_title: 'पारंपरिक बनारसी कतान सिल्क साड़ी (Varanasi Pure Katan Silk)',
-    product_image: '/static/studio/varanasi_silk.jpg',
-    artisan_id: '11111111-1111-1111-1111-111111111111',
-    artisan_name: 'Radheshyam Ansari (राधेश्याम अंसारी)',
-    customer_name: 'अनामिका बनर्जी (Anamika Banerjee)',
-    customer_phone: '+91 98*** 45678',
-    customer_email: 'a***e@gmail.com',
-    inquiry_type: 'customization',
-    message: 'नमस्ते राधेश्याम जी, क्या यह बनारसी साड़ी गहरे जामुनी (Deep Wine / Purple) रंग में और बिना ज़री बॉर्डर के कस्टमाइज़ हो सकती है? मुझे अगले महीने शादी के लिए 2 साड़ियाँ चाहिए।',
-    quantity: 2,
-    status: 'new',
-    created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(), // 45 mins ago
-  },
-  {
-    id: 'inq-seed-002',
-    product_id: 'prod-001',
-    product_title: 'पारंपरिक बनारसी कतान सिल्क साड़ी',
-    product_image: '/static/studio/varanasi_silk.jpg',
-    artisan_id: '11111111-1111-1111-1111-111111111111',
-    artisan_name: 'Radheshyam Ansari',
-    customer_name: 'हॉस्पिटैलिटी डेकोर समूह (FabIndia Boutique Buyer)',
-    customer_phone: '+91 91*** 33445',
-    customer_email: 's***g@boutiqueheritage.in',
-    inquiry_type: 'bulk_order',
-    message: 'हम दिल्ली शोरूम के लिए 15 बनारसी कतान सिल्क साड़ियों का थोक ऑर्डर देना चाहते हैं। कृपया थोक दर (Wholesale Rate) और अनुमानित डिलीवरी समय बताएं।',
-    quantity: 15,
-    status: 'new',
-    created_at: new Date(Date.now() - 1000 * 60 * 180).toISOString(), // 3 hours ago
-  },
-  {
-    id: 'inq-seed-003',
-    product_id: 'prod-002',
-    product_title: 'बस्तर ढोकरा पीतल आदिवासी मूर्ति (Bastar Dhokra Figurine)',
-    product_image: '/static/studio/bastar_dhokra.jpg',
-    artisan_id: 'artisan-sukhruram-02',
-    artisan_name: 'सुखराम बघेल (Sukhram Baghel)',
-    customer_name: 'राजेश वर्मा (Rajesh Verma)',
-    customer_phone: '+91 94*** 99887',
-    customer_email: 'r***a@tcs.com',
-    inquiry_type: 'delivery_time',
-    message: 'क्या यह ढोकरा कलाकृति बेंगलुरु में 4 दिनों के भीतर सुरक्षित पैकेजिंग के साथ डिलीवर हो सकती है? कॉर्पोरेट उपहार के लिए चाहिए।',
-    quantity: 5,
-    status: 'replied',
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
-  }
-];
-
 export function getAllInquiries(): ArtisanInquiry[] {
-  if (typeof window === 'undefined') return SEED_INQUIRIES;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_INQUIRIES));
-      return SEED_INQUIRIES;
+      return [];
     }
     const parsed: ArtisanInquiry[] = JSON.parse(raw);
-    return parsed;
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return SEED_INQUIRIES;
+    return [];
   }
 }
 
@@ -76,20 +23,13 @@ export function getAllInquiries(): ArtisanInquiry[] {
  */
 export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquiry[] {
   const all = getAllInquiries();
-  if (!artisanIdOrEmail) return all;
+  if (!artisanIdOrEmail) return [];
 
   const target = artisanIdOrEmail.toLowerCase().trim();
-  const isDefaultDemoArtisan =
-    target === 'artisan@hunardhara.gov.in' ||
-    target === '11111111-1111-1111-1111-111111111111';
 
   const filtered = all.filter((inq) => {
     const inqArtisanId = (inq.artisan_id || '').toLowerCase();
-    const inqArtisanName = (inq.artisan_name || '').toLowerCase();
-
-    if (inqArtisanId === target) return true;
-    if (isDefaultDemoArtisan && (inqArtisanId === '11111111-1111-1111-1111-111111111111' || inqArtisanName.includes('radheshyam'))) return true;
-    return false;
+    return inqArtisanId === target;
   });
 
   return filtered;
@@ -108,7 +48,7 @@ export async function syncInquiriesFromCloud(artisanIdOrEmail?: string): Promise
     if (!error && data && data.length > 0) {
       const cloudMapped: ArtisanInquiry[] = data.map((d: any) => ({
         id: d.id,
-        product_id: d.product_id || 'prod-001',
+        product_id: d.product_id || '',
         product_title: d.product_title,
         product_image: d.product_image,
         artisan_id: d.artisan_id,

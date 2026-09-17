@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
-import { SEED_PRODUCTS, fetchProducts } from '@/lib/api';
+import { fetchProducts } from '@/lib/api';
 import { Product } from '@/lib/types';
 import CraftCard from '@/components/CraftCard';
 import {
@@ -22,15 +22,13 @@ import {
 export default function MarketplacePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCraft, setSelectedCraft] = useState('ALL');
-  const [products, setProducts] = useState<Product[]>(SEED_PRODUCTS);
+  const [products, setProducts] = useState<Product[]>([]);
 
   useEffect(() => {
     const loadCatalog = async () => {
       try {
         const items = await fetchProducts();
-        if (items && items.length > 0) {
-          setProducts(items);
-        }
+        setProducts(items || []);
       } catch (e) {
         console.warn('Catalog load note:', e);
       }

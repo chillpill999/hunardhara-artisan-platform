@@ -18,12 +18,12 @@ class B2BRFQCreate(BaseModel):
     delivery_latitude: Optional[float] = Field(default=28.6139, json_schema_extra={"example": 28.6139})
     delivery_longitude: Optional[float] = Field(default=77.2090, json_schema_extra={"example": 77.2090})
     buyer_location: Optional[BuyerLocation] = None
-    buyer_name: Optional[str] = Field(default="Institutional Procurement Buyer", json_schema_extra={"example": "MoSJE Emporium"})
-    buyer_email: Optional[str] = Field(default="buyer@crafts.gov.in", json_schema_extra={"example": "buyer@crafts.gov.in"})
-    buyer_organization: Optional[str] = Field(default="Tribal Co-operative Marketing Federation (TRIFED)", json_schema_extra={"example": "TRIFED"})
+    buyer_name: Optional[str] = Field(default=None, json_schema_extra={"example": "MoSJE Emporium"})
+    buyer_email: Optional[str] = Field(default=None, json_schema_extra={"example": "buyer@crafts.gov.in"})
+    buyer_organization: Optional[str] = Field(default=None, json_schema_extra={"example": "TRIFED"})
     buyer_phone: Optional[str] = Field(default=None, json_schema_extra={"example": "+919876500000"})
-    delivery_state: Optional[str] = Field(default="Delhi", json_schema_extra={"example": "Delhi"})
-    delivery_district: Optional[str] = Field(default="New Delhi", json_schema_extra={"example": "New Delhi"})
+    delivery_state: Optional[str] = Field(default=None, json_schema_extra={"example": "Delhi"})
+    delivery_district: Optional[str] = Field(default=None, json_schema_extra={"example": "New Delhi"})
 
     @model_validator(mode="before")
     @classmethod

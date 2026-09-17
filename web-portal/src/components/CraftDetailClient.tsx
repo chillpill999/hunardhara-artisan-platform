@@ -529,8 +529,8 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
         productTitle={product.title_en}
         productTitleHi={product.title_hi}
         productImage={product.studio_image_url || '/logo.png'}
-        artisanId={product.artisan_id || '11111111-1111-1111-1111-111111111111'}
-        artisanName={product.artisan_name || 'राधेश्याम अंसारी (Radheshyam Ansari)'}
+        artisanId={product.artisan_id || ''}
+        artisanName={product.artisan_name || 'प्रमाणित शिल्पकार (Certified Artisan)'}
         artisanCluster={product.craft_type ? `${product.craft_type} • ${product.artisan_state || 'भारत'}` : undefined}
       />
     </div>

@@ -77,11 +77,16 @@ async def product_analyze_image(
 
     mime_type = image.content_type or "image/jpeg"
     try:
-        return openrouter_service.analyze_craft_image(
+        res = openrouter_service.analyze_craft_image(
             image_bytes=image_bytes,
             mime_type=mime_type,
             hint=hint
         )
+        if not res.success:
+            raise HTTPException(status_code=502, detail=res.error or "IMAGE_ANALYSIS_FAILED")
+        return res
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Image analysis failed: {e}")
         raise HTTPException(status_code=500, detail=f"IMAGE_ANALYSIS_ERROR: {str(e)}")

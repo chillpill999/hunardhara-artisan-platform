@@ -13,6 +13,7 @@ import { getAllInquiries, updateInquiryStatus, deleteInquiry } from '@/lib/inqui
 import { CraftCluster, Product, ArtisanInquiry } from '@/lib/types';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/lib/supabase';
 import {
   ShieldCheck,
   Building2,
@@ -74,123 +75,6 @@ interface MasterArtisanItem {
   joined_date: string;
 }
 
-const DEFAULT_B2B_RFQS: AdminB2BRFQ[] = [
-  {
-    id: 'rfq-inst-001',
-    buyer_name: 'सुमन मल्होत्रा (Suman Malhotra)',
-    company_name: 'FabIndia Craft Sourcing Unit',
-    buyer_phone: '+91 98101 22334',
-    craft_type: 'Bastar Dhokra',
-    quantity: 150,
-    budget_per_unit: 1800,
-    delivery_state: 'New Delhi',
-    deadline_days: 45,
-    match_score: 96,
-    status: 'matched',
-    created_at: '2 घंटे पहले'
-  },
-  {
-    id: 'rfq-inst-002',
-    buyer_name: 'विक्रम सिंघानिया (Vikram Singhania)',
-    company_name: 'Tata Trent / Westside Living',
-    buyer_phone: '+91 98220 99881',
-    craft_type: 'Khurja Pottery',
-    quantity: 300,
-    budget_per_unit: 1200,
-    delivery_state: 'Maharashtra',
-    deadline_days: 60,
-    match_score: 94,
-    status: 'review',
-    created_at: '5 घंटे पहले'
-  },
-  {
-    id: 'rfq-inst-003',
-    buyer_name: 'राजेश नायर (Rajesh Nair)',
-    company_name: 'Central Cottage Industries Emporium',
-    buyer_phone: '+91 94470 55667',
-    craft_type: 'Varanasi Silk',
-    quantity: 50,
-    budget_per_unit: 9500,
-    delivery_state: 'Karnataka',
-    deadline_days: 30,
-    match_score: 98,
-    status: 'approved',
-    created_at: '1 दिन पहले'
-  },
-  {
-    id: 'rfq-inst-004',
-    buyer_name: 'मीनाक्षी सुंदरम (Meenakshi Sundaram)',
-    company_name: 'Dastkar Global Sourcing Guild',
-    buyer_phone: '+91 97111 88442',
-    craft_type: 'Madhubani Painting',
-    quantity: 80,
-    budget_per_unit: 2200,
-    delivery_state: 'Tamil Nadu',
-    deadline_days: 25,
-    match_score: 92,
-    status: 'review',
-    created_at: '2 दिन पहले'
-  }
-];
-
-const DEFAULT_MASTER_ARTISANS: MasterArtisanItem[] = [
-  {
-    id: 'art-varanasi-001',
-    name: 'राधेश्याम अंसारी (Radheshyam Ansari)',
-    cluster: 'Varanasi Silk Cluster',
-    state: 'Uttar Pradesh',
-    craft_type: 'Varanasi Silk Brocade',
-    phone: '+91 94152 11223',
-    products_count: 6,
-    gi_verified: true,
-    joined_date: 'Sep 2026'
-  },
-  {
-    id: 'art-bastar-001',
-    name: 'रामेश्वर बघेल (Rameshwar Baghel)',
-    cluster: 'Bastar Dhokra Cluster',
-    state: 'Chhattisgarh',
-    craft_type: 'Lost-Wax Bell Metal',
-    phone: '+91 97520 33445',
-    products_count: 12,
-    gi_verified: true,
-    joined_date: 'Aug 2026'
-  },
-  {
-    id: 'art-khurja-001',
-    name: 'मोहम्मद असलम (Mohammad Aslam)',
-    cluster: 'Khurja Pottery Cluster',
-    state: 'Uttar Pradesh',
-    craft_type: 'Glazed Ceramic Pottery',
-    phone: '+91 98370 44556',
-    products_count: 8,
-    gi_verified: true,
-    joined_date: 'Aug 2026'
-  },
-  {
-    id: 'art-madhubani-001',
-    name: 'देवी बाई (Devi Bai)',
-    cluster: 'Madhubani Painting Cluster',
-    state: 'Bihar',
-    craft_type: 'Mithila Folk Painting',
-    phone: '+91 94312 66778',
-    products_count: 9,
-    gi_verified: true,
-    joined_date: 'Sep 2026'
-  },
-  {
-    id: 'art-channapatna-001',
-    name: 'बी. वेंकटेश (B. Venkatesh)',
-    cluster: 'Channapatna Toys Cluster',
-    state: 'Karnataka',
-    craft_type: 'Lacquerware Wooden Toys',
-    phone: '+91 98801 77889',
-    products_count: 15,
-    gi_verified: true,
-    joined_date: 'Jul 2026'
-  }
-];
-
 export default function AdminDashboardPage() {
   const { user, role } = useAuth();
   const [activeTab, setActiveTab] = useState<'products' | 'clusters' | 'b2b' | 'inquiries' | 'artisans' | 'security'>('products');
@@ -200,14 +84,14 @@ export default function AdminDashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // B2B RFQs State
-  const [b2bRFQs, setB2bRFQs] = useState<AdminB2BRFQ[]>(DEFAULT_B2B_RFQS);
+  const [b2bRFQs, setB2bRFQs] = useState<AdminB2BRFQ[]>([]);
 
   // Inquiries State
   const [inquiries, setInquiries] = useState<ArtisanInquiry[]>([]);
   const [inquiryFilter, setInquiryFilter] = useState<'all' | 'new' | 'replied'>('all');
 
   // Master Artisans State
-  const [artisans, setArtisans] = useState<MasterArtisanItem[]>(DEFAULT_MASTER_ARTISANS);
+  const [artisans, setArtisans] = useState<MasterArtisanItem[]>([]);
 
   // Editable Wage Baseline
   const [editingWageClusterId, setEditingWageClusterId] = useState<string | null>(null);
@@ -231,6 +115,59 @@ export default function AdminDashboardPage() {
       setProducts(productData);
       setRemovedCount(getRemovedProductIds().length);
       setInquiries(getAllInquiries());
+
+      try {
+        const { data: artisanProfiles } = await supabase
+          .from('profiles')
+          .select('id, full_name, cluster, state, craft_type, phone, gi_verified, created_at')
+          .eq('role', 'artisan');
+
+        if (artisanProfiles && artisanProfiles.length > 0) {
+          setArtisans(artisanProfiles.map((a: any) => ({
+            id: a.id,
+            name: a.full_name || 'शिल्पकार (Artisan)',
+            cluster: a.cluster || 'Craft Cluster',
+            state: a.state || 'India',
+            craft_type: a.craft_type || 'Handicraft',
+            phone: a.phone || 'N/A',
+            products_count: productData.filter((p) => p.artisan_id === a.id).length,
+            gi_verified: !!a.gi_verified,
+            joined_date: new Date(a.created_at || Date.now()).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+          })));
+        } else {
+          setArtisans([]);
+        }
+      } catch {
+        setArtisans([]);
+      }
+
+      try {
+        const { data: rfqList } = await supabase
+          .from('b2b_rfqs')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (rfqList && rfqList.length > 0) {
+          setB2bRFQs(rfqList.map((r: any) => ({
+            id: r.id,
+            buyer_name: r.buyer_name || 'Verified Buyer',
+            company_name: r.company_name || 'B2B Enterprise',
+            buyer_phone: r.buyer_phone || 'N/A',
+            craft_type: r.craft_type,
+            quantity: Number(r.quantity),
+            budget_per_unit: Number(r.budget_per_unit),
+            delivery_state: r.delivery_state || 'India',
+            deadline_days: Number(r.deadline_days || 30),
+            match_score: Number(r.match_score || 95),
+            status: r.status || 'review',
+            created_at: new Date(r.created_at || Date.now()).toLocaleDateString('en-IN')
+          })));
+        } else {
+          setB2bRFQs([]);
+        }
+      } catch {
+        setB2bRFQs([]);
+      }
     } catch (err) {
       console.warn('Admin load data error:', err);
     }
@@ -881,7 +818,14 @@ export default function AdminDashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#f4f4f5] text-[#1c1917]">
-                    {b2bRFQs.map((rfq) => (
+                    {b2bRFQs.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-sm text-[#71717a]">
+                          कोई सक्रिय B2B मांग उपलब्ध नहीं है (No active B2B RFQ records found).
+                        </td>
+                      </tr>
+                    ) : (
+                      b2bRFQs.map((rfq) => (
                       <tr key={rfq.id} className="hover:bg-[#fafafa] transition-colors">
                         <td className="py-4 px-4">
                           <div className="font-bold text-sm text-[#1c1917]">{rfq.company_name}</div>
@@ -961,7 +905,7 @@ export default function AdminDashboardPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
@@ -1136,7 +1080,14 @@ export default function AdminDashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#f4f4f5] text-[#1c1917]">
-                    {artisans.map((art) => (
+                    {artisans.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-sm text-[#71717a]">
+                          कोई शिल्पकार रिकॉर्ड नहीं मिला (No artisan records found).
+                        </td>
+                      </tr>
+                    ) : (
+                      artisans.map((art) => (
                       <tr key={art.id} className="hover:bg-[#fafafa] transition-colors">
                         <td className="py-4 px-4">
                           <div className="font-bold text-sm text-[#1c1917]">{art.name}</div>
@@ -1183,7 +1134,7 @@ export default function AdminDashboardPage() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>

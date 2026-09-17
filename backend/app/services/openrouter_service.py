@@ -146,14 +146,17 @@ class OpenRouterService:
             except Exception as parse_err:
                 logger.warning(f"Gemma 4 catalog parsing error: {parse_err}. Output was: {raw_output[:200]}")
 
-        # Fallback to deterministic offline engine
-        logger.info("Using deterministic offline engine fallback for catalog generation")
-        return offline_voice_engine.process_audio(
-            audio_bytes=b"\x00" * 100,
-            filename="synthetic_audio.wav",
-            sample_text=transcript,
-            language_code=language_code
-        )
+        # Fallback handling:
+        if settings.OFFLINE_MODE:
+            logger.info("Using deterministic offline engine fallback for catalog generation (explicit OFFLINE_MODE)")
+            return offline_voice_engine.process_audio(
+                audio_bytes=b"\x00" * 100,
+                filename="synthetic_audio.wav",
+                sample_text=transcript,
+                language_code=language_code
+            )
+        # Production: fail truthfully, never silently fall back to mock engine
+        raise ValueError("CATALOG_GENERATION_FAILED: Upstream AI model failed to extract catalog attributes.")
 
     def analyze_craft_image(
         self,
@@ -217,7 +220,26 @@ class OpenRouterService:
             except Exception as e:
                 logger.warning(f"Error parsing Gemma 4 image understanding output: {e}")
 
-        # Intelligent sovereign visual fallback
+        # In production mode: return real failure, NEVER fake success with canned craft attributes!
+        if not settings.OFFLINE_MODE:
+            logger.error("Vision inspection failed or unavailable in production mode")
+            return ImageUnderstandingResponse(
+                success=False,
+                error="VISION_SERVICE_UNAVAILABLE: Upstream vision analysis service failed or is not configured.",
+                craft_type=None,
+                product_name_hi=None,
+                product_name_en=None,
+                materials=[],
+                technique=None,
+                dominant_colors=[],
+                description_hi=None,
+                description_en=None,
+                visual_quality_score=None,
+                model=self.model,
+                provider="openrouter"
+            )
+
+        # Isolated explicit OFFLINE_MODE fallback only
         return self._heuristic_image_analysis(hint=hint)
 
     def _heuristic_image_analysis(self, hint: Optional[str] = None) -> ImageUnderstandingResponse:

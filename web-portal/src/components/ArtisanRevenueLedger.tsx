@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { SEED_ARTISAN_EARNINGS } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import {
@@ -42,20 +41,6 @@ export default function ArtisanRevenueLedger() {
   // Fetch real database records protected by Supabase RLS
   useEffect(() => {
     async function loadRealEarnings() {
-      const fallbackList: RealPayoutItem[] = SEED_ARTISAN_EARNINGS.recent_payouts.map((p) => ({
-        id: p.id,
-        order_id: p.order_id,
-        order_date: p.order_date,
-        craft_title: p.craft_title,
-        buyer_name: p.buyer_name,
-        order_type: p.order_type,
-        items_count: p.quantity,
-        total_order_value: p.gross_amount,
-        artisan_wage_payout: p.artisan_net_payout,
-        middleman_saved: p.middleman_cut_prevented,
-        status: p.payment_status,
-      }));
-
       try {
         setIsLoading(true);
         const { data, error } = await supabase
@@ -79,10 +64,10 @@ export default function ArtisanRevenueLedger() {
           }));
           setDbPayouts(mapped);
         } else {
-          setDbPayouts(fallbackList);
+          setDbPayouts([]);
         }
       } catch {
-        setDbPayouts(fallbackList);
+        setDbPayouts([]);
       } finally {
         setIsLoading(false);
       }
@@ -95,9 +80,9 @@ export default function ArtisanRevenueLedger() {
     ? dbPayouts
     : dbPayouts.filter((p) => p.order_type === filterType);
 
-  const totalRevenue = dbPayouts.reduce((sum, p) => sum + p.total_order_value, 0) || SEED_ARTISAN_EARNINGS.total_revenue_earned;
-  const totalSaved = dbPayouts.reduce((sum, p) => sum + p.middleman_saved, 0) || SEED_ARTISAN_EARNINGS.middleman_margin_saved;
-  const middlemanSavedPercent = Math.round((totalSaved / (totalRevenue + totalSaved)) * 100) || 35;
+  const totalRevenue = dbPayouts.reduce((sum, p) => sum + p.total_order_value, 0);
+  const totalSaved = dbPayouts.reduce((sum, p) => sum + p.middleman_saved, 0);
+  const middlemanSavedPercent = totalRevenue + totalSaved > 0 ? Math.round((totalSaved / (totalRevenue + totalSaved)) * 100) : 0;
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -111,7 +96,7 @@ export default function ArtisanRevenueLedger() {
 
           <div className="space-y-1">
             <span className="text-xs sm:text-sm text-[#e8f5e9] font-medium block">
-              नमस्ते {profile?.full_name || 'राधेश्याम जी'}, आपके हुनर की कुल कमाई:
+              नमस्ते {profile?.full_name || 'कारीगर'}, आपके हुनर की कुल कमाई:
             </span>
             <div className="font-sans text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white">
               ₹{totalRevenue.toLocaleString('en-IN')}
@@ -154,13 +139,13 @@ export default function ArtisanRevenueLedger() {
 
         <div className="bg-white rounded-2xl border border-[#e6ded3] p-4 space-y-1 bento-shadow">
           <span className="text-[11px] font-bold text-[#6f5f58] uppercase block">
-            दैनिक मजदूरी
+            औसत प्रति ऑर्डर पारिश्रमिक
           </span>
           <div className="text-2xl font-extrabold text-[#1b4332]">
-            ₹910/दिन
+            {dbPayouts.length > 0 ? `₹${Math.round(totalRevenue / dbPayouts.length).toLocaleString('en-IN')}` : '₹0'}
           </div>
           <span className="text-[10px] text-[#2d6a4f] font-medium">
-            न्यूनतम ₹650 से अधिक
+            सीधी बैंक जमा
           </span>
         </div>
 
@@ -226,45 +211,51 @@ export default function ArtisanRevenueLedger() {
 
         {/* Card-based Mobile List */}
         <div className="space-y-3">
-          {filteredPayouts.map((payout) => (
-            <div
-              key={payout.id}
-              className="p-4 rounded-2xl border border-[#e6ded3] bg-[#faf7f2] hover:bg-white transition-all space-y-2.5"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h4 className="font-sans font-bold text-sm text-[#231f1e]">
-                    {payout.craft_title}
-                  </h4>
-                  <div className="flex items-center gap-2 text-xs text-[#6f5f58] mt-0.5">
-                    <span>ऑर्डर: {payout.order_id}</span>
-                    <span>•</span>
-                    <span>{payout.order_date}</span>
+          {filteredPayouts.length === 0 ? (
+            <div className="text-center py-8 text-sm text-[#6f5f58] bg-[#faf7f2] rounded-2xl border border-dashed border-[#e6ded3]">
+              कोई भुगतान रसीद उपलब्ध नहीं है (No payout records found).
+            </div>
+          ) : (
+            filteredPayouts.map((payout) => (
+              <div
+                key={payout.id}
+                className="p-4 rounded-2xl border border-[#e6ded3] bg-[#faf7f2] hover:bg-white transition-all space-y-2.5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-sans font-bold text-sm text-[#231f1e]">
+                      {payout.craft_title}
+                    </h4>
+                    <div className="flex items-center gap-2 text-xs text-[#6f5f58] mt-0.5">
+                      <span>ऑर्डर: {payout.order_id}</span>
+                      <span>•</span>
+                      <span>{payout.order_date}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="font-sans text-base font-extrabold text-[#1b4332] block">
+                      ₹{payout.artisan_wage_payout.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-[10px] font-bold text-[#c85a32]">
+                      +₹{payout.middleman_saved.toLocaleString('en-IN')} बचत
+                    </span>
                   </div>
                 </div>
 
-                <div className="text-right">
-                  <span className="font-sans text-base font-extrabold text-[#1b4332] block">
-                    ₹{payout.artisan_wage_payout.toLocaleString('en-IN')}
+                <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between text-xs">
+                  <span className="text-[11px] bg-white text-[#382923] border border-[#e6ded3] px-2.5 py-0.5 rounded-md font-medium">
+                    {payout.order_type} • {payout.items_count} इकाई
                   </span>
-                  <span className="text-[10px] font-bold text-[#c85a32]">
-                    +₹{payout.middleman_saved.toLocaleString('en-IN')} बचत
+
+                  <span className="inline-flex items-center gap-1 text-[#2d6a4f] text-[11px] font-bold bg-[#e8f5e9] px-2.5 py-0.5 rounded-full">
+                    <CheckCircle2 className="w-3 h-3 text-[#2d6a4f]" />
+                    <span>खाते में जमा (Settled)</span>
                   </span>
                 </div>
               </div>
-
-              <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between text-xs">
-                <span className="text-[11px] bg-white text-[#382923] border border-[#e6ded3] px-2.5 py-0.5 rounded-md font-medium">
-                  {payout.order_type} • {payout.items_count} इकाई
-                </span>
-
-                <span className="inline-flex items-center gap-1 text-[#2d6a4f] text-[11px] font-bold bg-[#e8f5e9] px-2.5 py-0.5 rounded-full">
-                  <CheckCircle2 className="w-3 h-3 text-[#2d6a4f]" />
-                  <span>खाते में जमा (Settled)</span>
-                </span>
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>

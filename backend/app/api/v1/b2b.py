@@ -94,41 +94,37 @@ def create_b2b_rfq(
 
     rfq_model = B2BRFQ(
         id=rfq_id,
-        buyer_name=rfq_in.buyer_name or "Institutional Procurement Buyer",
-        buyer_organization=rfq_in.buyer_organization or "TRIFED / MoSJE",
-        buyer_email=rfq_in.buyer_email or "procurement@crafts.gov.in",
-        buyer_phone=rfq_in.buyer_phone or "+919876543210",
+        buyer_name=rfq_in.buyer_name or "Procurement Buyer",
+        buyer_organization=rfq_in.buyer_organization,
+        buyer_email=rfq_in.buyer_email or (current_user.email if current_user else "buyer@crafts.gov.in"),
+        buyer_phone=rfq_in.buyer_phone,
         craft_type=rfq_in.craft_type,
         required_quantity=quantity,
         unit_budget=rfq_in.unit_budget,
         total_budget=total_budget,
         deadline_days=deadline_days,
-        delivery_state=rfq_in.delivery_state or "Delhi",
-        delivery_district=rfq_in.delivery_district or "New Delhi",
-        delivery_latitude=rfq_in.delivery_latitude if rfq_in.delivery_latitude is not None else 28.6139,
-        delivery_longitude=rfq_in.delivery_longitude if rfq_in.delivery_longitude is not None else 77.2090,
+        delivery_state=rfq_in.delivery_state or "National",
+        delivery_district=rfq_in.delivery_district or "Central",
+        delivery_latitude=rfq_in.delivery_latitude if rfq_in.delivery_latitude is not None else 20.5937,
+        delivery_longitude=rfq_in.delivery_longitude if rfq_in.delivery_longitude is not None else 78.9629,
         status=rfq_status,
         created_at=datetime.now(timezone.utc)
     )
     db.add(rfq_model)
 
-    # Persist match records (verifying foreign key existence)
+    # Persist match records (verifying foreign key existence; NEVER substitute unrelated artisans)
     persisted_match_items: List[B2BMatchRecordItem] = []
     
     # Pre-fetch existing artisan IDs in database
     existing_db_artisan_ids = {a.id for a in db.query(Artisan.id).all()}
-    fallback_db_artisan = db.query(Artisan).first()
 
     for m in match_result.matches:
-        # Resolve a valid artisan_id that exists in the artisans table
-        resolved_artisan_id = m.artisan_id if m.artisan_id in existing_db_artisan_ids else (fallback_db_artisan.id if fallback_db_artisan else None)
-
-        if resolved_artisan_id:
+        if m.artisan_id in existing_db_artisan_ids:
             record_id = f"match-{uuid.uuid4().hex[:12]}"
             match_rec = B2BMatchRecord(
                 id=record_id,
                 rfq_id=rfq_id,
-                artisan_id=resolved_artisan_id,
+                artisan_id=m.artisan_id,
                 match_percentage=m.match_percentage,
                 score_craft=m.breakdown.craft_compatibility,
                 score_price=m.breakdown.price_compatibility,
@@ -144,26 +140,26 @@ def create_b2b_rfq(
             )
             db.add(match_rec)
 
-        persisted_match_items.append(
-            B2BMatchRecordItem(
-                id=m.artisan_id,
-                artisan_id=m.artisan_id,
-                artisan_name=m.artisan_name,
-                cluster_name=m.cluster_name,
-                match_percentage=m.match_percentage,
-                capacity_feasible=m.capacity_feasible,
-                estimated_production_days=m.estimated_production_days,
-                quoted_unit_price=m.offered_wholesale_price,
-                distance_km=m.distance_km or 0.0,
-                match_explanation=m.match_explanation,
-                scores={
-                    "craft": m.breakdown.craft_compatibility,
-                    "price": m.breakdown.price_compatibility,
-                    "capacity": m.breakdown.capacity_feasibility,
-                    "location": m.breakdown.location_score,
-                }
+            persisted_match_items.append(
+                B2BMatchRecordItem(
+                    id=m.artisan_id,
+                    artisan_id=m.artisan_id,
+                    artisan_name=m.artisan_name,
+                    cluster_name=m.cluster_name,
+                    match_percentage=m.match_percentage,
+                    capacity_feasible=m.capacity_feasible,
+                    estimated_production_days=m.estimated_production_days,
+                    quoted_unit_price=m.offered_wholesale_price,
+                    distance_km=m.distance_km or 0.0,
+                    match_explanation=m.match_explanation,
+                    scores={
+                        "craft": m.breakdown.craft_compatibility,
+                        "price": m.breakdown.price_compatibility,
+                        "capacity": m.breakdown.capacity_feasibility,
+                        "location": m.breakdown.location_score,
+                    }
+                )
             )
-        )
 
     try:
         db.commit()

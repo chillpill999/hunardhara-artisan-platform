@@ -20,7 +20,7 @@ export default function B2BMatchmakerPage() {
   const [budgetPerUnit, setBudgetPerUnit] = useState(1800);
   const [deadlineDays, setDeadlineDays] = useState(45);
   const [deliveryState, setDeliveryState] = useState("Delhi");
-  const [companyName, setCompanyName] = useState("Heritage Living Boutique");
+  const [companyName, setCompanyName] = useState("");
   const [isMatching, setIsMatching] = useState(false);
   const [matchResult, setMatchResult] = useState<B2BMatchResponse | null>(null);
 

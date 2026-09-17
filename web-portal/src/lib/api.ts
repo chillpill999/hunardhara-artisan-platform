@@ -516,36 +516,16 @@ export function normalizeProduct(raw: any): Product {
   const artisanName =
     raw.artisan_name ||
     raw.profiles?.full_name ||
-    (raw.craft_type?.includes('Silk')
-      ? 'Radheshyam Ansari'
-      : raw.craft_type?.includes('Dhokra')
-      ? 'Sukhdev Baghel'
-      : raw.craft_type?.includes('Pottery')
-      ? 'Mohammad Aslam'
-      : raw.craft_type?.includes('Madhubani')
-      ? 'Devi Bai'
-      : raw.craft_type?.includes('Channapatna')
-      ? 'B. Venkatesh'
-      : 'Master Artisan');
+    'प्रमाणित शिल्पकार (Certified Artisan)';
 
   const artisanState =
     raw.artisan_state ||
     raw.state ||
-    (raw.craft_type?.includes('Silk')
-      ? 'Uttar Pradesh'
-      : raw.craft_type?.includes('Dhokra')
-      ? 'Chhattisgarh'
-      : raw.craft_type?.includes('Pottery')
-      ? 'Uttar Pradesh'
-      : raw.craft_type?.includes('Madhubani')
-      ? 'Bihar'
-      : raw.craft_type?.includes('Channapatna')
-      ? 'Karnataka'
-      : 'India');
+    'India';
 
   return {
     id: String(raw.id || `prod-${Date.now()}`),
-    artisan_id: String(raw.artisan_id || '11111111-1111-1111-1111-111111111111'),
+    artisan_id: String(raw.artisan_id || ''),
     cluster_id: raw.cluster_id ? String(raw.cluster_id) : undefined,
     title_en: titleEn,
     title_hi: titleHi,
@@ -606,12 +586,6 @@ export async function fetchProducts(): Promise<Product[]> {
     }
   } catch {
     // Graceful fallback to rich seed catalog if server is not booted
-  }
-
-  if (allProducts.length === 0) {
-    const ids = new Set([...localUploaded, ...supabaseProducts].map(p => p.id));
-    const primarySeeds = SEED_PRODUCTS.filter(p => !p.is_alias);
-    allProducts = [...localUploaded, ...supabaseProducts, ...primarySeeds.map(normalizeProduct).filter(p => !ids.has(p.id))];
   }
 
   return allProducts.filter((p) => !removedIds.has(p.id));
@@ -676,9 +650,6 @@ export async function fetchProductById(id: string): Promise<Product | null> {
     // Fallback
   }
 
-  // 4. Check seed products
-  const seedFound = SEED_PRODUCTS.find((p) => p.id === id) || (aliasId ? SEED_PRODUCTS.find((p) => p.id === aliasId) : undefined);
-  if (seedFound && !removedIds.has(seedFound.id)) return normalizeProduct(seedFound);
   return null;
 }
 
@@ -686,76 +657,10 @@ export async function fetchClusters(): Promise<CraftCluster[]> {
   try {
     const res = await fetch(`${API_BASE}/clusters`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) return await res.json();
-  } catch {
-    // Fallback
+  } catch (err) {
+    console.warn("fetchClusters error:", err);
   }
-  return [
-    {
-      id: "varanasi",
-      name: "Varanasi Silk Cluster",
-      craft_type: "Varanasi Silk",
-      state: "Uttar Pradesh",
-      district: "Varanasi",
-      latitude: 25.3176,
-      longitude: 82.9739,
-      gi_certified: true,
-      statutory_minimum_daily_wage: 650,
-      active_artisans_count: 4200,
-      description: "Centuries-old jacquard handloom brocade weaving cluster."
-    },
-    {
-      id: "bastar",
-      name: "Bastar Dhokra Cluster",
-      craft_type: "Bastar Dhokra",
-      state: "Chhattisgarh",
-      district: "Bastar",
-      latitude: 19.0744,
-      longitude: 82.0073,
-      gi_certified: true,
-      statutory_minimum_daily_wage: 520,
-      active_artisans_count: 1850,
-      description: "Ancient lost-wax bell metal casting cluster."
-    },
-    {
-      id: "khurja",
-      name: "Khurja Pottery Cluster",
-      craft_type: "Khurja Pottery",
-      state: "Uttar Pradesh",
-      district: "Bulandshahr",
-      latitude: 28.2561,
-      longitude: 77.8549,
-      gi_certified: true,
-      statutory_minimum_daily_wage: 480,
-      active_artisans_count: 3100,
-      description: "Historic ceramic and high-fire glazed pottery cluster."
-    },
-    {
-      id: "madhubani",
-      name: "Madhubani Painting Cluster",
-      craft_type: "Madhubani Painting",
-      state: "Bihar",
-      district: "Madhubani",
-      latitude: 26.3542,
-      longitude: 86.0718,
-      gi_certified: true,
-      statutory_minimum_daily_wage: 450,
-      active_artisans_count: 5600,
-      description: "Mithila folk art cluster preserving sacred geometric motifs."
-    },
-    {
-      id: "channapatna",
-      name: "Channapatna Wooden Toys Cluster",
-      craft_type: "Channapatna Wooden Toys",
-      state: "Karnataka",
-      district: "Ramanagara",
-      latitude: 12.6518,
-      longitude: 77.2089,
-      gi_certified: true,
-      statutory_minimum_daily_wage: 540,
-      active_artisans_count: 2400,
-      description: "Eco-friendly vegetable lacquered wooden toy cluster."
-    }
-  ];
+  return [];
 }
 
 export async function matchB2BRFQ(rfq: B2BRFQRequest): Promise<B2BMatchResponse> {
@@ -766,36 +671,18 @@ export async function matchB2BRFQ(rfq: B2BRFQRequest): Promise<B2BMatchResponse>
       body: JSON.stringify(rfq)
     });
     if (res.ok) return await res.json();
-  } catch {
-    // Offline heuristic fallback for live pitch demonstration
+  } catch (err) {
+    console.warn("B2B matching service note:", err);
   }
-  
-  // Return simulated high-fidelity match for demo
-  const isBastar = rfq.required_craft_type.toLowerCase().includes("dhokra") || rfq.required_craft_type.toLowerCase().includes("brass");
+
+  // Return truthful empty matches when matching service is unavailable or finds 0 matches
   return {
     required_craft: rfq.required_craft_type,
     quantity: rfq.quantity,
     buyer_budget: rfq.budget_per_unit,
-    total_matches_found: 3,
-    cluster_consortium_recommended: rfq.quantity > 50,
-    matched_artisans: [
-      {
-        artisan_id: isBastar ? "art-bastar-01" : "art-varanasi-01",
-        artisan_name: isBastar ? "Sukhdev Baghel" : "Radheshyam Ansari",
-        cluster_name: isBastar ? "Bastar Dhokra Cluster" : "Varanasi Silk Cluster",
-        state: isBastar ? "Chhattisgarh" : "Uttar Pradesh",
-        overall_match_percentage: 86.5,
-        craft_compatibility_score: 95.0,
-        price_compatibility_score: 88.0,
-        capacity_feasibility_score: rfq.quantity <= 30 ? 90.0 : 65.0,
-        location_proximity_score: 80.0,
-        solo_capacity_feasible: rfq.quantity <= 30,
-        cluster_consortium_feasible: true,
-        artisan_monthly_capacity: isBastar ? 30 : 20,
-        artisan_wholesale_rate: isBastar ? 2150 : 8500,
-        match_rationale: `Verified Master Artisan in ${isBastar ? "Bastar" : "Varanasi"}. Wholesale rate is within your target budget. ${rfq.quantity > 30 ? "Can fulfill this order via MoSJE Self-Help Group (SHG) cluster consortium pooling 4 artisans." : "Single workshop has sufficient inventory capacity to fulfill within your deadline."}`
-      }
-    ]
+    total_matches_found: 0,
+    cluster_consortium_recommended: false,
+    matched_artisans: []
   };
 }
 
@@ -883,8 +770,70 @@ export const SEED_ARTISAN_EARNINGS: ArtisanEarnings = {
   ]
 };
 
-export async function fetchArtisanEarnings(): Promise<ArtisanEarnings> {
-  return SEED_ARTISAN_EARNINGS;
+export async function fetchArtisanEarnings(token?: string): Promise<ArtisanEarnings> {
+  try {
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/earnings`, { headers, signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const records = await res.json();
+      if (Array.isArray(records)) {
+        const totalRevenue = records.reduce((sum: number, r: any) => sum + (Number(r.gross_amount) || 0), 0);
+        const totalPayout = records.reduce((sum: number, r: any) => sum + (Number(r.artisan_wage_payout) || 0), 0);
+        const totalSaved = records.reduce((sum: number, r: any) => sum + (Number(r.middleman_saved) || 0), 0);
+        return {
+          artisan_id: records[0]?.artisan_id || "",
+          artisan_name: "Artisan",
+          craft_tradition: "Handicrafts",
+          cluster_name: "Indian Craft Cluster",
+          state: "India",
+          total_revenue_earned: totalRevenue,
+          middleman_margin_saved: totalSaved,
+          effective_daily_wage: records.length > 0 ? Math.round(totalPayout / records.length) : 0,
+          statutory_minimum_wage: 650,
+          total_orders_completed: records.filter((r: any) => r.status === 'PAID' || r.status === 'Settled').length,
+          pending_orders_count: records.filter((r: any) => r.status !== 'PAID' && r.status !== 'Settled').length,
+          total_items_sold: records.reduce((sum: number, r: any) => sum + (Number(r.quantity) || 1), 0),
+          recent_payouts: records.map((r: any) => ({
+            id: r.id,
+            order_id: r.order_id,
+            order_date: r.payout_date ? String(r.payout_date).split('T')[0] : '',
+            craft_title: r.product_title || 'Handcrafted Item',
+            buyer_name: 'Direct Verified Patron',
+            order_type: r.order_type || 'D2C Retail',
+            quantity: r.quantity || 1,
+            gross_amount: Number(r.gross_amount) || 0,
+            artisan_net_payout: Number(r.artisan_wage_payout) || 0,
+            middleman_cut_prevented: Number(r.middleman_saved) || 0,
+            payment_status: r.status || 'Settled',
+            payout_reference: r.id,
+            disbursed_at: r.payout_date || ''
+          })),
+          monthly_revenue_history: []
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("fetchArtisanEarnings error:", e);
+  }
+
+  // Truthful empty default when no verified earnings records exist
+  return {
+    artisan_id: "",
+    artisan_name: "",
+    craft_tradition: "",
+    cluster_name: "",
+    state: "",
+    total_revenue_earned: 0,
+    middleman_margin_saved: 0,
+    effective_daily_wage: 0,
+    statutory_minimum_wage: 650,
+    total_orders_completed: 0,
+    pending_orders_count: 0,
+    total_items_sold: 0,
+    recent_payouts: [],
+    monthly_revenue_history: []
+  };
 }
 
 export const STUDIO_PRESETS = [

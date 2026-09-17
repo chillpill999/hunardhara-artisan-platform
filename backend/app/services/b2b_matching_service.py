@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.artisan import Artisan
 from app.models.craft_cluster import CraftCluster
 from app.schemas.b2b import (
@@ -242,13 +243,14 @@ class B2BMatchingService:
 
     def get_candidate_artisans(self, db: Optional[Session] = None) -> List[Dict[str, Any]]:
         """
-        Collects all candidate artisans from seed profiles and active database records.
+        Collects candidate artisans:
+        - In production with active DB session: gathers exclusively verified active database artisans.
+        - In explicit OFFLINE_MODE or when db is None (offline tests): falls back to seed profiles.
         """
-        seed_candidates = self._load_seed_candidates()
-        candidates_by_id: Dict[str, Dict[str, Any]] = {c["artisan_id"]: dict(c) for c in seed_candidates}
+        candidates_by_id: Dict[str, Dict[str, Any]] = {}
 
-        # Merge database records if DB session is supplied
-        if db:
+        # 1. Production Mode: Strict verified database artisans only
+        if db is not None and not settings.OFFLINE_MODE:
             try:
                 db_artisans = db.query(Artisan).filter(Artisan.is_active == True).all()
                 for a in db_artisans:
@@ -267,14 +269,54 @@ class B2BMatchingService:
                     elif cluster and cluster.statutory_daily_wage:
                         wholesale_price = cluster.statutory_daily_wage * 2.5
 
-                    # If artisan already exists in seed data, keep seed data or merge
+                    candidates_by_id[a.id] = {
+                        "artisan_id": a.id,
+                        "artisan_name": a.full_name,
+                        "cluster_id": cid,
+                        "cluster_name": c_name,
+                        "location_str": f"{a.district or ''}, {a.state or ''}".strip(", "),
+                        "craft_specialty": a.primary_craft,
+                        "monthly_capacity_units": a.monthly_capacity_units or 30,
+                        "average_wholesale_price_inr": wholesale_price,
+                        "latitude": c_lat,
+                        "longitude": c_lon,
+                        "experience_years": a.experience_years or 5,
+                        "verified": getattr(a, "is_verified", True),
+                    }
+                return list(candidates_by_id.values())
+            except Exception as e:
+                logger.warning(f"Error querying database artisans: {e}")
+                return []
+
+        # 2. Isolated Offline / Test Fallback: load seed candidates only if explicitly OFFLINE_MODE or db is None
+        seed_candidates = self._load_seed_candidates()
+        candidates_by_id = {c["artisan_id"]: dict(c) for c in seed_candidates}
+
+        if db:
+            try:
+                db_artisans = db.query(Artisan).filter(Artisan.is_active == True).all()
+                for a in db_artisans:
+                    cid = a.cluster_id
+                    cluster = a.cluster
+                    c_name = cluster.name if cluster else "Regional Craft Cluster"
+                    c_lat = a.latitude or (cluster.latitude if cluster else 20.0)
+                    c_lon = a.longitude or (cluster.longitude if cluster else 78.0)
+
+                    wholesale_price = 1200.0
+                    if a.products and len(a.products) > 0:
+                        prices = [p.wholesale_b2b_price for p in a.products if p.wholesale_b2b_price]
+                        if prices:
+                            wholesale_price = min(prices)
+                    elif cluster and cluster.statutory_daily_wage:
+                        wholesale_price = cluster.statutory_daily_wage * 2.5
+
                     if a.id not in candidates_by_id:
                         candidates_by_id[a.id] = {
                             "artisan_id": a.id,
                             "artisan_name": a.full_name,
                             "cluster_id": cid,
                             "cluster_name": c_name,
-                            "location_str": f"{a.district}, {a.state}".strip(", "),
+                            "location_str": f"{a.district or ''}, {a.state or ''}".strip(", "),
                             "craft_specialty": a.primary_craft,
                             "monthly_capacity_units": a.monthly_capacity_units or 30,
                             "average_wholesale_price_inr": wholesale_price,
