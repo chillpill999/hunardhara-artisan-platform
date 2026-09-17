@@ -68,6 +68,11 @@ class VoiceService:
                 language_code=lang_code
             )
 
+            if not extract_res.get("success"):
+                err_detail = extract_res.get("error", "AI craft extraction failed")
+                logger.error(f"Sarvam LLM extraction failure: {err_detail}")
+                raise ValueError(f"AI_EXTRACTION_FAILED: {err_detail}")
+
             # If transcript requires clarification (e.g. pure greetings or insufficient craft content)
             if extract_res.get("requires_clarification"):
                 return VoiceCatalogResponse(
@@ -92,19 +97,19 @@ class VoiceService:
                 )
 
             extracted_attrs = extract_res.get("attributes", {})
-            craft_type = extracted_attrs.get("craft_type")
-            product_name_hi = extracted_attrs.get("product_name_hi")
-            product_name_en = extracted_attrs.get("product_name_en")
+            craft_type = extracted_attrs.get("craft_type") or None
+            product_name_hi = extracted_attrs.get("product_name_hi") or None
+            product_name_en = extracted_attrs.get("product_name_en") or None
             materials = extracted_attrs.get("materials") or []
-            dimensions = extracted_attrs.get("dimensions")
+            dimensions = extracted_attrs.get("dimensions") or None
             days = extracted_attrs.get("production_days")
             if days is not None:
                 try:
                     days = float(days)
                 except Exception:
                     days = None
-            color = extracted_attrs.get("color")
-            technique = extracted_attrs.get("technique")
+            color = extracted_attrs.get("color") or None
+            technique = extracted_attrs.get("technique") or None
 
             # Translate transcript to English if needed
             trans_res = sarvam_service.translate_text(
@@ -117,15 +122,14 @@ class VoiceService:
             desc_hi = extracted_attrs.get("description_hi") or (f"{product_name_hi} - हस्तनिर्मित भारतीय शिल्प।" if product_name_hi else transcript)
             desc_en = extracted_attrs.get("description_en") or (f"{product_name_en} - Handcrafted Indian artisan item." if product_name_en else transcript_en)
 
-            tags = [t for t in [craft_type, "Indian Handicrafts", "Handmade", "Traditional Art", "Artisan"] if t]
-            if len(tags) < 5:
-                tags.extend(["MoSJE Certified", "Authentic Heritage", "VocalForLocal", "Handloom"])
+            # Truthful tags only; NEVER invent certifications such as 'MoSJE Certified'
+            tags = [t for t in [craft_type, "Indian Handicrafts", "Handmade", "Traditional Art", "Artisan", "Heritage Craft"] if t]
 
             return VoiceCatalogResponse(
                 transcript_original=transcript,
                 transcript_english=transcript_en,
                 attributes=VoiceCraftAttributes(
-                    product_name=product_name_en or product_name_hi,
+                    product_name=product_name_en or product_name_hi or None,
                     craft_type=craft_type,
                     materials=materials,
                     dimensions=dimensions,

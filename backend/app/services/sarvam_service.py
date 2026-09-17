@@ -337,21 +337,21 @@ class SarvamService:
             f"Transcript: \"{clean_t}\"\n\n"
             "STRICT TRUTHFULNESS RULES:\n"
             "1. Extract ONLY attributes explicitly stated in the transcript. Do NOT guess or extrapolate missing attributes.\n"
-            "2. Do NOT infer region, cluster, or GI certification unless explicitly stated by the artisan.\n"
-            "3. Do NOT invent dimensions, materials, production time, or cost. If not stated, return null.\n"
+            "2. Unknown values MUST remain null (or empty array [] for materials). NEVER invent product name, craft type, material, dimensions, price, certification, or location.\n"
+            "3. Do NOT infer region, cluster, or GI certification unless explicitly stated by the artisan.\n"
             "4. NEVER default to saree, silk, or Varanasi unless explicitly mentioned by the artisan.\n"
             "5. Return ONLY raw valid JSON with these exact keys (no markdown, no backticks):\n"
             "{\n"
-            '  "product_name_hi": "सटीक हिंदी नाम",\n'
-            '  "product_name_en": "Accurate English title",\n'
-            '  "craft_type": "Craft category if explicitly stated or obvious product category, else null",\n'
+            '  "product_name_hi": "सटीक हिंदी नाम यदि स्पष्ट रूप से बोला गया हो, अन्यथा null",\n'
+            '  "product_name_en": "Accurate English title if explicitly mentioned, else null",\n'
+            '  "craft_type": "Craft category if explicitly stated or directly identified from craft noun, else null",\n'
             '  "materials": ["only explicitly mentioned materials"],\n'
             '  "color": "only explicitly mentioned color or null",\n'
             '  "dimensions": null,\n'
             '  "production_days": null,\n'
             '  "material_cost": null,\n'
             '  "recommended_price": null,\n'
-            '  "description_hi": "सत्यनिष्ठ और आदरपूर्ण संक्षिप्त विवरण",\n'
+            '  "description_hi": "सत्यनिष्ठ और संक्षिप्त विवरण",\n'
             '  "description_en": "Truthful and concise description",\n'
             '  "voice_script_hi": "बधाई हो! आपके उत्पाद का विवरण तैयार है।",\n'
             '  "confidence": {"overall": 0.9},\n'
@@ -495,7 +495,17 @@ class SarvamService:
                 except Exception as e:
                     logger.warning(f"OpenRouter extraction note: {e}")
 
-        # 3. Deterministic Strict Explicit-Facts Indic Fallback parser (Zero Hallucination, Zero Canned Templates)
+        # In production mode, failed AI extraction must return failure; NEVER silently drop into mock/heuristics
+        if not settings.OFFLINE_MODE and not force_fallback:
+            logger.error("All production LLM craft extraction providers failed. Failing fast without mock fallback.")
+            return {
+                "success": False,
+                "requires_clarification": False,
+                "error": "AI_EXTRACTION_FAILED: Upstream AI craft extraction service unavailable.",
+                "attributes": None
+            }
+
+        # 3. Deterministic Strict Explicit-Facts Indic Fallback parser (Zero Hallucination, Zero Canned Templates - OFFLINE/TEST ONLY)
         t_lower = clean_t.lower()
 
         # Extract days if explicitly spoken (Default = None, NEVER hallucinate days!)
@@ -589,8 +599,8 @@ class SarvamService:
             name_en = "Varanasi Pure Katan Silk Handloom Saree" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "Handloom Woven Saree"
         else:
             craft = None
-            name_hi = "हस्तनिर्मित पारंपरिक भारतीय शिल्प"
-            name_en = "Authentic Indian Handcrafted Heritage Item"
+            name_hi = None
+            name_en = None
 
         # If zero craft attributes, materials, or economics were mentioned, prompt for clarification
         if craft is None and not mat and not days_detected and not cost_detected:
@@ -617,6 +627,13 @@ class SarvamService:
         if not color: verification_required.append("color")
         if not mat: verification_required.append("materials")
         if not craft: verification_required.append("craft_type")
+        if not name_hi and not name_en: verification_required.append("product_name")
+
+        item_label = f"'{name_hi}' " if name_hi else ""
+        if rec_price:
+            v_script = f"बधाई हो! आपके उत्पाद {item_label}की जानकारी तैयार है। इसका उचित बिक्री मूल्य ₹{rec_price} है।"
+        else:
+            v_script = f"बधाई हो! आपके उत्पाद {item_label}की जानकारी तैयार है।"
 
         return {
             "success": True,
@@ -633,7 +650,7 @@ class SarvamService:
                 "recommended_price": rec_price,
                 "description_hi": f"कारीगर द्वारा स्वयं वर्णित प्रामाणिक विवरण: \"{clean_t}\"",
                 "description_en": f"Authentic artisan product described as: \"{clean_t}\"",
-                "voice_script_hi": f"बधाई हो! आपके उत्पाद '{name_hi}' की जानकारी तैयार है।" if not rec_price else f"बधाई हो! आपके उत्पाद '{name_hi}' की जानकारी तैयार है। इसका उचित बिक्री मूल्य ₹{rec_price} है।",
+                "voice_script_hi": v_script,
                 "confidence_score": 0.85 if (days_detected and mat) else 0.65,
                 "facts_detected": {
                     "days": days_detected,

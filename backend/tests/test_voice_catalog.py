@@ -5,6 +5,17 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.voice_service import voice_service
 from app.services.offline_mock_engine import offline_voice_engine
+from app.core.security import create_access_token
+
+
+def artisan_auth_headers(artisan_id: str = "art-varanasi-001"):
+    token = create_access_token(artisan_id, extra_claims={"app_metadata": {"role": "artisan"}, "email": "artisan@crafts.gov.in"})
+    return {"Authorization": f"Bearer {token}"}
+
+
+def customer_auth_headers(customer_id: str = "cust-001"):
+    token = create_access_token(customer_id, extra_claims={"app_metadata": {"role": "customer"}, "email": "customer@crafts.gov.in"})
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -82,7 +93,8 @@ class TestVoiceToCatalogEngine:
             res = client.post(
                 "/api/v1/products/voice-catalog",
                 files={"audio": ("dhokra.wav", f, "audio/wav")},
-                data={"language_code": "hi"}
+                data={"language_code": "hi"},
+                headers=artisan_auth_headers()
             )
         assert res.status_code == 200
         data = res.json()
@@ -98,7 +110,8 @@ class TestVoiceToCatalogEngine:
             res = client.post(
                 "/api/v1/products/voice-catalog",
                 files={"audio": ("silence.wav", f, "audio/wav")},
-                data={"language_code": "hi"}
+                data={"language_code": "hi"},
+                headers=artisan_auth_headers()
             )
         assert res.status_code == 400
         assert "AUDIO_SILENT" in res.json()["detail"]
@@ -459,7 +472,8 @@ class TestVoiceToCatalogEngine:
             res = client.post(
                 "/api/v1/voice/speak-catalog",
                 files={"audio": ("silence.wav", f, "audio/wav")},
-                data={"language_code": "hi-IN"}
+                data={"language_code": "hi-IN"},
+                headers=artisan_auth_headers()
             )
         assert res.status_code == 400
         data = res.json()
@@ -472,7 +486,8 @@ class TestVoiceToCatalogEngine:
         res = client.post(
             "/api/v1/voice/speak-catalog",
             files={"audio": ("corrupt.wav", corrupt_wav, "audio/wav")},
-            data={"language_code": "hi-IN"}
+            data={"language_code": "hi-IN"},
+            headers=artisan_auth_headers()
         )
         assert res.status_code == 400
         data = res.json()
@@ -495,7 +510,8 @@ class TestVoiceToCatalogEngine:
             res = client.post(
                 "/api/v1/voice/speak-catalog",
                 files={"audio": ("artisan.wav", f, "audio/wav")},
-                data={"language_code": "hi-IN"}
+                data={"language_code": "hi-IN"},
+                headers=artisan_auth_headers()
             )
 
         assert res.status_code == 502
@@ -516,7 +532,8 @@ class TestVoiceToCatalogEngine:
             res = client.post(
                 "/api/v1/voice/speak-catalog",
                 files={"audio": ("artisan.wav", f, "audio/wav")},
-                data={"language_code": "hi-IN"}
+                data={"language_code": "hi-IN"},
+                headers=artisan_auth_headers()
             )
 
         assert res.status_code == 500
@@ -541,7 +558,8 @@ class TestVoiceToCatalogEngine:
             res = client.post(
                 "/api/v1/voice/speak-catalog",
                 files={"audio": ("artisan.wav", f, "audio/wav")},
-                data={"language_code": "hi-IN"}
+                data={"language_code": "hi-IN"},
+                headers=artisan_auth_headers()
             )
 
         assert res.status_code == 200
@@ -561,7 +579,8 @@ class TestVoiceToCatalogEngine:
                 res = client.post(
                     "/api/v1/voice/speak-catalog",
                     files={"audio": ("dhokra.wav", f, "audio/wav")},
-                    data={"language_code": "hi-IN"}
+                    data={"language_code": "hi-IN"},
+                    headers=artisan_auth_headers()
                 )
             assert res.status_code == 200
             data = res.json()
@@ -581,7 +600,8 @@ class TestVoiceToCatalogEngine:
                 res1 = client.post(
                     "/api/v1/voice/speak-catalog",
                     files={"audio": ("dhokra.wav", f1, "audio/wav")},
-                    data={"language_code": "hi-IN"}
+                    data={"language_code": "hi-IN"},
+                    headers=artisan_auth_headers()
                 )
             assert res1.status_code == 200
             data1 = res1.json()
@@ -591,7 +611,8 @@ class TestVoiceToCatalogEngine:
                 res2 = client.post(
                     "/api/v1/voice/speak-catalog",
                     files={"audio": ("khurja.opus", f2, "audio/ogg")},
-                    data={"language_code": "hi-IN"}
+                    data={"language_code": "hi-IN"},
+                    headers=artisan_auth_headers()
                 )
             assert res2.status_code == 200
             data2 = res2.json()
@@ -600,6 +621,101 @@ class TestVoiceToCatalogEngine:
             assert "Brass" not in str(data2["attributes"]["materials"])
         finally:
             settings.OFFLINE_MODE = original_offline
+
+    def test_voice_catalog_rbac_enforcement(self, client, sample_dhokra_audio_path):
+        """TC-VOICE-27: Voice catalog endpoints strictly require artisan or admin role."""
+        with open(sample_dhokra_audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        # 1. Anonymous call to /voice/speak-catalog -> 401 Unauthorized
+        res_anon = client.post(
+            "/api/v1/voice/speak-catalog",
+            files={"audio": ("dhokra.wav", audio_bytes, "audio/wav")},
+            data={"language_code": "hi-IN"}
+        )
+        assert res_anon.status_code == 401
+
+        # 2. Customer call to /voice/speak-catalog -> 403 Forbidden
+        res_cust = client.post(
+            "/api/v1/voice/speak-catalog",
+            files={"audio": ("dhokra.wav", audio_bytes, "audio/wav")},
+            data={"language_code": "hi-IN"},
+            headers=customer_auth_headers()
+        )
+        assert res_cust.status_code == 403
+
+        # 3. Anonymous call to /products/voice-catalog -> 401 Unauthorized
+        res_prod_anon = client.post(
+            "/api/v1/products/voice-catalog",
+            files={"audio": ("dhokra.wav", audio_bytes, "audio/wav")},
+            data={"language_code": "hi"}
+        )
+        assert res_prod_anon.status_code == 401
+
+        # 4. Customer call to /products/voice-catalog -> 403 Forbidden
+        res_prod_cust = client.post(
+            "/api/v1/products/voice-catalog",
+            files={"audio": ("dhokra.wav", audio_bytes, "audio/wav")},
+            data={"language_code": "hi"},
+            headers=customer_auth_headers()
+        )
+        assert res_prod_cust.status_code == 403
+
+    def test_voice_catalog_never_invents_mosje_certification(self, client, sample_dhokra_audio_path):
+        """TC-VOICE-28: Pipeline must never invent fake 'MoSJE Certified' tags for unverified crafts."""
+        with open(sample_dhokra_audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        catalog = voice_service.process_audio_bytes(audio_bytes, filename="bastar_horse.wav")
+        assert "MoSJE Certified" not in catalog.seo_tags
+
+        # Also verify via API endpoint
+        res = client.post(
+            "/api/v1/products/voice-catalog",
+            files={"audio": ("dhokra.wav", audio_bytes, "audio/wav")},
+            data={"language_code": "hi"},
+            headers=artisan_auth_headers()
+        )
+        assert res.status_code == 200
+        tags = res.json().get("seo_tags", [])
+        assert "MoSJE Certified" not in tags
+
+    def test_voice_catalog_truthfulness_unspecified_attributes_remain_null(self):
+        """TC-VOICE-29: AI extracts only facts explicitly present; unmentioned fields remain null/empty."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        # Transcript only mentions a bell with no materials, dimensions, days, or costs
+        res = svc.extract_craft_attributes("यह हाथ से बनी पारंपरिक घंटी है", force_fallback=True)
+        attrs = res.get("attributes", {})
+
+        # Dimensions, days, costs, prices must remain None
+        assert attrs.get("dimensions") is None
+        assert attrs.get("production_days") is None
+        assert attrs.get("material_cost") is None
+        assert attrs.get("wage_floor") is None
+        assert attrs.get("recommended_price") is None
+
+    def test_voice_fail_fast_on_extraction_error_in_production(self, client, monkeypatch):
+        """TC-VOICE-30: Upstream AI extraction failure in production must return HTTP 502 with zero canned fallback."""
+        from app.services.sarvam_service import sarvam_service
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(
+            sarvam_service,
+            "extract_craft_attributes",
+            lambda *args, **kwargs: {"success": False, "error": "Simulated upstream AI failure (502)"}
+        )
+
+        res = client.post(
+            "/api/v1/voice/extract-catalog",
+            json={"transcript": "यह शुद्ध सिल्क की बनारसी साड़ी है", "language_code": "hi-IN"},
+            headers=artisan_auth_headers()
+        )
+        assert res.status_code == 502
+        data = res.json()
+        assert "AI_EXTRACTION_FAILED" in str(data)
 
 
 

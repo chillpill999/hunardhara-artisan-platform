@@ -96,11 +96,13 @@ async def product_analyze_image(
 @router.post("/voice-catalog", response_model=VoiceCatalogResponse, summary="Indic Voice-to-Catalog")
 async def product_voice_catalog_upload(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a)"),
-    language_code: str = Form("hi", description="ISO 639 Indic language code")
+    language_code: str = Form("hi", description="ISO 639 Indic language code"),
+    current_user: CurrentUser = Depends(require_artisan)
 ):
     """
     R2 Voice-to-Catalog Pipeline:
-    Extracts 7 mandatory craft attributes, bilingual marketing descriptions, and SEO tags.
+    Extracts structured craft attributes, bilingual marketing descriptions, and SEO tags.
+    Requires authenticated artisan or admin.
     """
     if not audio.filename:
         raise HTTPException(status_code=400, detail="INVALID_AUDIO_FORMAT_OR_CORRUPT")
@@ -121,7 +123,7 @@ async def product_voice_catalog_upload(
             raise HTTPException(status_code=400, detail="AUDIO_SILENT_OR_INCOMPREHENSIBLE")
         if "CORRUPT" in err_msg or "INVALID" in err_msg:
             raise HTTPException(status_code=400, detail="INVALID_AUDIO_FORMAT_OR_CORRUPT")
-        if "ASR_TRANSCRIPTION_FAILED" in err_msg:
+        if "ASR_TRANSCRIPTION_FAILED" in err_msg or "AI_EXTRACTION_FAILED" in err_msg:
             raise HTTPException(status_code=502, detail=err_msg)
         raise HTTPException(status_code=400, detail=err_msg)
     except RuntimeError as re:

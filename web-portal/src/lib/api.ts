@@ -1041,8 +1041,12 @@ export async function speakToCatalog(
   formData.append("language_code", languageCode);
 
   try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
     const res = await fetch(`${API_BASE}/voice/speak-catalog`, {
       method: "POST",
+      headers: {
+        ...authHeaders,
+      },
       body: formData,
     });
 
@@ -1078,8 +1082,12 @@ export async function transcribeAudio(
   formData.append("language_code", languageCode);
 
   try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
     const res = await fetch(`${API_BASE}/voice/transcribe`, {
       method: "POST",
+      headers: {
+        ...authHeaders,
+      },
       body: formData,
     });
     const data = await res.json();
@@ -1159,11 +1167,13 @@ export async function extractCraftFromVoice(
   }
 
   try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
     const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
+        ...authHeaders,
       },
       body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode }),
     });
@@ -1322,6 +1332,61 @@ export async function analyzeCraftImage(
     model: 'sovereign-vision-curator',
     provider: 'sovereign-ai'
   };
+}
+
+/**
+ * Creates a verified product listing in backend database.
+ * Strictly requires authenticated artisan/admin authorization header.
+ */
+export async function createBackendProduct(payload: {
+  title: string;
+  description?: string;
+  description_hindi?: string;
+  description_english?: string;
+  craft_type: string;
+  cluster_id: string;
+  listing_price: number;
+  cost_materials: number;
+  labor_hours: number;
+  stock_quantity?: number;
+  artisan_id?: string;
+  technique?: string;
+  materials?: string[];
+  studio_image_url?: string;
+}): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    const bodyPayload = {
+      title: payload.title,
+      craft_type: payload.craft_type,
+      technique: payload.technique || 'हस्तशिल्प कारीगरी (Artisanal Craftwork)',
+      cluster_id: payload.cluster_id,
+      artisan_id: payload.artisan_id || 'art-current-user',
+      listing_price: payload.listing_price,
+      cost_materials: payload.cost_materials,
+      labor_hours: payload.labor_hours,
+      stock_quantity: payload.stock_quantity ?? 5,
+      materials: payload.materials || [],
+      description_hindi: payload.description_hindi || payload.description || '',
+      description_english: payload.description_english || payload.description || '',
+      studio_image_url: payload.studio_image_url,
+    };
+    const res = await fetch(`${API_BASE}/products`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify(bodyPayload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.detail || `Product creation failed (HTTP ${res.status})` };
+    }
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Network error creating product listing" };
+  }
 }
 
 

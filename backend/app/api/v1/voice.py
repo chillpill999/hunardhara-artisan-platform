@@ -1,10 +1,11 @@
 import logging
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.core.security import CurrentUser, require_artisan
 from app.services.sarvam_service import sarvam_service
 from app.services.offline_mock_engine import offline_voice_engine
 
@@ -90,15 +91,15 @@ def hunar_saathi_chat(req: ChatRequest):
     )
 
 
-from fastapi import File, UploadFile, Form
-
 @router.post("/transcribe", response_model=TranscribeResponse, summary="Transcribe Indic Audio (Sarvam Saarika ASR)")
 async def transcribe_audio(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a)"),
-    language_code: str = Form("hi-IN", description="Language code e.g. hi-IN")
+    language_code: str = Form("hi-IN", description="Language code e.g. hi-IN"),
+    current_user: CurrentUser = Depends(require_artisan)
 ):
     """
     Transcribes audio recording in Hindi/Indic languages to Devanagari text using Sarvam Saarika.
+    Requires authenticated artisan or admin.
     """
     audio_bytes = await audio.read()
     if not audio_bytes or len(audio_bytes) < 10:
@@ -140,21 +141,33 @@ class ExtractCatalogRequest(BaseModel):
 
 
 @router.post("/extract-catalog", summary="Extract Craft Attributes via Sarvam AI")
-def extract_catalog_from_voice(req: ExtractCatalogRequest):
+def extract_catalog_from_voice(
+    req: ExtractCatalogRequest,
+    current_user: CurrentUser = Depends(require_artisan)
+):
     """
-    Parses spoken artisan description into 7 structured craft attributes,
+    Parses spoken artisan description into structured craft attributes,
     calculates statutory wage floor, and prepares bilingual listing details.
+    Requires authenticated artisan or admin.
     """
-    return sarvam_service.extract_craft_attributes(
+    res = sarvam_service.extract_craft_attributes(
         transcript=req.transcript,
         language_code=req.language_code or "hi-IN"
     )
+    if not res.get("success") and not res.get("requires_clarification"):
+        err_detail = res.get("error", "Upstream craft extraction failed.")
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI_EXTRACTION_FAILED: {err_detail}"
+        )
+    return res
 
 
 @router.post("/speak-catalog", summary="End-to-End Speak-to-Catalog via Sarvam AI")
 async def speak_to_catalog(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a / .webm)"),
-    language_code: str = Form("hi-IN", description="Language code")
+    language_code: str = Form("hi-IN", description="Language code"),
+    current_user: CurrentUser = Depends(require_artisan)
 ):
     """
     Canonical Speak-to-Catalog Pipeline:
@@ -227,11 +240,22 @@ async def speak_to_catalog(
             content={"success": False, "error": "AUDIO_SILENT_OR_INCOMPREHENSIBLE"}
         )
 
-    # 5. Extract structured craft attributes
     extract_res = sarvam_service.extract_craft_attributes(
         transcript=transcript,
         language_code=lang_code
     )
+
+    if not extract_res.get("success") and not extract_res.get("requires_clarification"):
+        err_detail = extract_res.get("error", "AI craft extraction failed")
+        logger.error(f"Sarvam LLM extraction failure: {err_detail}")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "success": False,
+                "error": f"AI_EXTRACTION_FAILED: {err_detail}",
+                "details": extract_res
+            }
+        )
 
     # Clarification Gating: greetings-only or missing craft details
     extracted_attrs = extract_res.get("attributes")

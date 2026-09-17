@@ -117,21 +117,30 @@ class OpenRouterService:
                 match = re.search(r'\{[\s\S]*\}', raw_output)
                 if match:
                     parsed = json.loads(match.group(0))
+                    p_days = parsed.get("production_time_days")
+                    if p_days is not None:
+                        try:
+                            p_days = float(p_days)
+                        except Exception:
+                            p_days = None
+
                     attributes = VoiceCraftAttributes(
-                        product_name=parsed.get("product_name", "Handcrafted Indian Artisan Item"),
-                        craft_type=parsed.get("craft_type", "Traditional Craft"),
-                        materials=parsed.get("materials", ["Natural Craft Material"]),
-                        dimensions=parsed.get("dimensions", "Standard Size"),
-                        production_time_days=float(parsed.get("production_time_days", 3.0)),
-                        technique=parsed.get("technique", "Handcrafted"),
-                        color=parsed.get("color", "Traditional Color")
+                        product_name=parsed.get("product_name") or None,
+                        craft_type=parsed.get("craft_type") or None,
+                        materials=parsed.get("materials") or [],
+                        dimensions=parsed.get("dimensions") or None,
+                        production_time_days=p_days,
+                        technique=parsed.get("technique") or None,
+                        color=parsed.get("color") or None
                     )
                     mkt = parsed.get("marketing_description", {})
+                    p_title = attributes.product_name or ""
                     marketing_description = MarketingDescription(
                         hi=mkt.get("hi", transcript),
-                        en=mkt.get("en", f"Handcrafted {attributes.product_name} created with traditional technique.")
+                        en=mkt.get("en", f"Handcrafted {p_title} created with traditional technique." if p_title else transcript)
                     )
-                    tags = parsed.get("seo_tags", [attributes.craft_type, "Indian Handicrafts", "Artisan Made", "MoSJE", "Authentic"])
+                    base_tags = [attributes.craft_type, "Indian Handicrafts", "Artisan Made", "Authentic Heritage"]
+                    tags = [t for t in parsed.get("seo_tags", base_tags) if t and "MoSJE Certified" not in t]
                     if len(tags) < 5:
                         tags.extend(["Handcrafted", "Traditional Art"])
 

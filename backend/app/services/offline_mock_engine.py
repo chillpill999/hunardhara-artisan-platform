@@ -28,7 +28,7 @@ CRAFT_KNOWLEDGE_BASE = {
             "Tribal Brass Art",
             "Lost Wax Casting",
             "Indian Handicrafts",
-            "MoSJE Certified",
+            "Tribal Heritage",
             "Bell Metal Craft"
         ]
     },

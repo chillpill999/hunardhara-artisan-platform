@@ -10,7 +10,8 @@ import {
   extractCraftFromVoice,
   synthesizeSpeech,
   saveUploadedProduct,
-  analyzeCraftImage
+  analyzeCraftImage,
+  createBackendProduct
 } from '@/lib/api';
 import { Product } from '@/lib/types';
 import {
@@ -200,7 +201,7 @@ registerProcessor('pcm-recorder-processor', PCMRecorderProcessor);
 `;
 
 export default function ArtisanStudio() {
-  const { user } = useAuth();
+  const { user, role, profile } = useAuth();
 
   // Mode: Prioritize Voice ("Speak First") by default
   const [entryMode, setEntryMode] = useState<'voice' | 'photo'>('voice');
@@ -710,14 +711,16 @@ export default function ArtisanStudio() {
       const cost = craftData.material_cost ?? null;
       const floor = craftData.wage_floor ?? (days !== null && cost !== null ? cost + days * 650 : null);
       const price = craftData.recommended_price ?? (floor !== null ? Math.round((floor * 1.25) / 50) * 50 : null);
+      const prodNameHi = craftData.product_name_hi || '';
+      const prodNameEn = craftData.product_name_en || '';
       const voiceScript = craftData.voice_script_hi || (price !== null
-        ? `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`
-        : `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`);
+        ? `बधाई हो! आपका उत्पाद ${prodNameHi ? prodNameHi + ' ' : ''}तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`
+        : `बधाई हो! आपका उत्पाद ${prodNameHi ? prodNameHi + ' ' : ''}पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`);
 
       const newExtracted: ExtractedAttributes = {
-        productName: craftData.product_name_en || 'Handcrafted Artisan Craft',
-        productNameHi: craftData.product_name_hi || 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
-        craftType: craftData.craft_type || 'Traditional Indian Craft',
+        productName: prodNameEn,
+        productNameHi: prodNameHi,
+        craftType: craftData.craft_type || '',
         materials: craftData.materials && craftData.materials.length > 0 ? craftData.materials : [],
         color: craftData.color || '',
         dimensions: craftData.dimensions || '',
@@ -726,7 +729,7 @@ export default function ArtisanStudio() {
         wageFloor: floor,
         recommendedPrice: price,
         descriptionHi: craftData.description_hi || spokenText,
-        descriptionEn: craftData.description_en || 'Authentic handcrafted heritage item.',
+        descriptionEn: craftData.description_en || '',
         voiceScriptHi: voiceScript,
         confidenceScore: craftData.confidence_score ?? 0.95,
         factsDetected: craftData.facts_detected,
@@ -806,14 +809,15 @@ export default function ArtisanStudio() {
       const cost = craftData.material_cost ?? null;
       const floor = craftData.wage_floor ?? (days !== null && cost !== null ? cost + days * 650 : null);
       const price = craftData.recommended_price ?? (floor !== null ? Math.round((floor * 1.25) / 50) * 50 : null);
+      const titleHi = craftData.product_name_hi || '';
       const voiceScript = craftData.voice_script_hi || (price !== null
-        ? `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} तैयार है। ${days} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`
-        : `बधाई हो! आपका उत्पाद ${craftData.product_name_hi} पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`);
+        ? `बधाई हो! आपका उत्पाद ${titleHi || 'शिल्प'} तैयार है। ${days ?? ''} दिनों के परिश्रम और सामग्री को जोड़कर इसका उचित बिक्री मूल्य ₹${price.toLocaleString('en-IN')} तय किया गया है।`
+        : `बधाई हो! आपका उत्पाद ${titleHi || 'शिल्प'} पहचाना गया है। कृपया उचित मूल्य तय करने के लिए निर्माण समय और सामग्री लागत की पुष्टि करें।`);
 
       const newExtracted: ExtractedAttributes = {
-        productName: craftData.product_name_en || 'Handcrafted Artisan Craft',
-        productNameHi: craftData.product_name_hi || 'हस्तनिर्मित पारंपरिक भारतीय शिल्प',
-        craftType: craftData.craft_type || 'Traditional Indian Craft',
+        productName: craftData.product_name_en || '',
+        productNameHi: craftData.product_name_hi || '',
+        craftType: craftData.craft_type || '',
         materials: craftData.materials && craftData.materials.length > 0 ? craftData.materials : [],
         color: craftData.color || '',
         dimensions: craftData.dimensions || '',
@@ -821,8 +825,8 @@ export default function ArtisanStudio() {
         materialCost: cost,
         wageFloor: floor,
         recommendedPrice: price,
-        descriptionHi: craftData.description_hi || spokenText,
-        descriptionEn: craftData.description_en || 'Authentic handcrafted heritage item.',
+        descriptionHi: craftData.description_hi || spokenText || '',
+        descriptionEn: craftData.description_en || '',
         voiceScriptHi: voiceScript,
         confidenceScore: craftData.confidence_score ?? 0.92,
         factsDetected: craftData.facts_detected,
@@ -912,15 +916,30 @@ export default function ArtisanStudio() {
   // Publish to Database & Live Marketplace
   const handleConfirmAndPublish = async () => {
     if (!extractedData) return;
+
+    // Strict Authorization: Only authenticated artisans or admins may publish products
+    if (!user || (role !== 'artisan' && role !== 'admin')) {
+      alert('कृपया उत्पाद प्रकाशित करने के लिए शिल्पकार के रूप में लॉगिन करें (Only authorized artisans can publish craft catalogs).');
+      return;
+    }
+
+    const finalTitle = extractedData.productNameHi?.trim() || extractedData.productName?.trim();
+    const finalCraft = extractedData.craftType?.trim();
+    if (!finalTitle || !finalCraft) {
+      alert('कृपया प्रकाशन से पहले उत्पाद का नाम और शिल्प प्रकार अवश्य दर्ज करें (Product name and craft type are required before publishing).');
+      setIsEditMode(true);
+      return;
+    }
+
     setIsPublishing(true);
     try {
-      const newId = `prod-live-${Date.now().toString().slice(-6)}`;
+      let newId = `prod-live-${Date.now().toString().slice(-6)}`;
 
       // Resolve final studio image (No keyword forcing; use actual captured photo or neutral craft placeholder)
       const finalStudioImage = photoUrl || '/static/studio/placeholder_craft.jpg';
 
       let clusterId = 'cluster-general-handicraft';
-      const ct = (extractedData.craftType || '').toLowerCase();
+      const ct = finalCraft.toLowerCase();
       if (ct.includes('varanasi') || ct.includes('banarasi') || ct.includes('katan') || ct.includes('बनारसी')) {
         clusterId = 'cluster-varanasi-silk';
       } else if (ct.includes('bastar') || ct.includes('dhokra') || ct.includes('बस्तर') || ct.includes('ढोकरा')) {
@@ -933,13 +952,34 @@ export default function ArtisanStudio() {
         clusterId = 'cluster-channapatna-toys';
       }
 
+      // Persist to backend database with authenticated artisan credentials
+      const backendCreateRes = await createBackendProduct({
+        title: finalTitle,
+        description: extractedData.descriptionHi || extractedData.descriptionEn || '',
+        description_hindi: extractedData.descriptionHi || '',
+        description_english: extractedData.descriptionEn || '',
+        craft_type: finalCraft,
+        cluster_id: clusterId,
+        listing_price: extractedData.recommendedPrice ?? (extractedData.wageFloor ?? 500),
+        cost_materials: extractedData.materialCost ?? 0,
+        labor_hours: (extractedData.productionDays ?? 1) * 8,
+        stock_quantity: 5,
+        artisan_id: user.id,
+        materials: extractedData.materials,
+        studio_image_url: finalStudioImage,
+      });
+
+      if (backendCreateRes.success && backendCreateRes.data?.id) {
+        newId = backendCreateRes.data.id;
+      }
+
       const newProduct: Product = {
         id: newId,
-        artisan_id: user?.id || 'art-current-user',
+        artisan_id: user.id,
         cluster_id: clusterId,
-        title_en: extractedData.productName,
-        title_hi: extractedData.productNameHi,
-        craft_type: extractedData.craftType,
+        title_en: extractedData.productName || finalTitle,
+        title_hi: extractedData.productNameHi || finalTitle,
+        craft_type: finalCraft,
         materials: extractedData.materials,
         dimensions: extractedData.dimensions || '',
         production_time_days: extractedData.productionDays ?? 1,
@@ -947,7 +987,7 @@ export default function ArtisanStudio() {
         color: extractedData.color || '',
         description_en: extractedData.descriptionEn,
         description_hi: extractedData.descriptionHi,
-        seo_tags: [extractedData.craftType, 'Handmade', 'GI Craft', 'Hunardhara Live'],
+        seo_tags: [finalCraft, 'Handmade', 'GI Craft', 'Hunardhara Live'],
         studio_image_url: finalStudioImage,
         floor_price: extractedData.wageFloor ?? 0,
         recommended_retail_d2c: extractedData.recommendedPrice ?? 0,
@@ -955,9 +995,9 @@ export default function ArtisanStudio() {
         available_stock: 5,
         is_published: true,
         created_at: new Date().toISOString(),
-        artisan_name: user?.user_metadata?.full_name || 'राधेश्याम अंसारी (Master Artisan)',
-        artisan_state: user?.user_metadata?.state || 'उत्तर प्रदेश',
-        gi_certified: clusterId !== 'cluster-general-handicraft',
+        artisan_name: user.user_metadata?.full_name || profile?.full_name || 'प्रमाणित शिल्पकार (Verified Artisan)',
+        artisan_state: user.user_metadata?.state || profile?.state || '',
+        gi_certified: Boolean((user.user_metadata as any)?.gi_certified),
       };
 
       // 1. Immediately persist locally (Guaranteed zero-latency live presentation upload)
@@ -1728,12 +1768,26 @@ export default function ArtisanStudio() {
               <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5 gap-2">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-bold text-[#6f5f58] uppercase">उत्पाद (Product):</span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ✓ सुना गया
-                  </span>
+                  {extractedData.productNameHi || extractedData.productName ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      ✓ सुना गया
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                      ✎ नाम आवश्यक
+                    </span>
+                  )}
                 </div>
                 <span className="text-sm font-bold text-[#231f1e] text-right">
-                  {extractedData.productNameHi}
+                  {extractedData.productNameHi || extractedData.productName || (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditMode(true)}
+                      className="text-amber-700 underline text-xs font-semibold cursor-pointer"
+                    >
+                      ✎ नाम दर्ज करें
+                    </button>
+                  )}
                 </span>
               </div>
 
@@ -1741,12 +1795,26 @@ export default function ArtisanStudio() {
               <div className="flex items-center justify-between border-b border-[#e6ded3] pb-2.5 gap-2">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-bold text-[#6f5f58] uppercase">शिल्प (Craft):</span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ✓ पहचाना गया
-                  </span>
+                  {extractedData.craftType ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      ✓ पहचाना गया
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                      ✎ शिल्प आवश्यक
+                    </span>
+                  )}
                 </div>
                 <span className="text-sm font-semibold text-[#1b4332] text-right">
-                  {extractedData.craftType}
+                  {extractedData.craftType || (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditMode(true)}
+                      className="text-amber-700 underline text-xs font-semibold cursor-pointer"
+                    >
+                      ✎ शिल्प चुनें
+                    </button>
+                  )}
                 </span>
               </div>
 
@@ -1769,7 +1837,7 @@ export default function ArtisanStudio() {
                   )}
                 </div>
                 <span className="text-sm font-medium text-[#231f1e] text-right">
-                  {extractedData.materials && extractedData.materials.length > 0 ? extractedData.materials.join(', ') : 'पारंपरिक सामग्री'}
+                  {extractedData.materials && extractedData.materials.length > 0 ? extractedData.materials.join(', ') : 'उल्लेख नहीं (अज्ञात)'}
                 </span>
               </div>
 
@@ -1792,7 +1860,7 @@ export default function ArtisanStudio() {
                   )}
                 </div>
                 <span className="text-sm font-medium text-[#231f1e] text-right">
-                  {extractedData.color || 'पारंपरिक प्राकृतिक'}
+                  {extractedData.color || 'उल्लेख नहीं (अज्ञात)'}
                 </span>
               </div>
 
