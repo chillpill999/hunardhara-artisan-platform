@@ -35,10 +35,52 @@ def create_customer_order(
 ):
     """
     Allows authenticated customers (or admins) to place an order for a craft product.
+    Enforces atomic inventory decrements to prevent overselling.
     """
+    # 1. Validate quantity bounds
+    if order_in.quantity < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_QUANTITY: Quantity must be at least 1."
+        )
+
     product = db.query(Product).filter(Product.id == order_in.product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    if not product.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PRODUCT_UNAVAILABLE: Product listing is currently inactive."
+        )
+
+    if product.listing_price <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_PRICE: Product listing price is invalid."
+        )
+
+    # 2. Check stock availability
+    if product.stock_quantity < order_in.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"INSUFFICIENT_STOCK: Requested {order_in.quantity} units, but only {product.stock_quantity} available in inventory."
+        )
+
+    # 3. Atomic conditional inventory decrement to guarantee race-condition safety
+    rows_updated = db.query(Product).filter(
+        Product.id == product.id,
+        Product.stock_quantity >= order_in.quantity,
+        Product.is_active == True
+    ).update(
+        {Product.stock_quantity: Product.stock_quantity - order_in.quantity},
+        synchronize_session="fetch"
+    )
+    if rows_updated == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"INSUFFICIENT_STOCK: Could not allocate {order_in.quantity} units due to concurrent purchase activity."
+        )
 
     order_id = f"ord-{uuid.uuid4().hex[:12]}"
     order_number = f"HN-{datetime.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
@@ -124,6 +166,20 @@ def update_order_status(
             detail=f"INVALID_STATUS: Allowed statuses are {sorted(list(valid_statuses))}"
         )
 
+    # 1. Prevent modification of terminal states
+    if order.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ORDER_TERMINATED: Cannot modify the status of an already cancelled order."
+        )
+    if order.status == "delivered" and new_status != "delivered":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ORDER_COMPLETED: Cannot modify the status of an already delivered order."
+        )
+
+    previous_status = order.status
+
     if current_user.is_admin:
         order.status = new_status
     elif current_user.id == order.artisan_id and current_user.role == "artisan":
@@ -144,6 +200,13 @@ def update_order_status(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to update this order."
+        )
+
+    # 2. Atomically replenish inventory when order is cancelled
+    if order.status == "cancelled" and previous_status != "cancelled":
+        db.query(Product).filter(Product.id == order.product_id).update(
+            {Product.stock_quantity: Product.stock_quantity + order.quantity},
+            synchronize_session="fetch"
         )
 
     db.commit()

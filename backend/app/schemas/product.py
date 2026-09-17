@@ -49,6 +49,8 @@ class ProductUpdate(BaseModel):
     title: Optional[str] = None
     listing_price: Optional[float] = None
     stock_quantity: Optional[int] = None
+    cost_materials: Optional[float] = None
+    labor_hours: Optional[float] = None
     description_hindi: Optional[str] = None
     description_english: Optional[str] = None
     is_active: Optional[bool] = None

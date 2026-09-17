@@ -81,8 +81,41 @@ def create_b2b_rfq(
     Creates a new institutional buyer RFQ, executes the multi-factor matchmaker,
     and persists matched artisan records with capacity and pricing breakdowns.
     """
-    quantity = rfq_in.quantity or rfq_in.required_quantity or 1
-    deadline_days = rfq_in.deadline_days or rfq_in.days_to_deadline or 30
+    quantity = rfq_in.quantity or rfq_in.required_quantity or 0
+    if quantity < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_QUANTITY: Required quantity must be at least 1."
+        )
+    if rfq_in.unit_budget <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_BUDGET: Unit budget must be greater than zero."
+        )
+    deadline_days = rfq_in.deadline_days or rfq_in.days_to_deadline or 0
+    if deadline_days < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="INVALID_DEADLINE: Deadline days must be at least 1."
+        )
+
+    # Prevent buyer impersonation: authenticated non-admins are strictly bound to their verified email
+    if current_user and not current_user.is_admin:
+        effective_buyer_email = current_user.email
+        effective_buyer_name = rfq_in.buyer_name or (current_user.email.split("@")[0].title() if current_user.email else "Verified Buyer")
+    elif current_user and current_user.is_admin:
+        effective_buyer_email = rfq_in.buyer_email or current_user.email
+        effective_buyer_name = rfq_in.buyer_name or "Procurement Administrator"
+    else:
+        # Anonymous submission requires a valid, non-empty email
+        if not rfq_in.buyer_email or "@" not in rfq_in.buyer_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_BUYER_EMAIL: A valid contact email is required to submit an RFQ."
+            )
+        effective_buyer_email = rfq_in.buyer_email
+        effective_buyer_name = rfq_in.buyer_name or "Procurement Buyer"
+
     total_budget = round(rfq_in.unit_budget * quantity, 2)
     rfq_id = f"rfq-{uuid.uuid4().hex[:12]}"
 
@@ -94,9 +127,9 @@ def create_b2b_rfq(
 
     rfq_model = B2BRFQ(
         id=rfq_id,
-        buyer_name=rfq_in.buyer_name or "Procurement Buyer",
+        buyer_name=effective_buyer_name,
         buyer_organization=rfq_in.buyer_organization,
-        buyer_email=rfq_in.buyer_email or (current_user.email if current_user else "buyer@crafts.gov.in"),
+        buyer_email=effective_buyer_email,
         buyer_phone=rfq_in.buyer_phone,
         craft_type=rfq_in.craft_type,
         required_quantity=quantity,

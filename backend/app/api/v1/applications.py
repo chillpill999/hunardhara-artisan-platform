@@ -1,4 +1,5 @@
 import uuid
+import hashlib
 from typing import List
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import CurrentUser, get_current_user, require_admin
 from app.models.artisan_application import ArtisanApplication
+from app.models.artisan import Artisan
+from app.models.craft_cluster import CraftCluster
 from app.schemas.applications import ArtisanApplicationCreate, ArtisanApplicationResponse
 
 router = APIRouter(tags=["Artisan Applications & Role Upgrades"])
@@ -73,6 +76,33 @@ def approve_application_admin(
 
     app_record.status = "approved"
     app_record.updated_at = datetime.now(timezone.utc)
+
+    # Ensure an active Artisan record exists in the database for foreign-key consistency
+    artisan = db.query(Artisan).filter(Artisan.id == app_record.user_id).first()
+    if not artisan:
+        cluster = db.query(CraftCluster).filter(CraftCluster.craft_name.ilike(f"%{app_record.craft_category}%")).first()
+        if not cluster:
+            cluster = db.query(CraftCluster).first()
+        cluster_id = cluster.id if cluster else "cluster-bastar-dhokra"
+
+        artisan = Artisan(
+            id=app_record.user_id,
+            full_name=f"Artisan {app_record.user_id[:8]}",
+            phone_number=f"+9198{uuid.uuid4().int % 100000000:08d}",
+            masked_aadhaar="XXXXXXXX0000",
+            aadhaar_hash=hashlib.sha256(f"seed-aadhaar-{app_record.user_id}".encode()).hexdigest(),
+            social_category="OBC",
+            cluster_id=cluster_id,
+            state=app_record.state or (cluster.state if cluster else "India"),
+            district=app_record.district or (cluster.district if cluster else "Central"),
+            latitude=cluster.latitude if cluster else 20.5937,
+            longitude=cluster.longitude if cluster else 78.9629,
+            primary_craft=app_record.craft_category,
+            experience_years=app_record.experience_years or 5,
+            is_active=True
+        )
+        db.add(artisan)
+
     db.commit()
     db.refresh(app_record)
     return app_record

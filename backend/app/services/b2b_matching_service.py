@@ -270,6 +270,7 @@ class B2BMatchingService:
                         wholesale_price = cluster.statutory_daily_wage * 2.5
 
                     candidates_by_id[a.id] = {
+                        "id": a.id,
                         "artisan_id": a.id,
                         "artisan_name": a.full_name,
                         "cluster_id": cid,
@@ -312,6 +313,7 @@ class B2BMatchingService:
 
                     if a.id not in candidates_by_id:
                         candidates_by_id[a.id] = {
+                            "id": a.id,
                             "artisan_id": a.id,
                             "artisan_name": a.full_name,
                             "cluster_id": cid,
