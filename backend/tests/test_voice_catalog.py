@@ -434,6 +434,7 @@ class TestVoiceToCatalogEngine:
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", "test-sarvam-key")
 
         # Mock sarvam_service.transcribe_speech to simulate upstream failure
         monkeypatch.setattr(
@@ -500,6 +501,7 @@ class TestVoiceToCatalogEngine:
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", "test-sarvam-key")
         monkeypatch.setattr(
             sarvam_service,
             "transcribe_speech",
@@ -548,10 +550,22 @@ class TestVoiceToCatalogEngine:
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", "test-sarvam-key")
         monkeypatch.setattr(
             sarvam_service,
             "transcribe_speech",
             lambda *args, **kwargs: {"success": True, "transcript": "नमस्ते, क्या आप मेरी मदद कर सकते हैं", "language_code": "hi-IN"}
+        )
+        monkeypatch.setattr(
+            sarvam_service,
+            "extract_craft_attributes",
+            lambda *args, **kwargs: {
+                "success": True,
+                "requires_clarification": True,
+                "message_hi": "आवाज़ में उत्पाद का विवरण नहीं मिला।",
+                "message_en": "No product craft details detected.",
+                "attributes": None
+            }
         )
 
         with open(sample_dhokra_audio_path, "rb") as f:

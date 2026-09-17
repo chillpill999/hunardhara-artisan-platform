@@ -594,9 +594,9 @@ class SarvamService:
             name_hi = "हस्तनिर्मित पारंपरिक लेदर मोजरी"
             name_en = "Handcrafted Traditional Leather Mojari"
         elif any(k in t_lower for k in ["साड़ी", "saree"]):
-            craft = "Varanasi Silk" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "Handloom Weaving"
-            name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "हस्तनिर्मित हथकरघा साड़ी"
-            name_en = "Varanasi Pure Katan Silk Handloom Saree" if any(k in t_lower for k in ["बनारस", "varanasi", "कतान", "katan"]) else "Handloom Woven Saree"
+            craft = "Varanasi Silk" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "Handloom Weaving"
+            name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "हस्तनिर्मित हथकरघा साड़ी"
+            name_en = "Varanasi Pure Katan Silk Handloom Saree" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "Handloom Woven Saree"
         else:
             craft = None
             name_hi = None

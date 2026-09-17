@@ -135,9 +135,12 @@ class TestOpenRouterGemmaIntegration:
 
     def test_api_endpoint_extract_catalog_with_gemma_pipeline(self, client):
         """TC-VISION-02: Verifies /api/v1/voice/extract-catalog integrates Gemma 4."""
+        from app.core.security import create_access_token
+        auth_token = create_access_token("artisan-user-123", extra_claims={"app_metadata": {"role": "artisan"}, "email": "artisan@crafts.gov.in"})
         res = client.post(
             "/api/v1/voice/extract-catalog",
-            json={"transcript": "यह वाराणसी की शुद्ध कातान सिल्क साड़ी है, 5 दिन लगे, 1200 रुपये लागत", "language_code": "hi-IN"}
+            json={"transcript": "यह वाराणसी की शुद्ध कातान सिल्क साड़ी है, 5 दिन लगे, 1200 रुपये लागत", "language_code": "hi-IN"},
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
         assert res.status_code == 200
         data = res.json()
