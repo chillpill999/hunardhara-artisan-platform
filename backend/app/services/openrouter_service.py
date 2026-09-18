@@ -58,7 +58,7 @@ class OpenRouterService:
                     headers=headers,
                     data=json.dumps(payload).encode("utf-8")
                 )
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=settings.OPENROUTER_TIMEOUT_SECONDS) as resp:
                     if resp.status == 200:
                         body = json.loads(resp.read().decode("utf-8"))
                         choices = body.get("choices", [])

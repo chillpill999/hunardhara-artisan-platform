@@ -77,6 +77,24 @@ def get_health_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
     status_code=status.HTTP_200_OK,
     summary="Kubernetes / Docker Readiness Probe"
 )
-def get_readiness_status(db: Session = Depends(get_db)) -> Dict[str, str]:
-    db.execute(text("SELECT 1"))
-    return {"status": "ready"}
+def get_readiness_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ready",
+            "database": "connected",
+            "environment": settings.ENVIRONMENT
+        }
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "not_ready",
+                "database": "disconnected",
+                "error": "DATABASE_UNAVAILABLE",
+                "environment": settings.ENVIRONMENT
+            }
+        )
+

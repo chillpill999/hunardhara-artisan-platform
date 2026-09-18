@@ -66,7 +66,7 @@ def test_artisan(db, test_cluster):
         artisan = Artisan(
             id="art-integrity-001",
             full_name="Sukhdev Baghel",
-            phone_number="+919876543210",
+            phone_number="+919876543999",
             masked_aadhaar="XXXXXXXX1234",
             aadhaar_hash="sha256-test-aadhaar-hash-01",
             social_category="ST",

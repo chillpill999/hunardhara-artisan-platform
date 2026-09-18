@@ -12,6 +12,12 @@ Stress-tests:
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from app.core.database import init_db
+
+
+@pytest.fixture(autouse=True)
+def setup_db():
+    init_db()
 
 
 @pytest.fixture

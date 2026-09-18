@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.security import CurrentUser, require_artisan
+from app.core.security import CurrentUser, require_artisan, RateLimiter
 from app.core.storage_security import validate_uploaded_file, generate_secure_filename
 from app.services.sarvam_service import sarvam_service
 from app.services.offline_mock_engine import offline_voice_engine
@@ -31,7 +31,12 @@ class TTSResponse(BaseModel):
     message: str
 
 
-@router.post("/tts", response_model=TTSResponse, summary="Synthesize Indic Speech (Sarvam AI Bulbul)")
+@router.post(
+    "/tts",
+    response_model=TTSResponse,
+    summary="Synthesize Indic Speech (Sarvam AI Bulbul)",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="voice_tts"))]
+)
 def synthesize_indic_speech(req: TTSRequest):
     """
     Synthesizes conversational, natural Indic speech for rural artisans using Sarvam AI Bulbul.
@@ -66,7 +71,12 @@ class TranscribeResponse(BaseModel):
     error: Optional[str] = None
 
 
-@router.post("/chat", response_model=ChatResponse, summary="Hunar Saathi Conversational AI (Sarvam 105B)")
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    summary="Hunar Saathi Conversational AI (Sarvam 105B)",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="voice_chat"))]
+)
 def hunar_saathi_chat(req: ChatRequest):
     """
     Conversational assistant for rural artisans using sovereign Sarvam 105B Indic LLM.
@@ -92,7 +102,12 @@ def hunar_saathi_chat(req: ChatRequest):
     )
 
 
-@router.post("/transcribe", response_model=TranscribeResponse, summary="Transcribe Indic Audio (Sarvam Saarika ASR)")
+@router.post(
+    "/transcribe",
+    response_model=TranscribeResponse,
+    summary="Transcribe Indic Audio (Sarvam Saarika ASR)",
+    dependencies=[Depends(RateLimiter(max_requests=20, window_seconds=60, prefix="voice_transcribe"))]
+)
 async def transcribe_audio(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a)"),
     language_code: str = Form("hi-IN", description="Language code e.g. hi-IN"),
@@ -150,7 +165,11 @@ class ExtractCatalogRequest(BaseModel):
     language_code: Optional[str] = Field("hi-IN", description="Language code")
 
 
-@router.post("/extract-catalog", summary="Extract Craft Attributes via Sarvam AI")
+@router.post(
+    "/extract-catalog",
+    summary="Extract Craft Attributes via Sarvam AI",
+    dependencies=[Depends(RateLimiter(max_requests=20, window_seconds=60, prefix="voice_extract"))]
+)
 def extract_catalog_from_voice(
     req: ExtractCatalogRequest,
     current_user: CurrentUser = Depends(require_artisan)
@@ -173,7 +192,11 @@ def extract_catalog_from_voice(
     return res
 
 
-@router.post("/speak-catalog", summary="End-to-End Speak-to-Catalog via Sarvam AI")
+@router.post(
+    "/speak-catalog",
+    summary="End-to-End Speak-to-Catalog via Sarvam AI",
+    dependencies=[Depends(RateLimiter(max_requests=15, window_seconds=60, prefix="voice_speak_catalog"))]
+)
 async def speak_to_catalog(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a / .webm)"),
     language_code: str = Form("hi-IN", description="Language code"),

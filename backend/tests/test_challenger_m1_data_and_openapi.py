@@ -37,6 +37,8 @@ def client():
 @pytest.fixture(scope="module")
 def db_session():
     """SQLAlchemy database session for direct model queries."""
+    from db.seeds.seed_craft_clusters import seed_database
+    seed_database()
     db = SessionLocal()
     try:
         yield db

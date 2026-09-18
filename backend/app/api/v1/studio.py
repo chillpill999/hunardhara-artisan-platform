@@ -2,14 +2,19 @@ import logging
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from app.schemas.studio import StudioResponse, StudioMetadata
 from app.services.studio_service import studio_service
-from app.core.security import CurrentUser, require_artisan
+from app.core.security import CurrentUser, require_artisan, RateLimiter
 from app.core.storage_security import validate_uploaded_file, generate_secure_filename
 
 logger = logging.getLogger("artisan_platform.api.studio")
 router = APIRouter(prefix="/products", tags=["AI Photo Studio"])
 
 
-@router.post("/studio", response_model=StudioResponse, summary="AI Product Photo Studio")
+@router.post(
+    "/studio",
+    response_model=StudioResponse,
+    summary="AI Product Photo Studio",
+    dependencies=[Depends(RateLimiter(max_requests=10, window_seconds=60, prefix="studio"))]
+)
 async def process_studio_photo(
     image: UploadFile = File(..., description="Raw handicraft photo to enhance"),
     canvas_size: int = Form(1080, description="Square canvas dimension (default 1080px)"),

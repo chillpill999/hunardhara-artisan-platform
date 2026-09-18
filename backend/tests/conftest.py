@@ -41,6 +41,13 @@ AUDIO_DIR = FIXTURES_DIR / "audio"
 SEEDS_DIR = FIXTURES_DIR / "seed_data"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_db():
+    """Initializes test database tables."""
+    from app.core.database import init_db
+    init_db()
+
+
 @pytest.fixture(scope="session")
 def fixture_paths():
     """Provides dictionary of absolute paths to all fixture folders."""

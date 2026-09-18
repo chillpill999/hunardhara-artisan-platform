@@ -14,7 +14,7 @@ from app.services.sarvam_service import sarvam_service
 from app.services.semantic_search_service import semantic_search_service
 from app.services.correction_feedback_service import correction_feedback_service
 from app.core.version_registry import version_registry
-from app.core.security import CurrentUser, require_admin, require_artisan
+from app.core.security import CurrentUser, require_admin, require_artisan, RateLimiter
 
 router = APIRouter(prefix="/ai/assistant", tags=["Hunardhara AI Commerce Assistant"])
 
@@ -44,7 +44,11 @@ class SearchQueryRequest(BaseModel):
     query: str = Field(..., description="Natural language search query", example="I want a handmade blue cotton saree under 1500")
 
 
-@router.post("/orchestrate", response_model=HunardharaCatalogOutput)
+@router.post(
+    "/orchestrate",
+    response_model=HunardharaCatalogOutput,
+    dependencies=[Depends(RateLimiter(max_requests=10, window_seconds=60, prefix="ai_orchestrate"))]
+)
 def orchestrate_artisan_listing(
     req: OrchestrateRequest,
     current_user: CurrentUser = Depends(require_artisan),

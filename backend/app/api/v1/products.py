@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import CurrentUser, require_artisan, require_admin
+from app.core.security import CurrentUser, require_artisan, require_admin, RateLimiter
 from app.core.storage_security import validate_uploaded_file, generate_secure_filename, delete_stored_file
 from app.models.product import Product
 from app.models.artisan import Artisan
@@ -28,7 +28,12 @@ logger = logging.getLogger("artisan_platform.api.products")
 router = APIRouter(prefix="/products", tags=["Products & AI Pipelines"])
 
 
-@router.post("/studio", response_model=StudioResponse, summary="AI Product Photo Studio")
+@router.post(
+    "/studio",
+    response_model=StudioResponse,
+    summary="AI Product Photo Studio",
+    dependencies=[Depends(RateLimiter(max_requests=10, window_seconds=60, prefix="studio"))]
+)
 async def product_studio_upload(
     image: UploadFile = File(..., description="Raw handicraft photo to isolate and ground"),
     canvas_size: int = Form(1080, description="Square canvas dimension (default 1080px)"),
@@ -71,7 +76,12 @@ async def product_studio_upload(
         raise HTTPException(status_code=400, detail=f"STUDIO_PROCESSING_ERROR: {str(e)}")
 
 
-@router.post("/analyze-image", response_model=ImageUnderstandingResponse, summary="AI Craft Image Understanding (Gemma 4 31B)")
+@router.post(
+    "/analyze-image",
+    response_model=ImageUnderstandingResponse,
+    summary="AI Craft Image Understanding (Gemma 4 31B)",
+    dependencies=[Depends(RateLimiter(max_requests=10, window_seconds=60, prefix="analyze_image"))]
+)
 async def product_analyze_image(
     image: UploadFile = File(..., description="Craft photo to analyze"),
     hint: Optional[str] = Form(None, description="Optional artisan craft hint or cluster context"),
@@ -112,7 +122,12 @@ async def product_analyze_image(
         raise HTTPException(status_code=500, detail=f"IMAGE_ANALYSIS_ERROR: {str(e)}")
 
 
-@router.post("/voice-catalog", response_model=VoiceCatalogResponse, summary="Indic Voice-to-Catalog")
+@router.post(
+    "/voice-catalog",
+    response_model=VoiceCatalogResponse,
+    summary="Indic Voice-to-Catalog",
+    dependencies=[Depends(RateLimiter(max_requests=15, window_seconds=60, prefix="voice_catalog"))]
+)
 async def product_voice_catalog_upload(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a)"),
     language_code: str = Form("hi", description="ISO 639 Indic language code"),
@@ -158,7 +173,13 @@ async def product_voice_catalog_upload(
         raise HTTPException(status_code=400, detail=f"VOICE_PROCESSING_ERROR: {str(e)}")
 
 
-@router.post("", response_model=ProductResponse, status_code=201, summary="Create Product Listing with Price Floor Guardrail")
+@router.post(
+    "",
+    response_model=ProductResponse,
+    status_code=201,
+    summary="Create Product Listing with Price Floor Guardrail",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="product_create"))]
+)
 def create_product(
     product_in: ProductCreate,
     current_user: CurrentUser = Depends(require_artisan),

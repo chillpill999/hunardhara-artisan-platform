@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     STORAGE_SIGNED_URL_SECRET: str = os.getenv("STORAGE_SIGNED_URL_SECRET", "hunardhara-storage-signed-key-2026")
     STORAGE_SIGNED_URL_EXPIRY_SECONDS: int = int(os.getenv("STORAGE_SIGNED_URL_EXPIRY_SECONDS", "3600"))
 
+    # Production Hardening & Network Security
+    ALLOWED_ORIGINS: str = os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000,https://hunardhara.technogamerzthenextlevel.workers.dev"
+    )
+    EXTERNAL_TIMEOUT_SECONDS: int = int(os.getenv("EXTERNAL_TIMEOUT_SECONDS", "15"))
+    OPENROUTER_TIMEOUT_SECONDS: int = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "30"))
+    IDEMPOTENCY_TTL_SECONDS: int = int(os.getenv("IDEMPOTENCY_TTL_SECONDS", "300"))
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -87,6 +96,37 @@ class Settings(BaseSettings):
             for user_id in self.ADMIN_USER_IDS.split(",")
             if user_id.strip()
         }
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parsed list of allowed CORS origins."""
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+
+    def validate_production_configuration(self) -> None:
+        """
+        Fails fast if production environment has development fallbacks or insecure defaults.
+        """
+        if self.ENVIRONMENT.lower() == "production":
+            errors = []
+            if self.DEBUG:
+                errors.append("DEBUG must be False in production")
+            if self.is_sqlite:
+                errors.append("DATABASE_URL cannot be SQLite in production (PostgreSQL required)")
+            if not self.SUPABASE_JWT_SECRET:
+                errors.append("SUPABASE_JWT_SECRET is missing")
+            if not self.AADHAAR_PEPPER_KEY:
+                errors.append("AADHAAR_PEPPER_KEY is missing")
+            if self.STORAGE_SIGNED_URL_SECRET == "hunardhara-storage-signed-key-2026":
+                errors.append("STORAGE_SIGNED_URL_SECRET is set to default development secret")
+            if self.OFFLINE_MODE:
+                errors.append("OFFLINE_MODE must be False in production")
+            if self.MOCK_AI_SERVICES:
+                errors.append("MOCK_AI_SERVICES must be False in production")
+            if "*" in self.ALLOWED_ORIGINS:
+                errors.append("Wildcard '*' not permitted in ALLOWED_ORIGINS in production")
+            if errors:
+                raise RuntimeError(f"PRODUCTION_CONFIGURATION_INVALID: {'; '.join(errors)}")
+
 
 
 settings = Settings()

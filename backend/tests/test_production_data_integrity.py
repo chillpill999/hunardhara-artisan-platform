@@ -148,6 +148,8 @@ class TestProductionDataIntegrity:
             success=False,
             error="AI provider service unavailable",
         )
+        from app.core.security import create_access_token
+        auth_token = create_access_token("artisan-user-123", extra_claims={"app_metadata": {"role": "artisan"}})
         with patch.object(
             openrouter_service,
             "analyze_craft_image",
@@ -156,6 +158,7 @@ class TestProductionDataIntegrity:
             res = client.post(
                 "/api/v1/products/analyze-image",
                 files={"image": ("test.jpg", b"\xff\xd8\xff\xe0dummyjpgdata", "image/jpeg")},
+                headers={"Authorization": f"Bearer {auth_token}"}
             )
             assert res.status_code == 502
             assert "AI provider service unavailable" in res.json()["detail"]

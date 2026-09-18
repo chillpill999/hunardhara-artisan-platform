@@ -4,8 +4,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
-from fastapi import Header, HTTPException, status
+from typing import Any, Dict, List, Optional, Tuple, Union
+from fastapi import Header, HTTPException, Request, status
 import jwt
 from passlib.context import CryptContext
 
@@ -34,20 +34,66 @@ class InMemoryRateLimiter:
     def __init__(self):
         self.requests: Dict[str, List[float]] = defaultdict(list)
 
-    def check(self, key: str, max_requests: int = 30, window_seconds: int = 60) -> bool:
+    def check(self, key: str, max_requests: int = 30, window_seconds: int = 60) -> Tuple[bool, int, int]:
+        """
+        Validates request rate against sliding window.
+        Returns: (is_allowed, remaining_requests, retry_after_seconds)
+        """
         now = time.time()
         window_start = now - window_seconds
         # Evict timestamps older than window
         self.requests[key] = [t for t in self.requests[key] if t > window_start]
 
-        if len(self.requests[key]) >= max_requests:
-            return False
+        count = len(self.requests[key])
+        if count >= max_requests:
+            oldest_in_window = min(self.requests[key]) if self.requests[key] else now
+            retry_after = max(1, int(oldest_in_window + window_seconds - now))
+            return False, 0, retry_after
 
         self.requests[key].append(now)
-        return True
+        remaining = max_requests - len(self.requests[key])
+        return True, remaining, 0
+
+    def reset(self):
+        """Clears all tracked requests."""
+        self.requests.clear()
 
 
 rate_limiter = InMemoryRateLimiter()
+
+
+class RateLimiter:
+    """
+    FastAPI dependency for rate limiting public and expensive AI endpoints.
+    Tracks limits using caller authentication token hash or client IP.
+    """
+    def __init__(self, max_requests: int = 30, window_seconds: int = 60, prefix: str = "api"):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.prefix = prefix
+
+    async def __call__(self, request: Request):
+        auth_header = request.headers.get("authorization")
+        if auth_header and "Bearer " in auth_header:
+            token = auth_header.split("Bearer ", 1)[1].strip()
+            client_id = f"tok_{hashlib.sha256(token.encode()).hexdigest()[:12]}"
+        else:
+            client_id = request.headers.get("x-forwarded-for") or (request.client.host if request.client else "127.0.0.1")
+
+        key = f"{self.prefix}:{client_id}"
+        allowed, remaining, retry_after = rate_limiter.check(key, self.max_requests, self.window_seconds)
+
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"RATE_LIMIT_EXCEEDED: Rate limit of {self.max_requests} requests per {self.window_seconds}s exceeded.",
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-RateLimit-Limit": str(self.max_requests),
+                    "X-RateLimit-Remaining": "0"
+                }
+            )
+
 
 
 def hash_password(password: str) -> str:

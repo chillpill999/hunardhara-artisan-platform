@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user, get_optional_current_user, CurrentUser, mask_email
+from app.core.security import get_current_user, get_optional_current_user, CurrentUser, mask_email, RateLimiter
 from app.models.b2b_rfq import B2BRFQ, B2BMatchRecord
 from app.models.artisan import Artisan
 from app.schemas.b2b import (
@@ -45,7 +45,8 @@ def _filter_buyer_email(raw_email: Optional[str], current_user: Optional[Current
         "Executes multi-factor AI matching (Craft 35%, Price 30%, Capacity 25%, Location 10%) "
         "against registered artisans and craft clusters. Evaluates solo capacity feasibility "
         "and cluster consortium fulfillment options."
-    )
+    ),
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="b2b_match"))]
 )
 def match_b2b_rfq(
     rfq_in: B2BRFQCreate,
@@ -70,7 +71,8 @@ def match_b2b_rfq(
     "/rfq",
     response_model=B2BRFQResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create and Store B2B Bulk RFQ with Matchmaker Execution"
+    summary="Create and Store B2B Bulk RFQ with Matchmaker Execution",
+    dependencies=[Depends(RateLimiter(max_requests=20, window_seconds=60, prefix="b2b_rfq"))]
 )
 def create_b2b_rfq(
     rfq_in: B2BRFQCreate,

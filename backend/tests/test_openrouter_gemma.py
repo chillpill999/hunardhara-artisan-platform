@@ -115,12 +115,15 @@ class TestOpenRouterGemmaIntegration:
 
     def test_api_endpoint_analyze_image(self, client):
         """TC-VISION-01: Verifies POST /api/v1/products/analyze-image endpoint."""
+        from app.core.security import create_access_token
+        auth_token = create_access_token("artisan-user-123", extra_claims={"app_metadata": {"role": "artisan"}})
         dummy_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
 
         res = client.post(
             "/api/v1/products/analyze-image",
             files={"image": ("craft.png", dummy_png, "image/png")},
-            data={"hint": "Bastar Dhokra brass art"}
+            data={"hint": "Bastar Dhokra brass art"},
+            headers={"Authorization": f"Bearer {auth_token}"}
         )
 
         assert res.status_code == 200

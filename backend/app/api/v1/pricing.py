@@ -1,13 +1,19 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from app.schemas.pricing import PricingEstimateRequest, PricingEstimateResponse
 from app.services.pricing_service import pricing_service
+from app.core.security import RateLimiter
 
 logger = logging.getLogger("artisan_platform.api.pricing")
 router = APIRouter(prefix="/pricing", tags=["Smart Pricing Assistant"])
 
 
-@router.post("/estimate", response_model=PricingEstimateResponse, summary="Fair Valuation & Anti-Exploitation Floor")
+@router.post(
+    "/estimate",
+    response_model=PricingEstimateResponse,
+    summary="Fair Valuation & Anti-Exploitation Floor",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="pricing_estimate"))]
+)
 def estimate_fair_pricing(req: PricingEstimateRequest):
     try:
         materials_cost = req.get_materials_cost()

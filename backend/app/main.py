@@ -1,13 +1,16 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.middleware import RequestIDAndLoggingMiddleware
 from app.api.v1.router import api_router
 
 # Configure structured logging
@@ -24,7 +27,10 @@ async def lifespan(app: FastAPI):
     Application lifecycle manager: Initializes database tables and creates static directories.
     """
     logger.info("Initializing MoSJE Artisan Platform backend...")
-    
+
+    # 0. Enforce fail-fast production configuration check
+    settings.validate_production_configuration()
+
     # 1. Initialize database models/tables
     try:
         init_db()
@@ -89,23 +95,88 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware Configuration (Supporting Next.js 15 Web & Flutter Mobile Clients)
-trusted_origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "https://hunardhara.technogamerzthenextlevel.workers.dev",
-]
+# Production Hardening: Strict CORS Configuration
+cors_origins = settings.cors_origins
+is_production = settings.ENVIRONMENT.lower() == "production"
+
+# In production, allow ONLY explicitly configured origins; never use broad wildcard regex
+allow_origin_regex = None if is_production else r"https://.*\.workers\.dev"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=trusted_origins,
-    allow_origin_regex=r"https://.*\.workers\.dev",
+    allow_origins=cors_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
+    allow_headers=[
+        "Authorization", "Content-Type", "Accept", "Origin",
+        "X-Request-ID", "Idempotency-Key", "X-Idempotency-Key"
+    ],
 )
+
+# Request ID & Structured Logging Middleware
+app.add_middleware(RequestIDAndLoggingMiddleware)
+
+
+# Global Production Exception Handlers: Safe Error Responses & No Stack Trace Leaks
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    req_id = getattr(request.state, "request_id", "unknown")
+    clean_errors = []
+    for err in exc.errors():
+        field_name = ".".join(str(loc) for loc in err.get("loc", []) if loc != "body")
+        clean_errors.append({
+            "field": field_name,
+            "message": err.get("msg", "Validation error"),
+            "type": err.get("type", "value_error")
+        })
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "VALIDATION_ERROR",
+            "detail": clean_errors,
+            "request_id": req_id
+        },
+        headers={"X-Request-ID": req_id}
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    req_id = getattr(request.state, "request_id", "unknown")
+    error_code = exc.detail if isinstance(exc.detail, str) and "_" in exc.detail and exc.detail.isupper() else f"HTTP_{exc.status_code}"
+    headers = {"X-Request-ID": req_id}
+    if getattr(exc, "headers", None):
+        headers.update(exc.headers)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": error_code,
+            "detail": exc.detail,
+            "request_id": req_id
+        },
+        headers=headers
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "unknown")
+    logger.exception(f"UNHANDLED_EXCEPTION: request_id={req_id} path={request.url.path}: {exc}")
+
+    is_prod = settings.ENVIRONMENT.lower() == "production" or not settings.DEBUG
+    safe_detail = "An internal server error occurred. Please contact support with the request ID." if is_prod else f"{type(exc).__name__}: {str(exc)}"
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "INTERNAL_SERVER_ERROR",
+            "detail": safe_detail,
+            "request_id": req_id
+        },
+        headers={"X-Request-ID": req_id}
+    )
+
 
 from starlette.responses import Response
 
@@ -178,16 +249,59 @@ def root():
     }
 
 
-@app.get("/health", tags=["Root & Discovery"])
-def root_health():
+@app.get("/health", tags=["Root & Diagnostics"])
+@app.get("/healthz", tags=["Root & Diagnostics"])
+def root_liveness_probe():
     """
-    Root level health check endpoint for standard container probes.
+    Kubernetes / Container Liveness Probe:
+    Fast in-memory check validating process responsiveness.
+    Does NOT depend on database or external services.
     """
     return JSONResponse(
         status_code=200,
         content={
             "status": "healthy",
+            "probe": "liveness",
             "service": settings.PROJECT_NAME,
-            "docs": "/docs"
+            "version": "1.0.0"
         }
     )
+
+
+@app.get("/ready", tags=["Root & Diagnostics"])
+@app.get("/readyz", tags=["Root & Diagnostics"])
+def root_readiness_probe():
+    """
+    Kubernetes / Container Readiness Probe:
+    Verifies that the application is fully ready to accept user traffic.
+    Checks database connectivity and storage directory accessibility.
+    Returns HTTP 200 when ready, HTTP 503 if any critical dependency is unavailable.
+    """
+    from sqlalchemy import text
+    from app.core.database import SessionLocal
+
+    db_ready = False
+    db_error = None
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+            db_ready = True
+    except Exception as e:
+        db_error = str(e)
+        logger.error(f"Readiness check database failure: {e}")
+
+    storage_ready = os.path.isdir(settings.STORAGE_DIR)
+    is_ready = db_ready and storage_ready
+    status_code = 200 if is_ready else 503
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if is_ready else "not_ready",
+            "probe": "readiness",
+            "database": "connected" if db_ready else f"unreachable: {db_error}",
+            "storage": "available" if storage_ready else "unavailable",
+            "environment": settings.ENVIRONMENT
+        }
+    )
+

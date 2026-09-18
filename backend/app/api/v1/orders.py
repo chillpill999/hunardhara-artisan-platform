@@ -1,11 +1,13 @@
 import uuid
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import CurrentUser, get_current_user, require_artisan
+from app.core.security import CurrentUser, get_current_user, require_artisan, RateLimiter
+from app.core.idempotency import check_idempotency_header, idempotency_store
 from app.models.order import Order
 from app.models.product import Product
 from app.schemas.orders import OrderCreate, OrderResponse
@@ -27,82 +29,110 @@ def list_customer_orders(
     return db.query(Order).filter(Order.customer_id == current_user.id).order_by(Order.created_at.desc()).all()
 
 
-@router.post("/customer", response_model=OrderResponse, status_code=201, summary="Create a Customer Order")
+@router.post(
+    "/customer",
+    response_model=OrderResponse,
+    status_code=201,
+    summary="Create a Customer Order",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="orders_create"))]
+)
 def create_customer_order(
     order_in: OrderCreate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Allows authenticated customers (or admins) to place an order for a craft product.
     Enforces atomic inventory decrements to prevent overselling.
+    Supports Idempotency-Key / X-Idempotency-Key to prevent duplicate order placements.
     """
-    # 1. Validate quantity bounds
-    if order_in.quantity < 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="INVALID_QUANTITY: Quantity must be at least 1."
+    effective_idempotency_key = idempotency_key or x_idempotency_key
+    scope = f"order:{current_user.id}"
+
+    if effective_idempotency_key:
+        cached = check_idempotency_header(effective_idempotency_key, scope=scope)
+        if cached:
+            status_code, data = cached
+            return JSONResponse(status_code=status_code, content=data, headers={"Idempotent-Replay": "true"})
+
+    try:
+        # 1. Validate quantity bounds
+        if order_in.quantity < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_QUANTITY: Quantity must be at least 1."
+            )
+
+        product = db.query(Product).filter(Product.id == order_in.product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        if not product.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="PRODUCT_UNAVAILABLE: Product listing is currently inactive."
+            )
+
+        if product.listing_price <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_PRICE: Product listing price is invalid."
+            )
+
+        # 2. Check stock availability
+        if product.stock_quantity < order_in.quantity:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"INSUFFICIENT_STOCK: Requested {order_in.quantity} units, but only {product.stock_quantity} available in inventory."
+            )
+
+        # 3. Atomic conditional inventory decrement to guarantee race-condition safety
+        rows_updated = db.query(Product).filter(
+            Product.id == product.id,
+            Product.stock_quantity >= order_in.quantity,
+            Product.is_active == True
+        ).update(
+            {Product.stock_quantity: Product.stock_quantity - order_in.quantity},
+            synchronize_session="fetch"
+        )
+        if rows_updated == 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"INSUFFICIENT_STOCK: Could not allocate {order_in.quantity} units due to concurrent purchase activity."
+            )
+
+        order_id = f"ord-{uuid.uuid4().hex[:12]}"
+        order_number = f"HN-{datetime.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
+        total_price = round(product.listing_price * order_in.quantity, 2)
+
+        new_order = Order(
+            id=order_id,
+            order_number=order_number,
+            customer_id=current_user.id,
+            artisan_id=product.artisan_id,
+            product_id=product.id,
+            product_title=product.title,
+            quantity=order_in.quantity,
+            total_price=total_price,
+            status="confirmed",
+            created_at=datetime.now(timezone.utc)
         )
 
-    product = db.query(Product).filter(Product.id == order_in.product_id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        db.add(new_order)
+        db.commit()
+        db.refresh(new_order)
 
-    if not product.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="PRODUCT_UNAVAILABLE: Product listing is currently inactive."
-        )
+        order_data = OrderResponse.model_validate(new_order).model_dump(mode="json")
+        if effective_idempotency_key:
+            idempotency_store.complete(effective_idempotency_key, response_data=order_data, status_code=201, scope=scope)
 
-    if product.listing_price <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="INVALID_PRICE: Product listing price is invalid."
-        )
-
-    # 2. Check stock availability
-    if product.stock_quantity < order_in.quantity:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"INSUFFICIENT_STOCK: Requested {order_in.quantity} units, but only {product.stock_quantity} available in inventory."
-        )
-
-    # 3. Atomic conditional inventory decrement to guarantee race-condition safety
-    rows_updated = db.query(Product).filter(
-        Product.id == product.id,
-        Product.stock_quantity >= order_in.quantity,
-        Product.is_active == True
-    ).update(
-        {Product.stock_quantity: Product.stock_quantity - order_in.quantity},
-        synchronize_session="fetch"
-    )
-    if rows_updated == 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"INSUFFICIENT_STOCK: Could not allocate {order_in.quantity} units due to concurrent purchase activity."
-        )
-
-    order_id = f"ord-{uuid.uuid4().hex[:12]}"
-    order_number = f"HN-{datetime.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
-    total_price = round(product.listing_price * order_in.quantity, 2)
-
-    new_order = Order(
-        id=order_id,
-        order_number=order_number,
-        customer_id=current_user.id,
-        artisan_id=product.artisan_id,
-        product_id=product.id,
-        product_title=product.title,
-        quantity=order_in.quantity,
-        total_price=total_price,
-        status="confirmed",
-        created_at=datetime.now(timezone.utc)
-    )
-
-    db.add(new_order)
-    db.commit()
-    db.refresh(new_order)
-    return new_order
+        return new_order
+    except Exception:
+        if effective_idempotency_key:
+            idempotency_store.abort(effective_idempotency_key, scope=scope)
+        raise
 
 
 @router.get("/artisan", response_model=List[OrderResponse], summary="List Authenticated Artisan's Incoming Orders")
