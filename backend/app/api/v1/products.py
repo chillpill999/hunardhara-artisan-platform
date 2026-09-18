@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.security import CurrentUser, require_artisan, require_admin
+from app.core.storage_security import validate_uploaded_file, generate_secure_filename, delete_stored_file
 from app.models.product import Product
 from app.models.artisan import Artisan
 from app.models.craft_cluster import CraftCluster
@@ -29,25 +31,35 @@ router = APIRouter(prefix="/products", tags=["Products & AI Pipelines"])
 @router.post("/studio", response_model=StudioResponse, summary="AI Product Photo Studio")
 async def product_studio_upload(
     image: UploadFile = File(..., description="Raw handicraft photo to isolate and ground"),
-    canvas_size: int = Form(1080, description="Square canvas dimension (default 1080px)")
+    canvas_size: int = Form(1080, description="Square canvas dimension (default 1080px)"),
+    current_user: CurrentUser = Depends(require_artisan)
 ):
     """
     R1 Photo Studio Pipeline:
     Removes clutter, synthesizes procedural contact/ambient shadows on 1:1 canvas,
     purges GPS EXIF tags, and generates Before/After preview.
+    Requires authenticated artisan or admin.
     """
     if not image.filename:
         raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Filename missing")
 
     image_bytes = await image.read()
-    if not image_bytes or len(image_bytes) < 10:
-        raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Empty or corrupted image buffer")
+    canonical_ext = validate_uploaded_file(
+        data=image_bytes,
+        original_filename=image.filename,
+        expected_type="image",
+        max_size_mb=15
+    )
+    safe_filename = generate_secure_filename(owner_id=current_user.id, extension=canonical_ext, prefix="studio")
+
+    # Clamp canvas_size to safe bounded range (512px to 2048px) to prevent memory exhaustion DoS
+    safe_canvas_size = max(512, min(int(canvas_size), 2048))
 
     try:
         result = studio_service.process_image_bytes(
             image_bytes=image_bytes,
-            original_filename=image.filename,
-            canvas_size=canvas_size
+            original_filename=safe_filename,
+            canvas_size=safe_canvas_size
         )
         return StudioResponse(
             studio_image_url=result["studio_image_url"],
@@ -62,21 +74,28 @@ async def product_studio_upload(
 @router.post("/analyze-image", response_model=ImageUnderstandingResponse, summary="AI Craft Image Understanding (Gemma 4 31B)")
 async def product_analyze_image(
     image: UploadFile = File(..., description="Craft photo to analyze"),
-    hint: Optional[str] = Form(None, description="Optional artisan craft hint or cluster context")
+    hint: Optional[str] = Form(None, description="Optional artisan craft hint or cluster context"),
+    current_user: CurrentUser = Depends(require_artisan)
 ):
     """
     Multimodal Craft Image Understanding Pipeline (Google Gemma 4 31B):
     Visually inspects craft photos to detect GI craft cluster, traditional materials,
     artisan technique, and auto-generates bilingual e-commerce catalog listings.
+    Requires authenticated artisan or admin.
     """
     if not image.filename:
         raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Filename missing")
 
     image_bytes = await image.read()
-    if not image_bytes or len(image_bytes) < 10:
-        raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Empty or corrupted image buffer")
+    canonical_ext = validate_uploaded_file(
+        data=image_bytes,
+        original_filename=image.filename,
+        expected_type="image",
+        max_size_mb=15
+    )
 
-    mime_type = image.content_type or "image/jpeg"
+    mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+    mime_type = mime_map.get(canonical_ext, "image/jpeg")
     try:
         res = openrouter_service.analyze_craft_image(
             image_bytes=image_bytes,
@@ -108,13 +127,18 @@ async def product_voice_catalog_upload(
         raise HTTPException(status_code=400, detail="INVALID_AUDIO_FORMAT_OR_CORRUPT")
 
     audio_bytes = await audio.read()
-    if not audio_bytes or len(audio_bytes) < 16:
-        raise HTTPException(status_code=400, detail="INVALID_AUDIO_FORMAT_OR_CORRUPT")
+    canonical_ext = validate_uploaded_file(
+        data=audio_bytes,
+        original_filename=audio.filename,
+        expected_type="audio",
+        max_size_mb=settings.UPLOAD_MAX_SIZE_MB
+    )
+    safe_audio_fn = generate_secure_filename(owner_id=current_user.id, extension=canonical_ext, prefix="voice")
 
     try:
         return voice_service.process_audio_bytes(
             audio_bytes=audio_bytes,
-            filename=audio.filename,
+            filename=audio.filename if settings.OFFLINE_MODE else safe_audio_fn,
             language_code=language_code
         )
     except ValueError as ve:
@@ -415,6 +439,12 @@ def delete_product(
             status_code=403,
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to delete products belonging to another artisan."
         )
+
+    # Safe removal of associated stored files from disk
+    delete_stored_file(prod.studio_image_url)
+    delete_stored_file(prod.before_after_preview_url)
+    delete_stored_file(prod.raw_photo_url)
+    delete_stored_file(prod.raw_audio_url)
 
     db.delete(prod)
     db.commit()

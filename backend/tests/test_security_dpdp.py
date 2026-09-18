@@ -6,6 +6,7 @@ from app.main import app
 from app.core.database import SessionLocal, init_db
 from app.core.security import create_access_token
 from app.models.artisan import Artisan
+from app.models.craft_cluster import CraftCluster
 from app.models.consent_log import ConsentLog
 from app.services.pricing_service import pricing_service
 
@@ -13,6 +14,26 @@ from app.services.pricing_service import pricing_service
 @pytest.fixture(autouse=True)
 def initialize_test_db():
     init_db()
+    session = SessionLocal()
+    try:
+        if not session.query(CraftCluster).filter(CraftCluster.id == "cluster-bastar-dhokra-01").first():
+            cluster = CraftCluster(
+                id="cluster-bastar-dhokra-01",
+                name="Bastar Dhokra Cluster",
+                craft_name="Bastar Dhokra",
+                state="Chhattisgarh",
+                district="Bastar",
+                latitude=19.07,
+                longitude=82.03,
+                statutory_hourly_wage=120.0,
+                statutory_daily_wage=960.0,
+                gi_tag_status="Registered (GI-83)"
+            )
+            session.add(cluster)
+            session.commit()
+    finally:
+        session.close()
+
 
 
 @pytest.fixture

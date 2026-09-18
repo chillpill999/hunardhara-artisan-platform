@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.security import CurrentUser, require_artisan
+from app.core.storage_security import validate_uploaded_file, generate_secure_filename
 from app.services.sarvam_service import sarvam_service
 from app.services.offline_mock_engine import offline_voice_engine
 
@@ -102,12 +103,21 @@ async def transcribe_audio(
     Requires authenticated artisan or admin.
     """
     audio_bytes = await audio.read()
-    if not audio_bytes or len(audio_bytes) < 10:
-        return TranscribeResponse(success=False, transcript="", error="Audio file empty")
+    raw_fn = audio.filename or "recording.wav"
+
+    try:
+        validate_uploaded_file(
+            data=audio_bytes,
+            original_filename=raw_fn,
+            expected_type="audio",
+            max_size_mb=settings.UPLOAD_MAX_SIZE_MB
+        )
+    except HTTPException as he:
+        return TranscribeResponse(success=False, transcript="", error=he.detail)
 
     res = sarvam_service.transcribe_speech(
         audio_bytes=audio_bytes,
-        filename=audio.filename or "recording.wav",
+        filename=raw_fn,
         language_code=language_code
     )
     return TranscribeResponse(
@@ -177,10 +187,17 @@ async def speak_to_catalog(
     audio_bytes = await audio.read()
     filename = audio.filename or "recording.wav"
 
-    if not audio_bytes or len(audio_bytes) < 10:
+    try:
+        validate_uploaded_file(
+            data=audio_bytes,
+            original_filename=filename,
+            expected_type="audio",
+            max_size_mb=settings.UPLOAD_MAX_SIZE_MB
+        )
+    except HTTPException as he:
         return JSONResponse(
-            status_code=400,
-            content={"success": False, "error": "AUDIO_EMPTY_OR_CORRUPT"}
+            status_code=he.status_code,
+            content={"success": False, "error": he.detail}
         )
 
     # 1. Validate audio integrity & acoustic levels

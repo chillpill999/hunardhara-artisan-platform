@@ -6,6 +6,7 @@ from PIL import Image, ExifTags
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.security import create_access_token
 from app.services.exif_scrubber import strip_exif_from_image, strip_exif_from_bytes
 from app.services.shadow_engine import synthesize_procedural_shadows
 from app.services.studio_service import (
@@ -64,11 +65,13 @@ class TestImageStudioPipeline:
 
     def test_studio_endpoint_upload(self, client, sample_dhokra_image_path):
         """TC-STUDIO-05: Verifies POST /api/v1/products/studio multipart upload."""
+        token = create_access_token("art-studio-test-01", extra_claims={"app_metadata": {"role": "artisan"}})
         with open(sample_dhokra_image_path, "rb") as f:
             res = client.post(
                 "/api/v1/products/studio",
                 files={"image": ("dhokra.jpg", f, "image/jpeg")},
-                data={"canvas_size": 1080}
+                data={"canvas_size": 1080},
+                headers={"Authorization": f"Bearer {token}"}
             )
         assert res.status_code == 200
         data = res.json()
@@ -81,9 +84,21 @@ class TestImageStudioPipeline:
 
     def test_studio_endpoint_corrupt_data_rejected(self, client):
         """TC-STUDIO-06: Verifies empty or corrupted image data is rejected with HTTP 400."""
+        token = create_access_token("art-studio-test-01", extra_claims={"app_metadata": {"role": "artisan"}})
         res = client.post(
             "/api/v1/products/studio",
-            files={"image": ("corrupt.jpg", b"not_an_image", "image/jpeg")}
+            files={"image": ("corrupt.jpg", b"not_an_image", "image/jpeg")},
+            headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 400
+
+    def test_studio_endpoint_anonymous_rejected(self, client, sample_dhokra_image_path):
+        """TC-STUDIO-07: Verifies anonymous request to studio upload returns 401."""
+        with open(sample_dhokra_image_path, "rb") as f:
+            res = client.post(
+                "/api/v1/products/studio",
+                files={"image": ("dhokra.jpg", f, "image/jpeg")},
+                data={"canvas_size": 1080}
+            )
+        assert res.status_code == 401
 

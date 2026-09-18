@@ -55,6 +55,9 @@ Thumbs.db
 # Cloudflare
 .wrangler/
 
-# Temporary generated studio images
+# Temporary generated studio images and storage
 backend/static/studio/studio_*
 backend/static/studio_outputs/
+static/studio/
+static/studio_outputs/
+storage/

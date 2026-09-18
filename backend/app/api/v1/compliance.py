@@ -18,6 +18,8 @@ from app.schemas.compliance import (
     RightToBeForgottenRequest,
     RightToBeForgottenResponse
 )
+from app.core.storage_security import delete_stored_file, delete_user_stored_files
+
 
 logger = logging.getLogger("artisan_platform.api.compliance")
 router = APIRouter(prefix="/compliance", tags=["Security & DPDP 2023 Compliance"])
@@ -113,21 +115,41 @@ def right_to_be_forgotten(
             detail=f"ARTISAN_NOT_FOUND: Artisan with ID '{req.artisan_id}' does not exist."
         )
 
+    # 1. Redact Artisan Profile PII and remove stored profile media
     artisan.full_name = "REDACTED_ARTISAN"
     artisan.phone_number = f"REDACTED_{uuid.uuid4().hex[:8]}"  # preserve unique constraint
     artisan.masked_aadhaar = "XXXXXXXX0000"
     artisan.village = "REDACTED"
     artisan.district = "REDACTED"
     artisan.is_active = False
+
+    if artisan.profile_photo_url:
+        delete_stored_file(artisan.profile_photo_url)
+        artisan.profile_photo_url = None
+    if artisan.voice_intro_url:
+        delete_stored_file(artisan.voice_intro_url)
+        artisan.voice_intro_url = None
+
     redacted_count += 1
 
-    # 2. Deactivate Active Product Listings
+    # 2. Deactivate Active Product Listings and remove product stored files
     products = db.query(Product).filter(Product.artisan_id == req.artisan_id).all()
     for p in products:
         p.is_active = False
+        delete_stored_file(p.studio_image_url)
+        delete_stored_file(p.before_after_preview_url)
+        delete_stored_file(p.raw_photo_url)
+        delete_stored_file(p.raw_audio_url)
+        p.studio_image_url = None
+        p.before_after_preview_url = None
+        p.raw_photo_url = None
+        p.raw_audio_url = None
         redacted_count += 1
 
-    # 3. Log Sovereign Erasure in Consent Ledger
+    # 3. Purge all remaining user storage files across categories
+    delete_user_stored_files(req.artisan_id)
+
+    # 4. Log Sovereign Erasure in Consent Ledger
     audit_entry = ConsentLog(
         id=f"forget-{uuid.uuid4().hex[:12]}",
         artisan_id=req.artisan_id,
@@ -188,6 +210,9 @@ def delete_customer_data(
     redacted_orders = len(orders)
     for o in orders:
         o.customer_id = f"REDACTED_{uuid.uuid4().hex[:8]}"
+
+    # Purge any stored files associated with customer
+    delete_user_stored_files(customer_id)
 
     audit_entry = ConsentLog(
         id=f"forget-cust-{uuid.uuid4().hex[:12]}",

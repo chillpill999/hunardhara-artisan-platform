@@ -53,7 +53,10 @@ class Settings(BaseSettings):
 
     # Storage & File Uploads
     STATIC_DIR: str = os.getenv("STATIC_DIR", "./static")
+    STORAGE_DIR: str = os.getenv("STORAGE_DIR", "./storage")
     UPLOAD_MAX_SIZE_MB: int = 15
+    STORAGE_SIGNED_URL_SECRET: str = os.getenv("STORAGE_SIGNED_URL_SECRET", "hunardhara-storage-signed-key-2026")
+    STORAGE_SIGNED_URL_EXPIRY_SECONDS: int = int(os.getenv("STORAGE_SIGNED_URL_EXPIRY_SECONDS", "3600"))
 
     model_config = SettingsConfigDict(
         env_file=".env",

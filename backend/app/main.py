@@ -46,17 +46,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
         
-    # 2. Ensure static file directories exist
+    # 2. Ensure public static file directories exist (strictly non-sensitive assets)
     static_dirs = [
         settings.STATIC_DIR,
-        os.path.join(settings.STATIC_DIR, "uploads"),
         os.path.join(settings.STATIC_DIR, "studio"),
-        os.path.join(settings.STATIC_DIR, "studio_outputs"),
-        os.path.join(settings.STATIC_DIR, "profiles"),
         os.path.join(settings.STATIC_DIR, "benchmarks"),
     ]
     for sdir in static_dirs:
         os.makedirs(sdir, exist_ok=True)
+
+    # 3. Ensure private storage directories exist (outside public static mount)
+    storage_dirs = [
+        settings.STORAGE_DIR,
+        os.path.join(settings.STORAGE_DIR, "profiles"),
+        os.path.join(settings.STORAGE_DIR, "audio"),
+        os.path.join(settings.STORAGE_DIR, "uploads"),
+        os.path.join(settings.STORAGE_DIR, "studio_drafts"),
+        os.path.join(settings.STORAGE_DIR, "internal"),
+    ]
+    for pdir in storage_dirs:
+        os.makedirs(pdir, exist_ok=True)
         
     logger.info("MoSJE Artisan Platform backend started successfully.")
     yield
@@ -98,9 +107,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Static Files for Uploads, Studio Previews, and Benchmarks
+from starlette.responses import Response
+
+DISALLOWED_STATIC_EXTENSIONS = {
+    ".exe", ".dll", ".so", ".sh", ".bash", ".bat", ".cmd",
+    ".py", ".pyc", ".pyd", ".php", ".phtml", ".pl", ".cgi",
+    ".js", ".mjs", ".html", ".htm", ".xhtml", ".svg", ".xml",
+    ".jsp", ".asp", ".aspx", ".vbs", ".ps1", ".env"
+}
+
+BLOCKED_STATIC_PREFIXES = ("profiles", "uploads", "audio", "internal")
+
+
+class SecuredStaticFiles(StaticFiles):
+    """
+    Hardened StaticFiles handler:
+    - Blocks access to private directory paths (profiles, uploads, audio, internal).
+    - Blocks hidden files and dotfiles.
+    - Prevents serving scripts and executable files.
+    - Enforces X-Content-Type-Options: nosniff on all static assets.
+    """
+    async def get_response(self, path: str, scope) -> Response:
+        norm_path = path.replace("\\", "/").strip("/")
+        parts = [p for p in norm_path.split("/") if p]
+
+        # 1. Block access to private directory names
+        if any(part in BLOCKED_STATIC_PREFIXES for part in parts):
+            return Response(status_code=403, content=b"FORBIDDEN: Private directory access blocked.")
+
+        # 2. Block hidden files / dotfiles
+        if any(part.startswith(".") for part in parts):
+            return Response(status_code=403, content=b"FORBIDDEN: Hidden files cannot be accessed.")
+
+        # 3. Block executable or script extensions
+        _, ext = os.path.splitext(norm_path.lower())
+        if ext in DISALLOWED_STATIC_EXTENSIONS:
+            return Response(status_code=403, content=b"FORBIDDEN: Script or executable file serving is blocked.")
+
+        response = await super().get_response(path, scope)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+
+# Mount Hardened Static Files for Benchmarks and Public Studio Artifacts
 os.makedirs(settings.STATIC_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
+app.mount("/static", SecuredStaticFiles(directory=settings.STATIC_DIR), name="static")
 
 # Mount API v1 Routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
