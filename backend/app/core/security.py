@@ -267,6 +267,20 @@ def mask_email(email: Optional[str]) -> Optional[str]:
     return f"{masked_name}@{domain}"
 
 
+def require_customer(authorization: Optional[str] = Header(None)) -> CurrentUser:
+    """
+    FastAPI dependency: Requires authenticated customer or verified administrator.
+    Rejects artisans or non-customer accounts attempting to perform consumer actions.
+    """
+    user = get_current_user(authorization)
+    if user.role != "customer" and not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="FORBIDDEN_ROLE: Only customers or administrators can place orders or perform this action."
+        )
+    return user
+
+
 def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
     """
     FastAPI dependency: Requires authenticated artisan or verified administrator.

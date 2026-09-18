@@ -8,6 +8,16 @@ class OrderCreate(BaseModel):
     quantity: int = Field(default=1, ge=1, description="Quantity to purchase")
 
 
+class OrderPaymentVerifyRequest(BaseModel):
+    payment_id: str = Field(..., min_length=4, max_length=128, description="Payment transaction reference / ID")
+    provider: str = Field(default="razorpay", max_length=64, description="Payment gateway or provider name")
+    signature: Optional[str] = Field(None, max_length=256, description="Cryptographic signature from payment provider")
+
+
+class OrderStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="Desired order status transition")
+
+
 class OrderResponse(BaseModel):
     id: str
     order_number: str
@@ -18,6 +28,10 @@ class OrderResponse(BaseModel):
     quantity: int
     total_price: float
     status: str
+    payment_status: str = "unpaid"
+    payment_id: Optional[str] = None
+    payment_provider: Optional[str] = None
+    paid_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     class Config:

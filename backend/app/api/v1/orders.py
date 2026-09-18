@@ -5,24 +5,36 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import CurrentUser, get_current_user, require_artisan, RateLimiter
+from app.core.security import CurrentUser, get_current_user, require_customer, require_artisan, RateLimiter
 from app.core.idempotency import check_idempotency_header, idempotency_store
 from app.models.order import Order
 from app.models.product import Product
-from app.schemas.orders import OrderCreate, OrderResponse
+from app.schemas.orders import OrderCreate, OrderResponse, OrderPaymentVerifyRequest, OrderStatusUpdateRequest
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+
+VALID_TRANSITIONS = {
+    "pending": {"paid", "cancelled"},
+    "paid": {"confirmed", "cancelled"},
+    "confirmed": {"processing", "shipped", "cancelled"},
+    "processing": {"shipped", "cancelled"},
+    "shipped": {"delivered"},
+    "delivered": set(),
+    "cancelled": set(),
+}
 
 
 @router.get("/customer", response_model=List[OrderResponse], summary="List Authenticated Customer's Orders")
 def list_customer_orders(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_customer),
     db: Session = Depends(get_db)
 ):
     """
     Returns only the authenticated customer's own order history.
     Admins can view all orders.
+    Artisans without customer or administrator privileges are rejected with HTTP 403.
     """
     if current_user.is_admin:
         return db.query(Order).order_by(Order.created_at.desc()).all()
@@ -40,7 +52,7 @@ def create_customer_order(
     order_in: OrderCreate,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_customer),
     db: Session = Depends(get_db)
 ):
     """
@@ -116,7 +128,8 @@ def create_customer_order(
             product_title=product.title,
             quantity=order_in.quantity,
             total_price=total_price,
-            status="confirmed",
+            status="pending",
+            payment_status="unpaid",
             created_at=datetime.now(timezone.utc)
         )
 
@@ -171,6 +184,108 @@ def get_order(
     return order
 
 
+@router.post(
+    "/{order_id}/verify-payment",
+    response_model=OrderResponse,
+    summary="Verify Payment for an Order",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="orders_payment"))]
+)
+def verify_order_payment(
+    order_id: str,
+    payment_in: OrderPaymentVerifyRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Verifies payment settlement from trusted payment gateway for a pending customer order.
+    Transitions order to 'paid'.
+    Enforces idempotency, customer ownership, and production safeguards against demo tokens.
+    """
+    effective_idempotency_key = idempotency_key or x_idempotency_key
+    scope = f"pay:{order_id}"
+
+    if effective_idempotency_key:
+        cached = check_idempotency_header(effective_idempotency_key, scope=scope)
+        if cached:
+            status_code, data = cached
+            return JSONResponse(status_code=status_code, content=data, headers={"Idempotent-Replay": "true"})
+
+    try:
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            raise HTTPException(status_code=404, detail=f"Order with ID '{order_id}' not found")
+
+        # 1. Ownership validation: only purchasing customer or admin can verify payment
+        if not current_user.is_admin and current_user.id != order.customer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="FORBIDDEN_OWNERSHIP: You are not authorized to verify payment for this order."
+            )
+
+        # 2. Check current order state
+        if order.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ORDER_CANCELLED: Cannot process payment for a cancelled order."
+            )
+
+        if order.payment_status == "paid":
+            if order.payment_id == payment_in.payment_id:
+                # Idempotent replay for duplicate submission of same payment
+                order_data = OrderResponse.model_validate(order).model_dump(mode="json")
+                if effective_idempotency_key:
+                    idempotency_store.complete(effective_idempotency_key, response_data=order_data, status_code=200, scope=scope)
+                return order
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="PAYMENT_ALREADY_COMPLETED: Order has already been paid with a different payment reference."
+            )
+
+        if order.status != "pending":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"INVALID_ORDER_STATE: Cannot verify payment for an order in '{order.status}' state."
+            )
+
+        # 3. Production Guardrail: reject fake/demo payment tokens in production
+        payment_id_lower = payment_in.payment_id.lower().strip()
+        is_demo_token = any(token in payment_id_lower for token in ["mock", "demo", "test", "fake", "dummy", "sandbox"])
+
+        if settings.ENVIRONMENT.lower() == "production":
+            if is_demo_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="DEMO_PAYMENT_PROHIBITED: Demo and mock payment tokens are strictly prohibited in production."
+                )
+            if not payment_in.signature or len(payment_in.signature.strip()) < 16:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_PAYMENT_SIGNATURE: Payment gateway signature is required and invalid in production."
+                )
+
+        # 4. State transition: pending -> paid
+        order.status = "paid"
+        order.payment_status = "paid"
+        order.payment_id = payment_in.payment_id
+        order.payment_provider = payment_in.provider
+        order.paid_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(order)
+
+        order_data = OrderResponse.model_validate(order).model_dump(mode="json")
+        if effective_idempotency_key:
+            idempotency_store.complete(effective_idempotency_key, response_data=order_data, status_code=200, scope=scope)
+
+        return order
+    except Exception:
+        if effective_idempotency_key:
+            idempotency_store.abort(effective_idempotency_key, scope=scope)
+        raise
+
+
 @router.put("/{order_id}/status", response_model=OrderResponse, summary="Update Order Status")
 def update_order_status(
     order_id: str,
@@ -180,16 +295,16 @@ def update_order_status(
 ):
     """
     Updates order status with role-scoped state transitions:
-    - Verified Admin: full status modification authority.
-    - Fulfilling Artisan: can update status to processing, shipped, delivered, cancelled.
-    - Purchasing Customer: can only cancel order if it has not shipped.
+    - Verified Admin: full status modification authority adhering to state machine and payment verification.
+    - Fulfilling Artisan: can advance orders from paid -> confirmed -> processing/shipped -> delivered, or cancel unfulfilled orders.
+    - Purchasing Customer: can only cancel unfulfilled orders before shipment.
     """
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail=f"Order with ID '{order_id}' not found")
 
     new_status = str(status_payload.get("status") or "").lower().strip()
-    valid_statuses = {"pending", "confirmed", "processing", "shipped", "delivered", "cancelled"}
+    valid_statuses = {"pending", "paid", "confirmed", "processing", "shipped", "delivered", "cancelled"}
     if new_status not in valid_statuses:
         raise HTTPException(
             status_code=400,
@@ -202,17 +317,49 @@ def update_order_status(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="ORDER_TERMINATED: Cannot modify the status of an already cancelled order."
         )
-    if order.status == "delivered" and new_status != "delivered":
+    if order.status == "delivered":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="ORDER_COMPLETED: Cannot modify the status of an already delivered order."
         )
 
+    # 2. Prevent cancellation once order has been shipped or delivered
+    if new_status == "cancelled" and order.status in {"shipped", "delivered"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CANNOT_CANCEL: Order has already been shipped or delivered."
+        )
+
+    # 3. Prevent confirming order before successful payment verification
+    if new_status == "confirmed" and order.payment_status != "paid":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PAYMENT_REQUIRED: Order cannot be confirmed before successful payment verification."
+        )
+
+    # 3. Enforce forward state machine transitions
+    allowed_next = VALID_TRANSITIONS.get(order.status, set())
+    if new_status not in allowed_next and new_status != order.status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"INVALID_STATE_TRANSITION: Cannot transition order from '{order.status}' to '{new_status}'. Allowed transitions: {sorted(list(allowed_next))}"
+        )
+
     previous_status = order.status
 
+    # 4. Role-based authorization on state transition
     if current_user.is_admin:
         order.status = new_status
+        if new_status == "paid":
+            order.payment_status = "paid"
+            if not order.paid_at:
+                order.paid_at = datetime.now(timezone.utc)
     elif current_user.id == order.artisan_id and current_user.role == "artisan":
+        if new_status == "paid":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="FORBIDDEN: Artisans cannot directly mark orders as paid without gateway verification."
+            )
         order.status = new_status
     elif current_user.id == order.customer_id:
         if new_status != "cancelled":
@@ -232,13 +379,16 @@ def update_order_status(
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to update this order."
         )
 
-    # 2. Atomically replenish inventory when order is cancelled
+    # 5. Atomically replenish inventory and issue refund when order is cancelled
     if order.status == "cancelled" and previous_status != "cancelled":
         db.query(Product).filter(Product.id == order.product_id).update(
             {Product.stock_quantity: Product.stock_quantity + order.quantity},
             synchronize_session="fetch"
         )
+        if order.payment_status == "paid":
+            order.payment_status = "refunded"
 
     db.commit()
     db.refresh(order)
     return order
+

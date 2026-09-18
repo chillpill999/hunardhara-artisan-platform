@@ -15,5 +15,9 @@ class Order(Base):
     product_title = Column(String(256), nullable=False)
     quantity = Column(Integer, default=1, nullable=False)
     total_price = Column(Float, nullable=False)
-    status = Column(String(32), default="pending", nullable=False)  # pending, confirmed, in_production, dispatched, delivered, cancelled
+    status = Column(String(32), default="pending", nullable=False)  # pending, paid, confirmed, processing, shipped, delivered, cancelled
+    payment_status = Column(String(32), default="unpaid", nullable=False)  # unpaid, paid, refunded
+    payment_id = Column(String(128), nullable=True)
+    payment_provider = Column(String(64), nullable=True)
+    paid_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
