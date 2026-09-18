@@ -9,6 +9,7 @@ class B2BRFQ(Base):
     __tablename__ = "b2b_rfqs"
 
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    buyer_id = Column(String(64), nullable=True, index=True)
     buyer_name = Column(String(128), nullable=False)
     buyer_organization = Column(String(128), nullable=True)
     buyer_email = Column(String(128), nullable=False)
@@ -20,10 +21,10 @@ class B2BRFQ(Base):
     total_budget = Column(Float, nullable=False)
     deadline_days = Column(Integer, nullable=False)      # e.g. 45 days
     
-    delivery_state = Column(String(64), nullable=False)
-    delivery_district = Column(String(64), nullable=False)
-    delivery_latitude = Column(Float, nullable=False)
-    delivery_longitude = Column(Float, nullable=False)
+    delivery_state = Column(String(64), nullable=True)
+    delivery_district = Column(String(64), nullable=True)
+    delivery_latitude = Column(Float, nullable=True)
+    delivery_longitude = Column(Float, nullable=True)
     
     status = Column(String(32), default="OPEN", index=True)  # OPEN, MATCHED, FULFILLED, CLOSED
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

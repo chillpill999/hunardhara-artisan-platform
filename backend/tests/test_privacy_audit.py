@@ -36,12 +36,18 @@ def test_anonymous_rfq_list_has_zero_buyer_emails(client, db):
     # Ensure at least one RFQ exists in db
     rfq = db.query(B2BRFQ).first()
     if not rfq:
+        buyer_token = create_access_token(
+            subject="test-buyer-01",
+            extra_claims={"app_metadata": {"role": "buyer"}, "email": "private.buyer@trifed.gov.in"}
+        )
         client.post(
             "/api/v1/b2b/rfq",
+            headers={"Authorization": f"Bearer {buyer_token}"},
             json={
                 "craft_type": "Bastar Dhokra",
                 "quantity": 50,
                 "unit_budget": 1200.0,
+                "deadline_days": 30,
                 "buyer_name": "Test Institutional Buyer",
                 "buyer_email": "private.buyer@trifed.gov.in",
                 "buyer_phone": "+919876543210"
@@ -61,12 +67,18 @@ def test_anonymous_rfq_list_has_zero_buyer_emails(client, db):
 
 def test_anonymous_rfq_detail_has_zero_buyer_emails(client, db):
     """Verify anonymous GET /api/v1/b2b/rfq/{id} never leaks buyer_email."""
+    buyer_token = create_access_token(
+        subject="test-buyer-02",
+        extra_claims={"app_metadata": {"role": "buyer"}, "email": "confidential.officer@gov.in"}
+    )
     res_create = client.post(
         "/api/v1/b2b/rfq",
+        headers={"Authorization": f"Bearer {buyer_token}"},
         json={
             "craft_type": "Bastar Dhokra",
             "quantity": 10,
             "unit_budget": 1500.0,
+            "deadline_days": 30,
             "buyer_name": "Secret Buyer Org",
             "buyer_email": "confidential.officer@gov.in",
             "buyer_phone": "+919876543210"
@@ -83,24 +95,24 @@ def test_anonymous_rfq_detail_has_zero_buyer_emails(client, db):
 
 def test_authenticated_admin_can_view_rfq_buyer_email(client, db):
     """Verify authenticated administrator CAN view buyer_email for procurement coordination."""
+    admin_token = create_access_token(
+        subject="admin-test-uuid",
+        extra_claims={"app_metadata": {"role": "admin"}, "email": "platform.admin@hunardhara.gov.in"}
+    )
     res_create = client.post(
         "/api/v1/b2b/rfq",
+        headers={"Authorization": f"Bearer {admin_token}"},
         json={
             "craft_type": "Bastar Dhokra",
             "quantity": 25,
             "unit_budget": 1800.0,
+            "deadline_days": 30,
             "buyer_name": "Admin Coordination Buyer",
             "buyer_email": "official.coordinator@crafts.nic.in"
         }
     )
     assert res_create.status_code == 201
     created_id = res_create.json()["id"]
-
-    # Mint admin JWT
-    admin_token = create_access_token(
-        subject="admin-test-uuid",
-        extra_claims={"app_metadata": {"role": "admin"}, "email": "platform.admin@hunardhara.gov.in"}
-    )
 
     res_admin = client.get(
         f"/api/v1/b2b/rfq/{created_id}",

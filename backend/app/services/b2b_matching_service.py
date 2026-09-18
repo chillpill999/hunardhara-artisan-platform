@@ -257,17 +257,39 @@ class B2BMatchingService:
                     cid = a.cluster_id
                     cluster = a.cluster
                     c_name = cluster.name if cluster else "Regional Craft Cluster"
-                    c_lat = a.latitude or (cluster.latitude if cluster else 20.0)
-                    c_lon = a.longitude or (cluster.longitude if cluster else 78.0)
+                    c_lat = a.latitude if a.latitude is not None else (cluster.latitude if cluster else 0.0)
+                    c_lon = a.longitude if a.longitude is not None else (cluster.longitude if cluster else 0.0)
 
-                    # Determine wholesale price
-                    wholesale_price = 1200.0
-                    if a.products and len(a.products) > 0:
-                        prices = [p.wholesale_b2b_price for p in a.products if p.wholesale_b2b_price]
-                        if prices:
-                            wholesale_price = min(prices)
+                    # Filter only active, eligible products with valid b2b wholesale price
+                    active_products = [
+                        p for p in (a.products or [])
+                        if p.is_active and p.wholesale_b2b_price and p.wholesale_b2b_price > 0
+                    ]
+                    # If artisan has registered products, but NONE are active/eligible, exclude artisan
+                    if a.products and len(a.products) > 0 and len(active_products) == 0:
+                        continue
+
+                    # Active vs inactive craft types for strict eligibility checks
+                    active_crafts = {
+                        p.craft_type.strip().lower() for p in (a.products or [])
+                        if p.is_active and p.craft_type
+                    }
+                    inactive_crafts = {
+                        p.craft_type.strip().lower() for p in (a.products or [])
+                        if not p.is_active and p.craft_type
+                    }
+                    active_craft_prices = [
+                        (p.craft_type, float(p.wholesale_b2b_price))
+                        for p in active_products if p.craft_type and p.wholesale_b2b_price
+                    ]
+
+                    # Determine wholesale price from active products or cluster statutory daily wage
+                    if active_products:
+                        wholesale_price = min(p.wholesale_b2b_price for p in active_products)
                     elif cluster and cluster.statutory_daily_wage:
                         wholesale_price = cluster.statutory_daily_wage * 2.5
+                    else:
+                        wholesale_price = 1200.0
 
                     candidates_by_id[a.id] = {
                         "id": a.id,
@@ -283,6 +305,10 @@ class B2BMatchingService:
                         "longitude": c_lon,
                         "experience_years": a.experience_years or 5,
                         "verified": getattr(a, "is_verified", True),
+                        "active_crafts": active_crafts,
+                        "inactive_crafts": inactive_crafts,
+                        "active_craft_prices": active_craft_prices,
+                        "has_products": bool(a.products),
                     }
                 return list(candidates_by_id.values())
             except Exception as e:
@@ -300,16 +326,35 @@ class B2BMatchingService:
                     cid = a.cluster_id
                     cluster = a.cluster
                     c_name = cluster.name if cluster else "Regional Craft Cluster"
-                    c_lat = a.latitude or (cluster.latitude if cluster else 20.0)
-                    c_lon = a.longitude or (cluster.longitude if cluster else 78.0)
+                    c_lat = a.latitude if a.latitude is not None else (cluster.latitude if cluster else 0.0)
+                    c_lon = a.longitude if a.longitude is not None else (cluster.longitude if cluster else 0.0)
 
-                    wholesale_price = 1200.0
-                    if a.products and len(a.products) > 0:
-                        prices = [p.wholesale_b2b_price for p in a.products if p.wholesale_b2b_price]
-                        if prices:
-                            wholesale_price = min(prices)
+                    active_products = [
+                        p for p in (a.products or [])
+                        if p.is_active and p.wholesale_b2b_price and p.wholesale_b2b_price > 0
+                    ]
+                    if a.products and len(a.products) > 0 and len(active_products) == 0:
+                        continue
+
+                    active_crafts = {
+                        p.craft_type.strip().lower() for p in (a.products or [])
+                        if p.is_active and p.craft_type
+                    }
+                    inactive_crafts = {
+                        p.craft_type.strip().lower() for p in (a.products or [])
+                        if not p.is_active and p.craft_type
+                    }
+                    active_craft_prices = [
+                        (p.craft_type, float(p.wholesale_b2b_price))
+                        for p in active_products if p.craft_type and p.wholesale_b2b_price
+                    ]
+
+                    if active_products:
+                        wholesale_price = min(p.wholesale_b2b_price for p in active_products)
                     elif cluster and cluster.statutory_daily_wage:
                         wholesale_price = cluster.statutory_daily_wage * 2.5
+                    else:
+                        wholesale_price = 1200.0
 
                     if a.id not in candidates_by_id:
                         candidates_by_id[a.id] = {
@@ -326,6 +371,10 @@ class B2BMatchingService:
                             "longitude": c_lon,
                             "experience_years": a.experience_years or 5,
                             "verified": True,
+                            "active_crafts": active_crafts,
+                            "inactive_crafts": inactive_crafts,
+                            "active_craft_prices": active_craft_prices,
+                            "has_products": bool(a.products),
                         }
             except Exception as e:
                 logger.warning(f"Error querying database artisans: {e}")
@@ -351,20 +400,45 @@ class B2BMatchingService:
         deadline_days = rfq.deadline_days or rfq.days_to_deadline or 30
         unit_budget = rfq.unit_budget
         craft_type = rfq.craft_type
-        del_lat = rfq.delivery_latitude if rfq.delivery_latitude is not None else 28.6139
-        del_lon = rfq.delivery_longitude if rfq.delivery_longitude is not None else 77.2090
+        del_lat = rfq.delivery_latitude
+        del_lon = rfq.delivery_longitude
 
         all_candidates = self.get_candidate_artisans(db=db)
+
+        # If a specific artisan was requested, filter candidate list strictly to that artisan
+        # Never substitute an unrelated artisan if the requested artisan is not found or ineligible
+        requested_artisan_id = getattr(rfq, "requested_artisan_id", None)
+        if requested_artisan_id:
+            all_candidates = [c for c in all_candidates if c["artisan_id"] == requested_artisan_id]
+
         scored_matches: List[B2BArtisanMatchItem] = []
 
         for c in all_candidates:
             # 1. Craft Compatibility
             craft_s = self.score_craft(c["craft_specialty"], craft_type)
+
+            # Strict product eligibility check:
+            # If the artisan has registered products, but all products for the requested craft are inactive/expired, exclude
+            active_crafts = c.get("active_crafts", set())
+            inactive_crafts = c.get("inactive_crafts", set())
+            req_c = craft_type.strip().lower()
+
+            if inactive_crafts and any(self.score_craft(ic, req_c) > 0 for ic in inactive_crafts):
+                if not any(self.score_craft(ac, req_c) > 0 for ac in active_crafts):
+                    continue
+
+            if any(self.score_craft(ac, req_c) > 0 for ac in active_crafts):
+                craft_s = max(craft_s, 1.0)
+
             if craft_s == 0.0:
                 continue  # Filter out non-matching crafts
 
-            # 2. Price Budget Compatibility
-            wholesale_price = c["average_wholesale_price_inr"]
+            # 2. Price Budget Compatibility: derive wholesale price from active products for this craft if available
+            craft_prices = [
+                p_price for p_craft, p_price in c.get("active_craft_prices", [])
+                if self.score_craft(p_craft, craft_type) > 0
+            ]
+            wholesale_price = min(craft_prices) if craft_prices else c["average_wholesale_price_inr"]
             price_s = self.score_price(wholesale_price, unit_budget)
 
             # 3. Production Capacity Feasibility
@@ -372,9 +446,13 @@ class B2BMatchingService:
             cap_s, solo_feasible = self.score_capacity(monthly_capacity, quantity, deadline_days)
             deliverable_units = monthly_capacity * (deadline_days / 30.0)
 
-            # 4. Geodesic Proximity
-            dist_km = self.haversine_distance(c["latitude"], c["longitude"], del_lat, del_lon)
-            loc_s = self.score_location(dist_km)
+            # 4. Geodesic Proximity: calculate Haversine only when coordinates are provided; neutral score otherwise
+            if del_lat is not None and del_lon is not None and c.get("latitude") is not None and c.get("longitude") is not None:
+                dist_km = self.haversine_distance(c["latitude"], c["longitude"], del_lat, del_lon)
+                loc_s = self.score_location(dist_km)
+            else:
+                dist_km = 0.0
+                loc_s = 0.50
 
             # Composite percentage
             composite = self.calculate_composite_score(craft_s, price_s, cap_s, loc_s)

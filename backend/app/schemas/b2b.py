@@ -13,10 +13,10 @@ class B2BRFQCreate(BaseModel):
     required_quantity: Optional[int] = Field(default=None, ge=1, json_schema_extra={"example": 200})
     quantity: Optional[int] = Field(default=None, ge=1, json_schema_extra={"example": 200})
     unit_budget: float = Field(..., ge=1.0, json_schema_extra={"example": 1500.0})
-    days_to_deadline: Optional[int] = Field(default=None, ge=1, json_schema_extra={"example": 45})
-    deadline_days: Optional[int] = Field(default=None, ge=1, json_schema_extra={"example": 45})
-    delivery_latitude: Optional[float] = Field(default=28.6139, json_schema_extra={"example": 28.6139})
-    delivery_longitude: Optional[float] = Field(default=77.2090, json_schema_extra={"example": 77.2090})
+    days_to_deadline: Optional[int] = Field(default=None, ge=1, le=365, json_schema_extra={"example": 45})
+    deadline_days: Optional[int] = Field(default=None, ge=1, le=365, json_schema_extra={"example": 45})
+    delivery_latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0, json_schema_extra={"example": 28.6139})
+    delivery_longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0, json_schema_extra={"example": 77.2090})
     buyer_location: Optional[BuyerLocation] = None
     buyer_name: Optional[str] = Field(default=None, json_schema_extra={"example": "MoSJE Emporium"})
     buyer_email: Optional[str] = Field(default=None, json_schema_extra={"example": "buyer@crafts.gov.in"})
@@ -24,6 +24,7 @@ class B2BRFQCreate(BaseModel):
     buyer_phone: Optional[str] = Field(default=None, json_schema_extra={"example": "+919876500000"})
     delivery_state: Optional[str] = Field(default=None, json_schema_extra={"example": "Delhi"})
     delivery_district: Optional[str] = Field(default=None, json_schema_extra={"example": "New Delhi"})
+    requested_artisan_id: Optional[str] = Field(default=None, description="Optional target artisan ID; strictly verified without substitution")
 
     @model_validator(mode="before")
     @classmethod
@@ -50,8 +51,12 @@ class B2BRFQCreate(BaseModel):
             # Normalize buyer location
             loc = data.get("buyer_location")
             if isinstance(loc, dict):
-                data["delivery_latitude"] = float(loc.get("latitude", data.get("delivery_latitude", 28.6139)))
-                data["delivery_longitude"] = float(loc.get("longitude", data.get("delivery_longitude", 77.2090)))
+                lat = loc.get("latitude", data.get("delivery_latitude"))
+                lon = loc.get("longitude", data.get("delivery_longitude"))
+                if lat is not None:
+                    data["delivery_latitude"] = float(lat)
+                if lon is not None:
+                    data["delivery_longitude"] = float(lon)
             elif hasattr(loc, "latitude") and hasattr(loc, "longitude"):
                 data["delivery_latitude"] = float(loc.latitude)
                 data["delivery_longitude"] = float(loc.longitude)
@@ -174,22 +179,37 @@ class B2BMatchRecordItem(BaseModel):
     quoted_unit_price: float
     distance_km: float
     match_explanation: str
+    status: Optional[str] = "PROPOSED"
     scores: Optional[Dict[str, float]] = None
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
 
 
+class B2BRFQUpdateRequest(BaseModel):
+    status: Optional[str] = Field(None, description="Updated status (OPEN, MATCHED, IN_NEGOTIATION, FULFILLED, CLOSED)")
+    unit_budget: Optional[float] = Field(None, ge=1.0, description="Updated unit budget in INR")
+    required_quantity: Optional[int] = Field(None, ge=1, description="Updated required quantity")
+    deadline_days: Optional[int] = Field(None, ge=1, le=365, description="Updated deadline in days")
+    delivery_state: Optional[str] = None
+    delivery_district: Optional[str] = None
+
+
+class B2BMatchStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="Target match status: PROPOSED, ACCEPTED, REJECTED")
+
+
 class B2BRFQResponse(BaseModel):
     id: str
+    buyer_id: Optional[str] = None
     craft_type: str
     required_quantity: int
     unit_budget: float
     total_budget: float
     deadline_days: int
-    delivery_state: Optional[str] = "Delhi"
-    delivery_district: Optional[str] = "New Delhi"
-    delivery_latitude: Optional[float] = 28.6139
-    delivery_longitude: Optional[float] = 77.2090
+    delivery_state: Optional[str] = None
+    delivery_district: Optional[str] = None
+    delivery_latitude: Optional[float] = None
+    delivery_longitude: Optional[float] = None
     status: str
     buyer_name: Optional[str] = None
     buyer_organization: Optional[str] = None
