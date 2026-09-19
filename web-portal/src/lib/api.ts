@@ -22,6 +22,18 @@ export const ID_ALIASES: Record<string, string> = {
   'prod-madhubani-001': 'prod-004',
   'prod-005': 'prod-channapatna-001',
   'prod-channapatna-001': 'prod-005',
+  'prod-006': 'prod-varanasi-002',
+  'prod-varanasi-002': 'prod-006',
+  'prod-007': 'prod-bastar-003',
+  'prod-bastar-003': 'prod-007',
+  'prod-008': 'prod-khurja-002',
+  'prod-khurja-002': 'prod-008',
+  'prod-009': 'prod-madhubani-002',
+  'prod-madhubani-002': 'prod-009',
+  'prod-010': 'prod-channapatna-002',
+  'prod-channapatna-002': 'prod-010',
+  'prod-011': 'prod-tanjore-001',
+  'prod-tanjore-001': 'prod-011',
 };
 
 // Fallback seed products for zero-downtime offline presentation
@@ -183,6 +195,162 @@ export const SEED_PRODUCTS: Product[] = [
     artisan_state: "Karnataka",
     gi_certified: true
   },
+  {
+    id: "prod-varanasi-002",
+    artisan_id: "art-varanasi-001",
+    cluster_id: "cluster-varanasi-silk",
+    title_en: "Banarasi Handloom Emerald Silk Brocade Dupatta",
+    title_hi: "बनारसी हथकरघा पन्ना हरा सिल्क ज़री दुपट्टा",
+    craft_type: "Varanasi Silk",
+    materials: ["Pure Katan Mulberry Silk", "Fine Gold Zari Warp", "Natural Emerald Dyes"],
+    dimensions: "2.5m x 0.9m",
+    production_time_days: 8,
+    technique: "Kadwa Floral Buta Handloom Weaving",
+    color: "Emerald Green with Rich Antique Gold Zari",
+    description_en: "Lustrous emerald green Banarasi pure silk dupatta handwoven on traditional Varanasi pit looms with intricate gold zari floral Kadwa butis and an ornate scalloped border.",
+    description_hi: "वाराणसी के बुनकरों द्वारा हथकरघे पर विशुद्ध कतान रेशम और सोने की ज़री से बुना गया पन्ना हरा बनारसी दुपट्टा। कड़वा फ्लोरल बूटी और पारंपरिक किनारी।",
+    seo_tags: ["Varanasi Silk", "Banarasi Dupatta", "Pure Katan", "Zari Buti", "GI Handloom"],
+    studio_image_url: "/static/studio/varanasi_silk_dupatta.jpg",
+    floor_price: 4708,
+    recommended_retail_d2c: 8900,
+    wholesale_b2b: 6200,
+    available_stock: 8,
+    is_published: true,
+    created_at: "2026-09-11T10:00:00Z",
+    artisan_name: "Radheshyam Ansari",
+    artisan_state: "Uttar Pradesh",
+    gi_certified: true
+  },
+  {
+    id: "prod-bastar-003",
+    artisan_id: "art-bastar-001",
+    cluster_id: "cluster-bastar-dhokra",
+    title_en: "Bastar Dhokra Royal Procession Elephant Figurine",
+    title_hi: "बस्तर ढोकरा पारंपरिक शाही नक्काशीदार हाथी",
+    craft_type: "Bastar Dhokra",
+    materials: ["Bell Metal Brass", "Natural Beeswax", "Indravati River Clay", "Mustard Oil"],
+    dimensions: "22cm x 12cm x 18cm",
+    production_time_days: 6,
+    technique: "Lost-Wax Bell Metal Casting (Cire Perdue)",
+    color: "Antique Burnished Brass & River Clay Patina",
+    description_en: "Handcrafted tribal bell-metal elephant figurine cast using 4,000-year-old lost-wax technique by master artisan Rameshwar Baghel in Bastar. Decorated with ornate wax-thread lattice jali work and bells.",
+    description_hi: "बस्तर के शिल्पकार रामेश्वर बघेल द्वारा 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से निर्मित पारंपरिक शाही नक्काशीदार हाथी। बारीक मोम के धागों और घंटी की नक्काशी से सुसज्जित।",
+    seo_tags: ["Bastar Dhokra", "Tribal Brass Elephant", "Bell Metal", "Lost Wax Casting", "GI Bastar"],
+    studio_image_url: "/static/studio/bastar_dhokra_elephant.jpg",
+    floor_price: 1965,
+    recommended_retail_d2c: 3450,
+    wholesale_b2b: 2450,
+    available_stock: 10,
+    is_published: true,
+    created_at: "2026-09-11T11:00:00Z",
+    artisan_name: "Rameshwar Baghel",
+    artisan_state: "Chhattisgarh",
+    gi_certified: true
+  },
+  {
+    id: "prod-khurja-002",
+    artisan_id: "art-khurja-001",
+    cluster_id: "cluster-khurja-pottery",
+    title_en: "Khurja Hand-Glazed Cobalt Ceramic Tea Kettle & Kulhad Set",
+    title_hi: "खुर्जा हस्तनिर्मित कोबाल्ट ब्लू सिरेमिक टी-कैटली एवं कुल्हड़ सेट",
+    craft_type: "Khurja Pottery",
+    materials: ["High-Fire Kaolin Stoneware Clay", "Food-Safe Cobalt Glaze", "Natural Feldspar Quartz"],
+    dimensions: "Kettle: 20cm x 15cm, Kulhads: 8cm x 7cm",
+    production_time_days: 4,
+    technique: "Wheel Throwing, Hand Glazing & 1250°C Kiln Vitrification",
+    color: "Cobalt Blue, Turquoise & Antique White",
+    description_en: "Artisan stoneware tea kettle with matching ribbed kulhad cups. Handcrafted on potter's wheels in Khurja and fired at 1250°C with non-toxic, food-safe Persian cobalt glaze for timeless beauty and heat retention.",
+    description_hi: "खुर्जा के कुम्हार दिनेश प्रजापति द्वारा चाक पर हस्तनिर्मित और 1250 डिग्री पर पकाया गया कोबाल्ट नीले रंग का टी-कैटली और कुल्हड़ सेट। पूरी तरह से खाद्य-सुरक्षित और सीसा-मुक्त।",
+    seo_tags: ["Khurja Pottery", "Ceramic Tea Kettle", "Kulhad Set", "Cobalt Glaze", "GI Certified"],
+    studio_image_url: "/static/studio/khurja_tea_kettle.jpg",
+    floor_price: 1296,
+    recommended_retail_d2c: 2450,
+    wholesale_b2b: 1750,
+    available_stock: 15,
+    is_published: true,
+    created_at: "2026-09-11T12:00:00Z",
+    artisan_name: "Dinesh Prajapati",
+    artisan_state: "Uttar Pradesh",
+    gi_certified: true
+  },
+  {
+    id: "prod-madhubani-002",
+    artisan_id: "art-madhubani-001",
+    cluster_id: "cluster-madhubani-painting",
+    title_en: "Madhubani Dancing Peacocks & Tree of Life Canvas",
+    title_hi: "मधुबनी मयूर नृत्य एवं जीवन वृक्ष हस्तचित्रित कैनवास",
+    craft_type: "Madhubani Painting",
+    materials: ["Organic Handmade Recycled Cotton Canvas", "Natural Indigo, Turmeric, Aparajita Pigments", "Bamboo Pen & Nib"],
+    dimensions: "75cm x 50cm",
+    production_time_days: 7,
+    technique: "Mithila Kachni Line Hatching & Fine Bharni Filling",
+    color: "Vibrant Indigo, Ochre Yellow, Leaf Green & Saffron",
+    description_en: "Intricately detailed Mithila folk painting depicting a pair of dancing peacocks beneath the sacred Tree of Life, symbolizing harmony, love, and fertility in Mithila tradition. Painted entirely with bamboo nibs and natural organic vegetable extracts.",
+    description_hi: "राष्ट्रीय पुरस्कार प्राप्त कलाकार सीता देवी पासवान द्वारा बांस की कलम और प्राकृतिक वानस्पतिक रंगों से चित्रित मधुबनी मयूर युगल और जीवन वृक्ष कलाकृति।",
+    seo_tags: ["Madhubani Painting", "Dancing Peacocks", "Mithila Art", "Tree of Life", "GI Bihar"],
+    studio_image_url: "/static/studio/madhubani_peacock_art.jpg",
+    floor_price: 1533,
+    recommended_retail_d2c: 3200,
+    wholesale_b2b: 2200,
+    available_stock: 6,
+    is_published: true,
+    created_at: "2026-09-11T13:00:00Z",
+    artisan_name: "Sita Devi Paswan",
+    artisan_state: "Bihar",
+    gi_certified: true
+  },
+  {
+    id: "prod-channapatna-002",
+    artisan_id: "art-channapatna-001",
+    cluster_id: "cluster-channapatna-toys",
+    title_en: "Channapatna Handcrafted Lacquered Wooden Rocking Horse",
+    title_hi: "चन्नापटना हस्तनिर्मित लाख-पॉलिश लकड़ी का झूलता घोड़ा",
+    craft_type: "Channapatna Wooden Toys",
+    materials: ["Hale Wood (Wrightia Tinctoria)", "Natural Non-Toxic Vegetable Lacquer", "Turmeric & Kumkum Pigments"],
+    dimensions: "26cm x 10cm x 22cm",
+    production_time_days: 3,
+    technique: "Hand Lathe Turning & Friction Lacquering",
+    color: "Crimson Red, Mustard Yellow & Natural Wood Gloss",
+    description_en: "Classic rocking horse toy sculpted from sustainably harvested Hale wood, lathe-turned and coated with non-toxic, child-safe vegetable lacquer polish. Silky smooth finish safe for toddlers.",
+    description_hi: "कर्नाटक के चन्नापटना में प्राकृतिक आले की लकड़ी और जैविक लाख से बना झूलता घोड़ा खिलौना। बच्चों के लिए १००% सुरक्षित और विष-मुक्त।",
+    seo_tags: ["Channapatna Toys", "Wooden Rocking Horse", "Child Safe", "GI Karnataka", "Montessori"],
+    studio_image_url: "/static/studio/channapatna_wooden_horse.jpg",
+    floor_price: 928,
+    recommended_retail_d2c: 1850,
+    wholesale_b2b: 1250,
+    available_stock: 20,
+    is_published: true,
+    created_at: "2026-09-11T14:00:00Z",
+    artisan_name: "B. Venkatesh",
+    artisan_state: "Karnataka",
+    gi_certified: true
+  },
+  {
+    id: "prod-tanjore-001",
+    artisan_id: "art-tanjore-001",
+    cluster_id: "cluster-tanjore-art",
+    title_en: "Tanjore 22K Gold Foil Embossed Lord Ganesha Painting",
+    title_hi: "तंजौर 22-कैरेट स्वर्ण पत्र उभरी हुई भगवान गणेश चित्रकला",
+    craft_type: "Tanjore Painting",
+    materials: ["22-Karat Pure Gold Foil", "Semi-Precious Jaipur Gemstones", "Teak Wood Base & Chalk Muck Paste"],
+    dimensions: "45cm x 35cm x 4cm",
+    production_time_days: 12,
+    technique: "Traditional Tanjore Gilded Relief & Gem Setting",
+    color: "Radiant 22K Gold, Ruby Red & Emerald Gemstones",
+    description_en: "Sacred Thanjavur art masterpiece portraying Lord Ganesha in royal blessing posture. Created using pure 22-karat gold leaf foil, limestone muck relief embossing, and hand-cut semi-precious stones set into seasoned teakwood.",
+    description_hi: "तंजावुर की ऐतिहासिक शैली में निर्मित भगवान गणेश की दिव्य प्रतिमा। 22 कैरेट शुद्ध सोने के वर्क, उभरी हुई नक्काशी और कीमती पत्थरों से अलंकृत पारंपरिक काष्ठ कला।",
+    seo_tags: ["Tanjore Painting", "22K Gold Foil", "Lord Ganesha", "Thanjavur Art", "GI Tamil Nadu"],
+    studio_image_url: "/static/studio/tanjore_gold_ganesha.jpg",
+    floor_price: 7408,
+    recommended_retail_d2c: 14500,
+    wholesale_b2b: 10200,
+    available_stock: 4,
+    is_published: true,
+    created_at: "2026-09-11T15:00:00Z",
+    artisan_name: "K. Rajendran",
+    artisan_state: "Tamil Nadu",
+    gi_certified: true
+  },
 
   // Seed Aliases for Backward Compatibility and Statically Exported Routes
   {
@@ -317,6 +485,168 @@ export const SEED_PRODUCTS: Product[] = [
     created_at: "2026-09-10T08:00:00Z",
     artisan_name: "B. Venkatesh",
     artisan_state: "Karnataka",
+    gi_certified: true,
+    is_alias: true
+  },
+  {
+    id: "prod-006",
+    artisan_id: "art-varanasi-01",
+    cluster_id: "cluster-varanasi-silk",
+    title_en: "Banarasi Handloom Emerald Silk Brocade Dupatta",
+    title_hi: "बनारसी हथकरघा पन्ना हरा सिल्क ज़री दुपट्टा",
+    craft_type: "Varanasi Silk",
+    materials: ["Pure Katan Mulberry Silk", "Fine Gold Zari Warp"],
+    dimensions: "2.5m x 0.9m",
+    production_time_days: 8,
+    technique: "Kadwa Floral Buta Handloom Weaving",
+    color: "Emerald Green with Rich Antique Gold Zari",
+    description_en: "Lustrous emerald green Banarasi pure silk dupatta handwoven on traditional Varanasi pit looms.",
+    description_hi: "वाराणसी के बुनकरों द्वारा हथकरघे पर विशुद्ध कतान रेशम और सोने की ज़री से बुना गया पन्ना हरा बनारसी दुपट्टा।",
+    seo_tags: ["Varanasi Silk", "Banarasi Dupatta", "Pure Katan", "Zari Buti"],
+    studio_image_url: "/static/studio/varanasi_silk_dupatta.jpg",
+    floor_price: 4708,
+    recommended_retail_d2c: 8900,
+    wholesale_b2b: 6200,
+    available_stock: 8,
+    is_published: true,
+    created_at: "2026-09-11T10:00:00Z",
+    artisan_name: "Radheshyam Ansari",
+    artisan_state: "Uttar Pradesh",
+    gi_certified: true,
+    is_alias: true
+  },
+  {
+    id: "prod-007",
+    artisan_id: "art-bastar-01",
+    cluster_id: "cluster-bastar-dhokra",
+    title_en: "Bastar Dhokra Royal Procession Elephant Figurine",
+    title_hi: "बस्तर ढोकरा पारंपरिक शाही नक्काशीदार हाथी",
+    craft_type: "Bastar Dhokra",
+    materials: ["Bell Metal Brass", "Natural Beeswax", "Indravati River Clay"],
+    dimensions: "22cm x 12cm x 18cm",
+    production_time_days: 6,
+    technique: "Lost-Wax Bell Metal Casting (Cire Perdue)",
+    color: "Antique Burnished Brass & River Clay Patina",
+    description_en: "Handcrafted tribal bell-metal elephant figurine cast using 4,000-year-old lost-wax technique by master artisan Rameshwar Baghel.",
+    description_hi: "बस्तर के शिल्पकार रामेश्वर बघेल द्वारा 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से निर्मित पारंपरिक शाही नक्काशीदार हाथी।",
+    seo_tags: ["Bastar Dhokra", "Tribal Brass Elephant", "Bell Metal"],
+    studio_image_url: "/static/studio/bastar_dhokra_elephant.jpg",
+    floor_price: 1965,
+    recommended_retail_d2c: 3450,
+    wholesale_b2b: 2450,
+    available_stock: 10,
+    is_published: true,
+    created_at: "2026-09-11T11:00:00Z",
+    artisan_name: "Rameshwar Baghel",
+    artisan_state: "Chhattisgarh",
+    gi_certified: true,
+    is_alias: true
+  },
+  {
+    id: "prod-008",
+    artisan_id: "art-khurja-01",
+    cluster_id: "cluster-khurja-pottery",
+    title_en: "Khurja Hand-Glazed Cobalt Ceramic Tea Kettle & Kulhad Set",
+    title_hi: "खुर्जा हस्तनिर्मित कोबाल्ट ब्लू सिरेमिक टी-कैटली एवं कुल्हड़ सेट",
+    craft_type: "Khurja Pottery",
+    materials: ["High-Fire Kaolin Stoneware Clay", "Food-Safe Cobalt Glaze"],
+    dimensions: "Kettle: 20cm x 15cm, Kulhads: 8cm x 7cm",
+    production_time_days: 4,
+    technique: "Wheel Throwing, Hand Glazing & 1250°C Kiln Vitrification",
+    color: "Cobalt Blue, Turquoise & Antique White",
+    description_en: "Artisan stoneware tea kettle with matching ribbed kulhad cups made in Khurja.",
+    description_hi: "खुर्जा के कुम्हार द्वारा चाक पर हस्तनिर्मित और 1250 डिग्री पर पकाया गया कोबाल्ट नीले रंग का टी-कैटली और कुल्हड़ सेट।",
+    seo_tags: ["Khurja Pottery", "Ceramic Tea Kettle", "Kulhad Set"],
+    studio_image_url: "/static/studio/khurja_tea_kettle.jpg",
+    floor_price: 1296,
+    recommended_retail_d2c: 2450,
+    wholesale_b2b: 1750,
+    available_stock: 15,
+    is_published: true,
+    created_at: "2026-09-11T12:00:00Z",
+    artisan_name: "Dinesh Prajapati",
+    artisan_state: "Uttar Pradesh",
+    gi_certified: true,
+    is_alias: true
+  },
+  {
+    id: "prod-009",
+    artisan_id: "art-madhubani-01",
+    cluster_id: "cluster-madhubani-painting",
+    title_en: "Madhubani Dancing Peacocks & Tree of Life Canvas",
+    title_hi: "मधुबनी मयूर नृत्य एवं जीवन वृक्ष हस्तचित्रित कैनवास",
+    craft_type: "Madhubani Painting",
+    materials: ["Organic Handmade Cotton Canvas", "Natural Organic Vegetable Pigments"],
+    dimensions: "75cm x 50cm",
+    production_time_days: 7,
+    technique: "Mithila Kachni Line Hatching & Fine Bharni Filling",
+    color: "Vibrant Indigo, Ochre Yellow, Leaf Green & Saffron",
+    description_en: "Intricately detailed Mithila folk painting depicting dancing peacocks beneath the Tree of Life.",
+    description_hi: "प्राकृतिक वानस्पतिक रंगों से चित्रित मधुबनी मयूर युगल और जीवन वृक्ष कलाकृति।",
+    seo_tags: ["Madhubani Painting", "Dancing Peacocks", "Mithila Art"],
+    studio_image_url: "/static/studio/madhubani_peacock_art.jpg",
+    floor_price: 1533,
+    recommended_retail_d2c: 3200,
+    wholesale_b2b: 2200,
+    available_stock: 6,
+    is_published: true,
+    created_at: "2026-09-11T13:00:00Z",
+    artisan_name: "Sita Devi Paswan",
+    artisan_state: "Bihar",
+    gi_certified: true,
+    is_alias: true
+  },
+  {
+    id: "prod-010",
+    artisan_id: "art-channapatna-01",
+    cluster_id: "cluster-channapatna-toys",
+    title_en: "Channapatna Handcrafted Lacquered Wooden Rocking Horse",
+    title_hi: "चन्नापटना हस्तनिर्मित लाख-पॉलिश लकड़ी का झूलता घोड़ा",
+    craft_type: "Channapatna Wooden Toys",
+    materials: ["Hale Wood (Wrightia Tinctoria)", "Natural Non-Toxic Vegetable Lacquer"],
+    dimensions: "26cm x 10cm x 22cm",
+    production_time_days: 3,
+    technique: "Hand Lathe Turning & Friction Lacquering",
+    color: "Crimson Red, Mustard Yellow & Natural Wood Gloss",
+    description_en: "Classic rocking horse toy sculpted from sustainably harvested Hale wood.",
+    description_hi: "कर्नाटक के चन्नापटना में प्राकृतिक आले की लकड़ी और जैविक लाख से बना झूलता घोड़ा खिलौना।",
+    seo_tags: ["Channapatna Toys", "Wooden Rocking Horse", "Child Safe"],
+    studio_image_url: "/static/studio/channapatna_wooden_horse.jpg",
+    floor_price: 928,
+    recommended_retail_d2c: 1850,
+    wholesale_b2b: 1250,
+    available_stock: 20,
+    is_published: true,
+    created_at: "2026-09-11T14:00:00Z",
+    artisan_name: "B. Venkatesh",
+    artisan_state: "Karnataka",
+    gi_certified: true,
+    is_alias: true
+  },
+  {
+    id: "prod-011",
+    artisan_id: "art-tanjore-01",
+    cluster_id: "cluster-tanjore-art",
+    title_en: "Tanjore 22K Gold Foil Embossed Lord Ganesha Painting",
+    title_hi: "तंजौर 22-कैरेट स्वर्ण पत्र उभरी हुई भगवान गणेश चित्रकला",
+    craft_type: "Tanjore Painting",
+    materials: ["22-Karat Pure Gold Foil", "Semi-Precious Jaipur Gemstones", "Teak Wood Base"],
+    dimensions: "45cm x 35cm x 4cm",
+    production_time_days: 12,
+    technique: "Traditional Tanjore Gilded Relief & Gem Setting",
+    color: "Radiant 22K Gold, Ruby Red & Emerald Gemstones",
+    description_en: "Sacred Thanjavur art masterpiece portraying Lord Ganesha in royal blessing posture.",
+    description_hi: "तंजावुर की ऐतिहासिक शैली में निर्मित भगवान गणेश की दिव्य प्रतिमा। 22 कैरेट शुद्ध सोने के वर्क से अलंकृत।",
+    seo_tags: ["Tanjore Painting", "22K Gold Foil", "Lord Ganesha"],
+    studio_image_url: "/static/studio/tanjore_gold_ganesha.jpg",
+    floor_price: 7408,
+    recommended_retail_d2c: 14500,
+    wholesale_b2b: 10200,
+    available_stock: 4,
+    is_published: true,
+    created_at: "2026-09-11T15:00:00Z",
+    artisan_name: "K. Rajendran",
+    artisan_state: "Tamil Nadu",
     gi_certified: true,
     is_alias: true
   }
@@ -556,7 +886,7 @@ export async function fetchProducts(): Promise<Product[]> {
   const localUploaded = getUploadedProducts().map(normalizeProduct);
   const removedIds = new Set(getRemovedProductIds());
 
-  let allProducts: Product[] = [];
+  let backendProducts: Product[] = [];
 
   // 1. Fetch from Supabase published products
   let supabaseProducts: Product[] = [];
@@ -579,16 +909,28 @@ export async function fetchProducts(): Promise<Product[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        const normalized = data.map(normalizeProduct);
-        const ids = new Set([...localUploaded, ...supabaseProducts].map(p => p.id));
-        allProducts = [...localUploaded, ...supabaseProducts, ...normalized.filter((p: Product) => !ids.has(p.id))];
+        backendProducts = data.map(normalizeProduct);
       }
     }
   } catch {
     // Graceful fallback to rich seed catalog if server is not booted
   }
 
-  return allProducts.filter((p) => !removedIds.has(p.id));
+  // 3. Guaranteed canonical seed products for showcase & offline resilience
+  const canonicalSeedProducts = SEED_PRODUCTS.filter((p) => !p.is_alias).map(normalizeProduct);
+
+  // Combine uniquely preserving order: localUploaded -> supabaseProducts -> backendProducts -> canonicalSeedProducts
+  const seen = new Set<string>();
+  const combined: Product[] = [];
+
+  for (const item of [...localUploaded, ...supabaseProducts, ...backendProducts, ...canonicalSeedProducts]) {
+    if (item && item.id && !seen.has(item.id) && !removedIds.has(item.id)) {
+      seen.add(item.id);
+      combined.push(item);
+    }
+  }
+
+  return combined;
 }
 
 export async function fetchProductById(id: string): Promise<Product | null> {
@@ -648,6 +990,12 @@ export async function fetchProductById(id: string): Promise<Product | null> {
     }
   } catch {
     // Fallback
+  }
+
+  // 4. Fallback to SEED_PRODUCTS
+  const seedProduct = SEED_PRODUCTS.find((p) => p.id === id || (aliasId && p.id === aliasId));
+  if (seedProduct && !removedIds.has(seedProduct.id)) {
+    return normalizeProduct(seedProduct);
   }
 
   return null;
