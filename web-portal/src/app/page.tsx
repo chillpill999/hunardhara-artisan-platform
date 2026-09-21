@@ -51,7 +51,6 @@ export default function MarketplacePage() {
     'Khurja Pottery',
     'Madhubani Painting',
     'Channapatna Wooden Toys',
-    'Tanjore Painting',
   ];
 
   const filteredProducts = useMemo(() => {
