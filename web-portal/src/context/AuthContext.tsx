@@ -5,7 +5,7 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useRouter, usePathname } from 'next/navigation';
 
-export type UserRole = 'customer' | 'artisan' | 'admin';
+export type UserRole = 'customer' | 'artisan' | 'admin' | 'super_admin';
 
 export interface UserProfile {
   id: string;
@@ -26,6 +26,9 @@ interface AuthContextType {
   profile: UserProfile | null;
   isLoading: boolean;
   needsOnboarding: boolean;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  isArtisan: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signInWithGoogle: (redirectTo?: string) => Promise<{ error: Error | null }>;
   signInWithMagicLink: (email: string, redirectTo?: string) => Promise<{ error: Error | null }>;
@@ -40,6 +43,7 @@ interface AuthContextType {
     preferred_language?: string;
     interest?: string;
   }) => Promise<{ error: Error | null }>;
+  refreshSession: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -59,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Browser state is presentation-only. Roles are read exclusively from
     // signed Supabase app_metadata; the API verifies them again server-side.
     const appMetadataRole = authUser.app_metadata?.role;
-    const resolvedRole: UserRole = ['customer', 'artisan', 'admin'].includes(appMetadataRole)
+    const resolvedRole: UserRole = ['customer', 'artisan', 'admin', 'super_admin'].includes(appMetadataRole)
       ? appMetadataRole as UserRole
       : 'customer';
 
@@ -387,7 +391,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const appMetadataRole = user.app_metadata?.role;
-      const assignedRole: UserRole = ['customer', 'artisan', 'admin'].includes(appMetadataRole)
+      const assignedRole: UserRole = ['customer', 'artisan', 'admin', 'super_admin'].includes(appMetadataRole)
         ? appMetadataRole as UserRole
         : 'customer';
 
@@ -448,6 +452,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshSession = async () => {
+    try {
+      setIsLoading(true);
+      const { data, error } = await supabase.auth.refreshSession();
+      if (!error && data?.session?.user) {
+        setSession(data.session);
+        setUser(data.session.user);
+        const { role: userRole, profile: userProfile, needsOnboarding: requiresOnboarding } = await fetchProfile(
+          data.session.user.id,
+          data.session.user
+        );
+        setRole(userRole);
+        setProfile(userProfile);
+        setNeedsOnboarding(requiresOnboarding);
+      } else {
+        await loadSession();
+      }
+    } catch {
+      await loadSession();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const signOut = async () => {
     setIsLoading(true);
     try {
@@ -463,6 +491,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login');
   };
 
+  const isSuperAdmin = role === 'super_admin';
+  const isAdmin = role === 'admin' || role === 'super_admin';
+  const isArtisan = role === 'artisan';
+
   return (
     <AuthContext.Provider
       value={{
@@ -472,12 +504,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         isLoading,
         needsOnboarding,
+        isAdmin,
+        isSuperAdmin,
+        isArtisan,
         signIn,
         signInWithGoogle,
         signInWithMagicLink,
         verifyOtp,
         signUp,
         completeOnboarding,
+        refreshSession,
         signOut,
       }}
     >

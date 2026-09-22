@@ -7,6 +7,9 @@ from app.models.consent_log import ConsentLog
 from app.models.order import Order
 from app.models.earning import ArtisanEarning
 from app.models.artisan_application import ArtisanApplication
+from app.models.deactivated_user import DeactivatedUser
+from app.models.admin_audit_log import AdminAuditLog
+from app.models.system_setting import SystemSetting
 
 __all__ = [
     "CraftCluster",
@@ -19,4 +22,7 @@ __all__ = [
     "Order",
     "ArtisanEarning",
     "ArtisanApplication",
+    "DeactivatedUser",
+    "AdminAuditLog",
+    "SystemSetting",
 ]

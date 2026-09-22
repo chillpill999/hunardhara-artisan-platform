@@ -20,6 +20,7 @@ from app.core.storage_security import (
 )
 from app.models.artisan import Artisan
 from app.models.product import Product
+from app.models.craft_cluster import CraftCluster
 
 
 @pytest.fixture(autouse=True)
@@ -320,7 +321,7 @@ class TestDataErasureAndUnlinking:
     def test_product_deletion_unlinks_product_files(self, client, db):
         """TC-STORAGE-19: DELETE /products/{id} deletes linked storage files from disk."""
         # 1. Create artisan
-        artisan = db.query(Artisan).first()
+        artisan = db.query(Artisan).filter(Artisan.is_active == True).first()
         if not artisan:
             artisan = Artisan(
                 id="art-del-prod-01",
@@ -423,3 +424,166 @@ class TestDataErasureAndUnlinking:
 
         # Verify disk file is unlinked
         assert not os.path.exists(profile_path)
+
+    def test_dpdp_right_to_be_forgotten_purges_studio_files(self, client, db):
+        """TC-STORAGE-21: DPDP sovereign erasure removes studio output and preview files containing owner hash."""
+        import hashlib
+        artisan_id = "art-dpdp-studio-user-77"
+        owner_hash = hashlib.sha256(artisan_id.encode("utf-8")).hexdigest()[:8]
+
+        artisan = Artisan(
+            id=artisan_id,
+            full_name="Studio Erasure Artisan",
+            phone_number="9111222444",
+            masked_aadhaar="XXXXXXXX7777",
+            aadhaar_hash="dummy_hash_7777",
+            cluster_id="cluster-varanasi-01",
+            district="Varanasi",
+            state="Uttar Pradesh",
+            latitude=25.31,
+            longitude=82.97,
+            primary_craft="Silk Weaving"
+        )
+        db.add(artisan)
+        db.commit()
+
+        # Create dummy studio files in static/studio/
+        studio_dir = os.path.join(settings.STATIC_DIR, "studio")
+        os.makedirs(studio_dir, exist_ok=True)
+        img_fn = f"studio_{owner_hash}_test1234.jpg"
+        prev_fn = f"studio_{owner_hash}_test1234_preview.jpg"
+        img_path = os.path.join(studio_dir, img_fn)
+        prev_path = os.path.join(studio_dir, prev_fn)
+
+        with open(img_path, "wb") as f:
+            f.write(VALID_JPEG_BYTES)
+        with open(prev_path, "wb") as f:
+            f.write(VALID_JPEG_BYTES)
+
+        assert os.path.exists(img_path)
+        assert os.path.exists(prev_path)
+
+        # Trigger DPDP forget
+        forget_res = client.post(
+            "/api/v1/compliance/forget",
+            json={"artisan_id": artisan_id, "confirmation": True},
+            headers=auth_header(artisan_id, "artisan")
+        )
+        assert forget_res.status_code == 200
+
+        # Both studio files must be completely erased
+        assert not os.path.exists(img_path)
+        assert not os.path.exists(prev_path)
+
+    def test_create_product_rejects_foreign_storage_file(self, client, db):
+        """TC-STORAGE-22: Product creation rejects attaching media URLs belonging to another artisan."""
+        import hashlib
+        victim_id = "art-victim-01"
+        attacker_id = "art-attacker-02"
+        victim_hash = hashlib.sha256(victim_id.encode("utf-8")).hexdigest()[:8]
+
+        # Ensure cluster exists in DB
+        cluster = db.query(CraftCluster).filter(CraftCluster.id == "cluster-varanasi-01").first()
+        if not cluster:
+            cluster = CraftCluster(
+                id="cluster-varanasi-01",
+                name="Varanasi Silk Weaving Cluster",
+                craft_name="Silk Weaving",
+                state="Uttar Pradesh",
+                district="Varanasi",
+                latitude=25.31,
+                longitude=82.97,
+                statutory_hourly_wage=80.0,
+                statutory_daily_wage=640.0,
+                gi_tag_status="Registered (GI-28)"
+            )
+            db.add(cluster)
+            db.commit()
+
+        # Onboard attacker
+        attacker = Artisan(
+            id=attacker_id,
+            full_name="Attacker Artisan",
+            phone_number="9111333555",
+            masked_aadhaar="XXXXXXXX8888",
+            aadhaar_hash="dummy_hash_8888",
+            cluster_id="cluster-varanasi-01",
+            district="Varanasi",
+            state="Uttar Pradesh",
+            latitude=25.31,
+            longitude=82.97,
+            primary_craft="Silk Weaving"
+        )
+        db.add(attacker)
+        db.commit()
+
+        # Foreign URL referencing victim's private file
+        foreign_url = f"/storage/files/uploads/prod_{victim_hash}_private_craft.png"
+
+        product_payload = {
+            "artisan_id": attacker_id,
+            "title": "Malicious Hijack Product",
+            "craft_type": "Silk Weaving",
+            "cluster_id": "cluster-varanasi-01",
+            "technique": "Pit Loom",
+            "materials": ["Silk"],
+            "dimensions": {"length": 100.0, "width": 100.0, "height": 1.0, "unit": "cm"},
+            "cost_materials": 500.0,
+            "labor_hours": 10.0,
+            "listing_price": 2500.0,
+            "stock_quantity": 5,
+            "raw_photo_url": foreign_url
+        }
+
+        res = client.post(
+            "/api/v1/products",
+            json=product_payload,
+            headers=auth_header(attacker_id, "artisan")
+        )
+        assert res.status_code == 403
+        assert "FORBIDDEN_FILE_ACCESS" in res.json()["detail"]
+
+    def test_delete_stored_file_rejects_unauthorized_owner(self):
+        """TC-STORAGE-23: delete_stored_file rejects unlinking when owner_id mismatches file hash."""
+        import hashlib
+        owner_id = "legit-owner-999"
+        owner_hash = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:8]
+        uploads_dir = os.path.join(settings.STORAGE_DIR, "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+        fname = f"prod_{owner_hash}_important.png"
+        filepath = os.path.join(uploads_dir, fname)
+
+        with open(filepath, "wb") as f:
+            f.write(VALID_PNG_BYTES)
+
+        assert os.path.exists(filepath)
+
+        # Attacker tries to delete legitimate owner's file
+        deleted = delete_stored_file(f"/storage/files/uploads/{fname}", owner_id="malicious-user-000")
+        assert deleted is False
+        assert os.path.exists(filepath)  # Must remain untouched
+
+        # Legit owner successfully deletes
+        deleted_legit = delete_stored_file(f"/storage/files/uploads/{fname}", owner_id=owner_id)
+        assert deleted_legit is True
+        assert not os.path.exists(filepath)
+
+    def test_delete_stored_file_protects_static_benchmarks(self):
+        """TC-STORAGE-24: delete_stored_file refuses to delete static assets outside studio directory."""
+        benchmarks_dir = os.path.join(settings.STATIC_DIR, "benchmarks")
+        os.makedirs(benchmarks_dir, exist_ok=True)
+        bench_file = os.path.join(benchmarks_dir, "test_benchmark_guard.txt")
+
+        with open(bench_file, "w", encoding="utf-8") as f:
+            f.write("System Benchmark Asset")
+
+        assert os.path.exists(bench_file)
+
+        # Attempt to delete static benchmark
+        res = delete_stored_file("/static/benchmarks/test_benchmark_guard.txt", owner_id="anyone")
+        assert res is False
+        assert os.path.exists(bench_file)
+
+        # Clean up test benchmark file
+        os.remove(bench_file)
+

@@ -249,6 +249,17 @@ class B2BMatchingService:
         """
         candidates_by_id: Dict[str, Dict[str, Any]] = {}
 
+        # 0. Strict Production Guard: Real database session required; never load seed data
+        if settings.ENVIRONMENT.lower() == "production":
+            if db is None:
+                raise RuntimeError(
+                    "PRODUCTION_DATA_ERROR: Real database session is strictly required for B2B candidate gathering in production."
+                )
+            if settings.OFFLINE_MODE:
+                raise RuntimeError(
+                    "PRODUCTION_DATA_ERROR: OFFLINE_MODE cannot be enabled in production environment."
+                )
+
         # 1. Production Mode: Strict verified database artisans only
         if db is not None and not settings.OFFLINE_MODE:
             try:
@@ -265,31 +276,36 @@ class B2BMatchingService:
                         p for p in (a.products or [])
                         if p.is_active and p.wholesale_b2b_price and p.wholesale_b2b_price > 0
                     ]
-                    # If artisan has registered products, but NONE are active/eligible, exclude artisan
-                    if a.products and len(a.products) > 0 and len(active_products) == 0:
+                    # In production mode: artisan must have at least one active, wholesale-eligible product
+                    if not active_products:
                         continue
 
                     # Active vs inactive craft types for strict eligibility checks
                     active_crafts = {
-                        p.craft_type.strip().lower() for p in (a.products or [])
-                        if p.is_active and p.craft_type
+                        p.craft_type.strip().lower() for p in active_products
+                        if p.craft_type
                     }
                     inactive_crafts = {
                         p.craft_type.strip().lower() for p in (a.products or [])
                         if not p.is_active and p.craft_type
                     }
+                    active_products_data = [
+                        {
+                            "product_id": p.id,
+                            "title": p.title,
+                            "craft_type": p.craft_type,
+                            "wholesale_b2b_price": float(p.wholesale_b2b_price),
+                        }
+                        for p in active_products
+                        if p.craft_type and p.wholesale_b2b_price and p.wholesale_b2b_price > 0
+                    ]
                     active_craft_prices = [
-                        (p.craft_type, float(p.wholesale_b2b_price))
-                        for p in active_products if p.craft_type and p.wholesale_b2b_price
+                        (p["craft_type"], p["wholesale_b2b_price"])
+                        for p in active_products_data
                     ]
 
-                    # Determine wholesale price from active products or cluster statutory daily wage
-                    if active_products:
-                        wholesale_price = min(p.wholesale_b2b_price for p in active_products)
-                    elif cluster and cluster.statutory_daily_wage:
-                        wholesale_price = cluster.statutory_daily_wage * 2.5
-                    else:
-                        wholesale_price = 1200.0
+                    # Wholesale price derived strictly from active products
+                    wholesale_price = min(p["wholesale_b2b_price"] for p in active_products_data)
 
                     candidates_by_id[a.id] = {
                         "id": a.id,
@@ -308,12 +324,14 @@ class B2BMatchingService:
                         "active_crafts": active_crafts,
                         "inactive_crafts": inactive_crafts,
                         "active_craft_prices": active_craft_prices,
-                        "has_products": bool(a.products),
+                        "active_products_data": active_products_data,
+                        "has_products": True,
                     }
                 return list(candidates_by_id.values())
             except Exception as e:
                 logger.warning(f"Error querying database artisans: {e}")
-                return []
+        if settings.ENVIRONMENT.lower() == "production":
+            return []
 
         # 2. Isolated Offline / Test Fallback: load seed candidates only if explicitly OFFLINE_MODE or db is None
         seed_candidates = self._load_seed_candidates()
@@ -337,20 +355,30 @@ class B2BMatchingService:
                         continue
 
                     active_crafts = {
-                        p.craft_type.strip().lower() for p in (a.products or [])
-                        if p.is_active and p.craft_type
+                        p.craft_type.strip().lower() for p in active_products
+                        if p.craft_type
                     }
                     inactive_crafts = {
                         p.craft_type.strip().lower() for p in (a.products or [])
                         if not p.is_active and p.craft_type
                     }
+                    active_products_data = [
+                        {
+                            "product_id": p.id,
+                            "title": p.title,
+                            "craft_type": p.craft_type,
+                            "wholesale_b2b_price": float(p.wholesale_b2b_price),
+                        }
+                        for p in active_products
+                        if p.craft_type and p.wholesale_b2b_price and p.wholesale_b2b_price > 0
+                    ]
                     active_craft_prices = [
-                        (p.craft_type, float(p.wholesale_b2b_price))
-                        for p in active_products if p.craft_type and p.wholesale_b2b_price
+                        (p["craft_type"], p["wholesale_b2b_price"])
+                        for p in active_products_data
                     ]
 
-                    if active_products:
-                        wholesale_price = min(p.wholesale_b2b_price for p in active_products)
+                    if active_products_data:
+                        wholesale_price = min(p["wholesale_b2b_price"] for p in active_products_data)
                     elif cluster and cluster.statutory_daily_wage:
                         wholesale_price = cluster.statutory_daily_wage * 2.5
                     else:
@@ -374,6 +402,7 @@ class B2BMatchingService:
                             "active_crafts": active_crafts,
                             "inactive_crafts": inactive_crafts,
                             "active_craft_prices": active_craft_prices,
+                            "active_products_data": active_products_data,
                             "has_products": bool(a.products),
                         }
             except Exception as e:
@@ -430,15 +459,33 @@ class B2BMatchingService:
             if any(self.score_craft(ac, req_c) > 0 for ac in active_crafts):
                 craft_s = max(craft_s, 1.0)
 
+            # In production/db mode where active_products_data is available:
+            # Filter active products that match the requested craft
+            active_prods = c.get("active_products_data", [])
+            matching_products = [
+                p for p in active_prods
+                if self.score_craft(p["craft_type"], craft_type) > 0
+            ]
+            if active_prods and not matching_products:
+                # Artisan has active products, but none for the requested craft
+                continue
+
+            if matching_products:
+                best_prod = min(matching_products, key=lambda p: p["wholesale_b2b_price"])
+                wholesale_price = best_prod["wholesale_b2b_price"]
+                matched_product_id = best_prod["product_id"]
+            else:
+                craft_prices = [
+                    p_price for p_craft, p_price in c.get("active_craft_prices", [])
+                    if self.score_craft(p_craft, craft_type) > 0
+                ]
+                wholesale_price = min(craft_prices) if craft_prices else c.get("average_wholesale_price_inr", 1200.0)
+                matched_product_id = None
+
             if craft_s == 0.0:
                 continue  # Filter out non-matching crafts
 
-            # 2. Price Budget Compatibility: derive wholesale price from active products for this craft if available
-            craft_prices = [
-                p_price for p_craft, p_price in c.get("active_craft_prices", [])
-                if self.score_craft(p_craft, craft_type) > 0
-            ]
-            wholesale_price = min(craft_prices) if craft_prices else c["average_wholesale_price_inr"]
+            # 2. Price Budget Compatibility
             price_s = self.score_price(wholesale_price, unit_budget)
 
             # 3. Production Capacity Feasibility
@@ -487,6 +534,7 @@ class B2BMatchingService:
                 artisan_name=c["artisan_name"],
                 cluster_name=c["cluster_name"],
                 location=c["location_str"],
+                product_id=matched_product_id,
                 match_percentage=composite,
                 breakdown=breakdown,
                 scores={

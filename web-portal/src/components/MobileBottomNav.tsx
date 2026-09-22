@@ -19,7 +19,7 @@ import {
 
 export default function MobileBottomNav() {
   const pathname = usePathname();
-  const { user, role } = useAuth();
+  const { user, role, isAdmin } = useAuth();
 
   // 1. CUSTOMER MOBILE NAVIGATION (5 Dedicated Tabs)
   if (role === 'customer') {
@@ -180,10 +180,8 @@ export default function MobileBottomNav() {
         {/* TAB 3: ELEVATED CENTER ACTION */}
         <Link
           href={
-            role === 'admin'
+            isAdmin
               ? '/admin'
-              : role === 'artisan'
-              ? '/artisan?tab=studio'
               : user
               ? '/artisan'
               : '/login?redirect=/artisan'
@@ -191,14 +189,14 @@ export default function MobileBottomNav() {
           className="flex flex-col items-center -mt-5 group"
         >
           <div className="w-13 h-13 rounded-full bg-[#c85a32] hover:bg-[#b84e28] text-white flex items-center justify-center shadow-lg border-2 border-white transition-transform group-hover:scale-105 active:scale-95">
-            {role === 'admin' ? (
+            {isAdmin ? (
               <ShieldCheck className="w-6 h-6 text-[#faf7f2]" />
             ) : (
               <Camera className="w-6 h-6 text-[#faf7f2]" />
             )}
           </div>
           <span className="text-[10px] font-bold text-[#c85a32] mt-0.5">
-            {role === 'admin' ? 'प्रशासन' : 'स्टूडियो'}
+            {isAdmin ? 'प्रशासन' : 'स्टूडियो'}
           </span>
         </Link>
 
@@ -215,7 +213,7 @@ export default function MobileBottomNav() {
 
         {/* TAB 5: ADMIN / ARTISAN / PATRON ACCOUNT */}
         {user ? (
-          role === 'admin' ? (
+          isAdmin ? (
             <Link
               href="/admin"
               className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${
@@ -224,16 +222,6 @@ export default function MobileBottomNav() {
             >
               <ShieldCheck className="w-5 h-5" />
               <span className="text-[10px]">प्रशासन</span>
-            </Link>
-          ) : role === 'artisan' ? (
-            <Link
-              href="/artisan"
-              className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all ${
-                pathname.startsWith('/artisan') ? 'text-[#1b4332] font-bold' : 'text-[#6f5f58]'
-              }`}
-            >
-              <Palette className="w-5 h-5 text-[#c85a32]" />
-              <span className="text-[10px]">कार्यशाला</span>
             </Link>
           ) : (
             <Link

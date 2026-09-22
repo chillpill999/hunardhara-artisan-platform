@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: Optional[str] = None
     SUPABASE_JWT_ISSUER: Optional[str] = None
     SUPABASE_JWT_AUDIENCE: Optional[str] = None
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "https://gqtcpbllllaewzwqcyun.supabase.co")
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = os.getenv("SUPABASE_SERVICE_ROLE_KEY", None)
+    INITIAL_SUPER_ADMIN_EMAIL: str = os.getenv("INITIAL_SUPER_ADMIN_EMAIL", "aryanrockstar2007@gmail.com")
     ADMIN_USER_IDS: str = ""
     AADHAAR_PEPPER_KEY: Optional[str] = None
 
@@ -122,6 +125,8 @@ class Settings(BaseSettings):
                 errors.append("OFFLINE_MODE must be False in production")
             if self.MOCK_AI_SERVICES:
                 errors.append("MOCK_AI_SERVICES must be False in production")
+            if os.getenv("AUTO_SEED", "false").lower() in ("true", "1"):
+                errors.append("AUTO_SEED cannot be enabled in production")
             if "*" in self.ALLOWED_ORIGINS:
                 errors.append("Wildcard '*' not permitted in ALLOWED_ORIGINS in production")
             if errors:

@@ -22,6 +22,7 @@ VERIFIED_CRAFT_DATABASE = {
         "traditional_technique": "Lost-Wax Bell Metal Casting (Cire Perdue)",
         "authentic_materials": ["Brass", "Bell Metal", "Clay Core", "Beeswax", "Resin"],
         "statutory_daily_wage_inr": 650.0,
+        "benchmark_material_cost_inr": 450.0,
         "typical_days_range": [2, 10],
         "care_instructions": {
             "en": "Clean gently with a dry, soft cotton cloth. To restore luster, apply a tiny drop of coconut oil or brass polish. Avoid water immersion or harsh chemicals.",
@@ -30,9 +31,9 @@ VERIFIED_CRAFT_DATABASE = {
         "quality_markers": ["Non-magnetic bell metal alloy", "Unique hollow core with earthen clay residue", "Fine hand-coiled wax wire surface details"]
     },
     "varanasi silk": {
-        "canonical_name": "Varanasi Silk Brocade (Banarasi Saree)",
+        "canonical_name": "Varanasi Silk",
         "category": "Apparel & Textiles",
-        "sub_category": "Handloom Sarees & Stoles",
+        "sub_category": "Handloom Sarees & Stoles (Banarasi Brocade)",
         "state": "Uttar Pradesh",
         "primary_districts": ["Varanasi", "Chandauli", "Mirzapur", "Bhadohi"],
         "gi_registered": True,
@@ -40,6 +41,7 @@ VERIFIED_CRAFT_DATABASE = {
         "traditional_technique": "Handloom Jacquard / Pit Loom Weaving with supplementary warp/weft",
         "authentic_materials": ["Mulberry Silk", "Katan Silk", "Kora Organza", "Georgette", "Silver/Gold Electroplated Zari"],
         "statutory_daily_wage_inr": 750.0,
+        "benchmark_material_cost_inr": 2200.0,
         "typical_days_range": [7, 30],
         "care_instructions": {
             "en": "Dry clean only. Store folded in a breathable cotton or muslin bag. Change folds every 3 months to prevent creases along zari threads.",
@@ -48,7 +50,7 @@ VERIFIED_CRAFT_DATABASE = {
         "quality_markers": ["Intricate floral motifs (butis)", "Heavy dense pallu with minakari accents", "Reversible floats or clean float cutwork on back"]
     },
     "khurja pottery": {
-        "canonical_name": "Khurja Ceramic Pottery",
+        "canonical_name": "Khurja Pottery",
         "category": "Kitchenware & Tableware",
         "sub_category": "Ceramic Dinnerware & Planters",
         "state": "Uttar Pradesh",
@@ -58,6 +60,7 @@ VERIFIED_CRAFT_DATABASE = {
         "traditional_technique": "High-fired Ceramic Glazing (1200°C) with hand-painted underglaze motifs",
         "authentic_materials": ["Stoneware Clay", "China Clay", "Feldspar", "Quartz", "Lead-free Ceramic Glazes"],
         "statutory_daily_wage_inr": 650.0,
+        "benchmark_material_cost_inr": 180.0,
         "typical_days_range": [1, 5],
         "care_instructions": {
             "en": "Microwave and dishwasher safe unless metallic accents are present. Hand-wash with mild liquid soap and a soft sponge to preserve hand-painted glaze.",
@@ -66,9 +69,9 @@ VERIFIED_CRAFT_DATABASE = {
         "quality_markers": ["Ringing sound when tapped", "Non-porous vitrified surface", "Lead-free food safe certificate compliance"]
     },
     "madhubani painting": {
-        "canonical_name": "Madhubani Folk Art (Mithila Painting)",
+        "canonical_name": "Madhubani Painting",
         "category": "Art & Collectibles",
-        "sub_category": "Traditional Wall Paintings & Scrolls",
+        "sub_category": "Traditional Wall Paintings & Scrolls (Mithila Folk Art)",
         "state": "Bihar",
         "primary_districts": ["Madhubani", "Darbhanga", "Sitamarhi"],
         "gi_registered": True,
@@ -76,6 +79,7 @@ VERIFIED_CRAFT_DATABASE = {
         "traditional_technique": "Hand-drawing with nib pens, bamboo twigs, and natural mineral/vegetable pigments",
         "authentic_materials": ["Handmade Rag Paper", "Tussar Silk Fabric", "Natural Indigo", "Turmeric Pigment", "Rice Paste (Pithar)", "Soot (Kajal)"],
         "statutory_daily_wage_inr": 700.0,
+        "benchmark_material_cost_inr": 250.0,
         "typical_days_range": [3, 21],
         "care_instructions": {
             "en": "Frame under UV-protective glass to preserve natural pigments. Keep away from direct high humidity and continuous sunlight.",
@@ -84,9 +88,9 @@ VERIFIED_CRAFT_DATABASE = {
         "quality_markers": ["Double-line borders with geometric hatching (kachni)", "Absence of empty space (filled with birds, flowers)", "Natural earthy vegetable color palette"]
     },
     "channapatna toys": {
-        "canonical_name": "Channapatna Wooden Toys & Lacquerware",
+        "canonical_name": "Channapatna Toys",
         "category": "Toys & Baby",
-        "sub_category": "Educational Wooden Toys & Figurines",
+        "sub_category": "Educational Wooden Toys & Lacquerware",
         "state": "Karnataka",
         "primary_districts": ["Ramanagara", "Channapatna"],
         "gi_registered": True,
@@ -94,6 +98,7 @@ VERIFIED_CRAFT_DATABASE = {
         "traditional_technique": "Lathe Wood Turning with heat-frictional Vegetable Lacquer Polish",
         "authentic_materials": ["Wrightia Tinctoria (Aale Mara / Ivory Wood)", "Natural Non-toxic Shellac", "Turmeric/Kumkum/Indigo Organic Dyes"],
         "statutory_daily_wage_inr": 650.0,
+        "benchmark_material_cost_inr": 120.0,
         "typical_days_range": [1, 4],
         "care_instructions": {
             "en": "Wipe with a soft, slightly damp cloth and dry immediately. Do not soak in water or expose to direct flame. Completely non-toxic and child-safe.",
@@ -122,15 +127,15 @@ class RAGCraftKnowledgeService:
 
         if not best_match:
             # Check explicit cluster or GI craft terms only - NEVER map generic materials (brass, clay, wood) or generic items (saree, toy, cup) to specific GI clusters
-            if "dhokra" in q or "bastar" in q:
+            if any(k in q for k in ["dhokra", "bastar", "ढोकरा", "बस्तर"]):
                 best_match = VERIFIED_CRAFT_DATABASE["bastar dhokra"]
-            elif "banarasi" in q or "katan" in q or "varanasi silk" in q:
+            elif any(k in q for k in ["banarasi", "katan", "varanasi", "varanasi silk", "बनारसी", "बनारस", "वाराणसी", "कतान", "कातान"]):
                 best_match = VERIFIED_CRAFT_DATABASE["varanasi silk"]
-            elif "khurja" in q:
+            elif any(k in q for k in ["khurja", "खुर्जा"]):
                 best_match = VERIFIED_CRAFT_DATABASE["khurja pottery"]
-            elif "madhubani" in q or "mithila" in q:
+            elif any(k in q for k in ["madhubani", "mithila", "मधुबनी", "मिथिला"]):
                 best_match = VERIFIED_CRAFT_DATABASE["madhubani painting"]
-            elif "channapatna" in q:
+            elif any(k in q for k in ["channapatna", "चन्नपटना", "चन्नापटना", "ಚನ್ನಪಟ್ಟಣ"]):
                 best_match = VERIFIED_CRAFT_DATABASE["channapatna toys"]
 
         if best_match:
@@ -145,6 +150,7 @@ class RAGCraftKnowledgeService:
                 "authentic_materials": best_match["authentic_materials"],
                 "traditional_technique": best_match["traditional_technique"],
                 "statutory_daily_wage_inr": best_match["statutory_daily_wage_inr"],
+                "benchmark_material_cost_inr": best_match.get("benchmark_material_cost_inr", 350.0),
                 "care_instructions": best_match["care_instructions"],
                 "quality_markers": best_match["quality_markers"]
             }
@@ -161,6 +167,7 @@ class RAGCraftKnowledgeService:
             "authentic_materials": ["Handcrafted Natural Materials"],
             "traditional_technique": "Handmade Artisan Crafting",
             "statutory_daily_wage_inr": 650.0,
+            "benchmark_material_cost_inr": 250.0,
             "care_instructions": {
                 "en": "Handle with care. Clean gently with a soft dry cloth. Protect from extreme heat and moisture.",
                 "hi": "सावधानी से संभालें। सूखे मुलायम कपड़े से पोंछें। अत्यधिक गर्मी और नमी से बचाएं।"
@@ -177,8 +184,14 @@ class RAGCraftKnowledgeService:
         craft_info = RAGCraftKnowledgeService.query_craft_knowledge(craft_name)
         if not craft_info["matched"] or not craft_info["gi_registered"]:
             return {
+                "gi_craft_registered": False,
+                "craft_style_consistent": False,
                 "gi_status": "unverified",
                 "gi_registration_number": None,
+                "artisan_authorization_status": "NOT_PROVIDED",
+                "product_provenance_status": "UNVERIFIED",
+                "product_certified": False,
+                "is_certified_product": False,
                 "verified": False,
                 "disclaimer": "AI identifies this as craft tradition style. Certification requires official registration documents."
             }
@@ -194,15 +207,27 @@ class RAGCraftKnowledgeService:
 
         if state_match:
             return {
+                "gi_craft_registered": True,
+                "craft_style_consistent": True,
                 "gi_status": "verified_cluster",
                 "gi_registration_number": craft_info["gi_application_no"],
+                "artisan_authorization_status": "UNVERIFIED",
+                "product_provenance_status": "UNVERIFIED",
+                "product_certified": False,
+                "is_certified_product": False,
                 "verified": True,
-                "disclaimer": f"Verified craft tradition of {craft_info['state']}. Subject to artisan GI-authorisation card."
+                "disclaimer": f"Consistent with registered GI craft tradition ({craft_info['gi_application_no']}, {craft_info['state']}). Individual artisan authorization card and product provenance remain unverified."
             }
         else:
             return {
+                "gi_craft_registered": True,
+                "craft_style_consistent": False,
                 "gi_status": "unverified_region",
                 "gi_registration_number": None,
+                "artisan_authorization_status": "NOT_PROVIDED",
+                "product_provenance_status": "UNVERIFIED",
+                "product_certified": False,
+                "is_certified_product": False,
                 "verified": False,
                 "disclaimer": f"Stated region ({stated_region}) differs from registered GI cluster ({craft_info['state']}). Marked as style only."
             }

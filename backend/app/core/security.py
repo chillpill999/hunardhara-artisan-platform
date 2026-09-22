@@ -1,32 +1,44 @@
+import re
 import hashlib
 import hmac
 import time
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, status, Depends
 import jwt
 from passlib.context import CryptContext
 
 password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+logger = logging.getLogger("artisan_platform.security")
 
 from app.core.config import settings
+from app.core.database import get_db, SessionLocal
 
 
 @dataclass
 class CurrentUser:
     id: str
     email: Optional[str] = None
-    role: str = 'customer'  # 'customer', 'artisan', 'admin'
+    role: str = 'customer'  # 'customer', 'artisan', 'admin', 'super_admin'
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.role == "super_admin"
 
     @property
     def is_admin(self) -> bool:
-        return (
-            self.role == "admin"
-            and bool(settings.admin_user_ids)
-            and self.id in settings.admin_user_ids
-        )
+        if self.role == "super_admin":
+            return True
+        if self.role == "admin":
+            if not bool(settings.admin_user_ids) or self.id in settings.admin_user_ids:
+                return True
+            from app.services.supabase_admin import supabase_admin
+            admin_list = supabase_admin.list_admin_users()
+            return any(a.get("id") == self.id and a.get("role") in ("admin", "super_admin") for a in admin_list)
+        return False
 
 
 # In-memory sliding-window rate limiter
@@ -177,10 +189,118 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser:
+def _check_user_active_status(user_id: str, role: str, db: Optional[Any] = None) -> None:
+    """
+    Validates that user_id is not recorded in the DeactivatedUser registry
+    and that artisans are currently active in the database.
+    Raises HTTP 403 ACCOUNT_DEACTIVATED if account is deactivated or deleted under DPDP Act 2023.
+    """
+    from app.models.deactivated_user import DeactivatedUser
+    from app.models.artisan import Artisan
+    from sqlalchemy.orm import Session
+
+    def _inspect(session: Session):
+        # 1. Check DeactivatedUser table
+        try:
+            deact = session.query(DeactivatedUser).filter(DeactivatedUser.id == user_id).first()
+            if deact:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="ACCOUNT_DEACTIVATED: This account has been deactivated or deleted under DPDP Act 2023."
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+        # 2. Check Artisan active status
+        if role == "artisan":
+            try:
+                artisan = session.query(Artisan).filter(Artisan.id == user_id).first()
+                if artisan and not artisan.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="ACCOUNT_DEACTIVATED: Artisan account has been deactivated."
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
+    from sqlalchemy.orm import Session as SASession
+    if db is not None and isinstance(db, SASession):
+        _inspect(db)
+    else:
+        try:
+            with SessionLocal() as session:
+                _inspect(session)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+
+def _resolve_user_role(user_id: str, email: Optional[str], raw_role: Optional[str], db: Optional[Session] = None) -> str:
+    """
+    Resolves authoritative user role from app_metadata and performs one-time
+    server-side bootstrap for INITIAL_SUPER_ADMIN_EMAIL.
+    """
+    role = raw_role if raw_role in {"customer", "artisan", "admin", "super_admin"} else "customer"
+    role_str = str(role).lower()
+
+    # Server-side Super Admin bootstrap check:
+    if email and email.strip().lower() == settings.INITIAL_SUPER_ADMIN_EMAIL.strip().lower():
+        from app.models.system_setting import SystemSetting
+        from app.models.admin_audit_log import AdminAuditLog
+        from app.services.supabase_admin import supabase_admin
+
+        target_db = db if db is not None else SessionLocal()
+        try:
+            bootstrapped_setting = target_db.query(SystemSetting).filter(SystemSetting.key == "super_admin_bootstrapped").first()
+            if not bootstrapped_setting:
+                # First-time Super Admin Bootstrap:
+                logger.info(f"Executing initial Super Admin bootstrap for {email} ({user_id})")
+                target_db.merge(SystemSetting(key="super_admin_bootstrapped", value="true"))
+                target_db.merge(SystemSetting(key="super_admin_user_id", value=user_id))
+                target_db.merge(SystemSetting(key="super_admin_email", value=email))
+                target_db.add(AdminAuditLog(
+                    action="BOOTSTRAP_SUPER_ADMIN",
+                    actor_id=user_id,
+                    actor_email=email,
+                    target_user_id=user_id,
+                    details=json.dumps({"method": "automatic_first_auth", "role": "super_admin"})
+                ))
+                target_db.commit()
+                supabase_admin.set_user_role(user_id, "super_admin")
+                return "super_admin"
+            elif bootstrapped_setting.value == "true":
+                super_uid = target_db.query(SystemSetting).filter(SystemSetting.key == "super_admin_user_id").first()
+                if super_uid and super_uid.value == user_id:
+                    return "super_admin"
+        except Exception as e:
+            logger.warning(f"Super admin bootstrap check note: {e}")
+        finally:
+            if db is None:
+                target_db.close()
+
+    if role_str == "admin" and settings.admin_user_ids and user_id not in settings.admin_user_ids:
+        from app.services.supabase_admin import supabase_admin
+        admin_list = supabase_admin.list_admin_users()
+        dynamically_granted = any(a.get("id") == user_id and a.get("role") in ("admin", "super_admin") for a in admin_list)
+        if not dynamically_granted:
+            role_str = "customer"
+
+    return role_str
+
+
+def get_current_user(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> CurrentUser:
     """
     FastAPI dependency to extract and validate the authenticated user.
     Enforces that anonymous/unauthenticated users are rejected with HTTP 401.
+    Enforces that deleted or deactivated users are rejected with HTTP 403.
     """
     _require_auth_configuration()
     if not authorization or not authorization.startswith("Bearer "):
@@ -210,20 +330,23 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> CurrentUser
 
     app_metadata = payload.get("app_metadata")
     app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
-    role = app_role if app_role in {"customer", "artisan", "admin"} else "customer"
     email = payload.get("email")
 
-    role_str = str(role).lower()
-    if role_str == "admin" and (not settings.admin_user_ids or user_id not in settings.admin_user_ids):
-        role_str = "customer"
+    role_str = _resolve_user_role(user_id=user_id, email=email, raw_role=app_role, db=db)
+
+    _check_user_active_status(user_id=user_id, role=role_str, db=db)
 
     return CurrentUser(id=user_id, email=email, role=role_str)
 
 
-def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Optional[CurrentUser]:
+def get_optional_current_user(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> Optional[CurrentUser]:
     """
     FastAPI dependency: Returns CurrentUser if a valid Bearer token is provided,
     otherwise returns None without raising 401.
+    Returns None if the account is deactivated or deleted.
     """
     if not authorization or not authorization.startswith("Bearer ") or not _auth_configured():
         return None
@@ -237,12 +360,11 @@ def get_optional_current_user(authorization: Optional[str] = Header(None)) -> Op
             return None
         app_metadata = payload.get("app_metadata")
         app_role = app_metadata.get("role") if isinstance(app_metadata, dict) else None
-        role = app_role if app_role in {"customer", "artisan", "admin"} else "customer"
         email = payload.get("email")
 
-        role_str = str(role).lower()
-        if role_str == "admin" and (not settings.admin_user_ids or user_id not in settings.admin_user_ids):
-            role_str = "customer"
+        role_str = _resolve_user_role(user_id=user_id, email=email, raw_role=app_role, db=db)
+
+        _check_user_active_status(user_id=user_id, role=role_str, db=db)
 
         return CurrentUser(id=user_id, email=email, role=role_str)
     except Exception:
@@ -267,12 +389,64 @@ def mask_email(email: Optional[str]) -> Optional[str]:
     return f"{masked_name}@{domain}"
 
 
-def require_customer(authorization: Optional[str] = Header(None)) -> CurrentUser:
+def redact_sensitive_text(text: Optional[str]) -> Optional[str]:
+    """
+    Sanitizes arbitrary strings to redact PII and sensitive credentials from logs and errors:
+    - Email addresses: masked via mask_email (e.g. u***@domain.com)
+    - Indian phone numbers: +9198****1234
+    - Aadhaar numbers: XXXXXXXX1234
+    - Bearer tokens: Bearer [REDACTED]
+    - Passwords & secrets: [REDACTED]
+    """
+    if not text:
+        return text
+
+    # Mask Bearer tokens
+    s = re.sub(r'(Bearer\s+)[A-Za-z0-9_\-\.]+', r'\1[REDACTED]', text)
+
+    # Mask secrets, passwords, api keys
+    s = re.sub(r'(?i)(api[_-]?key|password|secret|jwt[_-]?secret)\s*[:=]\s*["\']?[^"\'\s,]+', r'\1=[REDACTED]', s)
+
+    # Mask Aadhaar numbers (12 digits, optional space or hyphen)
+    def _mask_aadhaar_match(m):
+        raw = re.sub(r'[\s\-]', '', m.group(0))
+        return f"XXXXXXXX{raw[-4:]}"
+
+    s = re.sub(r'\b[1-9]\d{3}[\s\-]?\d{4}[\s\-]?\d{4}\b', _mask_aadhaar_match, s)
+
+    # Mask Indian mobile phone numbers (10 digits starting with 6-9, optional +91 prefix)
+    def _mask_phone_match(m):
+        raw = m.group(0)
+        digits = re.sub(r'\D', '', raw)
+        if len(digits) >= 10:
+            last4 = digits[-4:]
+            prefix = "+91" if "+91" in raw or raw.strip().startswith("91") else ""
+            lead2 = digits[-10:-8]
+            return f"{prefix}{lead2}****{last4}".strip()
+        return "[PHONE_REDACTED]"
+
+    s = re.sub(r'(?:\+?91[\-\s]?)?[6-9]\d{9}\b', _mask_phone_match, s)
+
+    # Mask email addresses
+    def _mask_email_match(m):
+        em = m.group(0)
+        return mask_email(em) or em
+
+    s = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', _mask_email_match, s)
+
+    return s
+
+
+def require_customer(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> CurrentUser:
     """
     FastAPI dependency: Requires authenticated customer or verified administrator.
     Rejects artisans or non-customer accounts attempting to perform consumer actions.
+    Rejects deactivated accounts.
     """
-    user = get_current_user(authorization)
+    user = get_current_user(authorization, db=db)
     if user.role != "customer" and not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -281,11 +455,15 @@ def require_customer(authorization: Optional[str] = Header(None)) -> CurrentUser
     return user
 
 
-def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
+def require_artisan(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> CurrentUser:
     """
-    FastAPI dependency: Requires authenticated artisan or verified administrator.
+    FastAPI dependency: Requires authenticated active artisan or verified administrator.
+    Rejects deactivated accounts.
     """
-    user = get_current_user(authorization)
+    user = get_current_user(authorization, db=db)
     if user.role != "artisan" and not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -294,9 +472,29 @@ def require_artisan(authorization: Optional[str] = Header(None)) -> CurrentUser:
     return user
 
 
-def require_admin(authorization: Optional[str] = Header(None)) -> CurrentUser:
-    """Requires a verified Supabase administrator subject configured server-side."""
-    user = get_current_user(authorization)
+def require_super_admin(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> CurrentUser:
+    """
+    FastAPI dependency: Requires authenticated Super Administrator (role='super_admin').
+    Rejects normal administrators, artisans, and customers with HTTP 403.
+    """
+    user = get_current_user(authorization, db=db)
+    if not user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="FORBIDDEN: Super Administrator privileges required."
+        )
+    return user
+
+
+def require_admin(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> CurrentUser:
+    """Requires a verified Supabase administrator or super administrator."""
+    user = get_current_user(authorization, db=db)
     if not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -35,9 +35,23 @@ export interface Product {
   wholesale_b2b: number;
   available_stock: number;
   is_published: boolean;
-  created_at: string;
+  created_at?: string;
   artisan_name?: string;
   artisan_state?: string;
+
+  // Authoritative Geographical Indication (GI) Separation
+  gi_craft_registered?: boolean;
+  gi_registration_name?: string;
+  gi_registration_reference?: string;
+  gi_registered_region?: string;
+  gi_artisan_authorization_status?: 'UNVERIFIED' | 'PENDING_REVIEW' | 'AUTHORIZED' | 'NOT_PROVIDED' | 'REJECTED';
+  gi_authorization_document_reference?: string;
+  gi_product_provenance_status?: 'UNVERIFIED' | 'PENDING_VERIFICATION' | 'VERIFIED' | 'FAILED';
+  gi_verification_source?: string;
+  gi_verification_date?: string;
+  is_gi_certified_product?: boolean;
+
+  // Deprecated legacy field: do not rely on for official certification
   gi_certified?: boolean;
   is_alias?: boolean;
 }
@@ -50,6 +64,7 @@ export interface B2BRFQRequest {
   delivery_state?: string;
   buyer_company_name?: string;
   buyer_contact_email?: string;
+  idempotency_key?: string;
 }
 
 export interface B2BMatchRecordItem {
@@ -57,6 +72,7 @@ export interface B2BMatchRecordItem {
   artisan_name: string;
   cluster_name: string;
   state: string;
+  product_id?: string;
   overall_match_percentage: number;
   craft_compatibility_score: number;
   price_compatibility_score: number;
@@ -77,6 +93,23 @@ export interface B2BMatchResponse {
   matched_artisans: B2BMatchRecordItem[];
   total_matches_found: number;
   cluster_consortium_recommended: boolean;
+  consortium_option?: {
+    consortium_recommended: boolean;
+    cluster_name: string;
+    participating_artisans: string[];
+    artisan_count: number;
+    combined_monthly_capacity: number;
+    deliverable_in_deadline: number;
+    consortium_feasible: boolean;
+    explanation: string;
+  };
+}
+
+export interface B2BMatchApiResult {
+  success: boolean;
+  data?: B2BMatchResponse;
+  error?: string;
+  statusCode?: number;
 }
 
 export interface ArtisanPayoutRecord {
@@ -149,5 +182,54 @@ export interface ArtisanInquiry {
   quantity?: number;
   status: 'new' | 'replied' | 'in_progress' | 'closed';
   created_at: string;
+}
+
+export interface CartStorageItem {
+  id: string;
+  quantity: number;
+}
+
+export interface EnrichedCartItem {
+  id: string;
+  title: string;
+  craft: string;
+  artisan: string;
+  price: number;
+  statutoryWage: number;
+  quantity: number;
+  image: string;
+  stock: number;
+  isActive: boolean;
+}
+
+export interface CustomerOrder {
+  id: string;
+  order_number: string;
+  customer_id: string;
+  artisan_id: string;
+  product_id: string;
+  product_title: string;
+  quantity: number;
+  total_price: number;
+  status: 'pending' | 'paid' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  payment_status: 'unpaid' | 'paid' | 'refunded';
+  payment_id?: string | null;
+  payment_provider?: string | null;
+  paid_at?: string | null;
+  created_at: string;
+  product_image_url?: string | null;
+  craft_type?: string | null;
+  artisan_name?: string | null;
+  cluster_name?: string | null;
+  statutory_wage?: number | null;
+}
+
+export interface CartCheckoutResult {
+  success: boolean;
+  status: number;
+  orders?: CustomerOrder[];
+  totalAmount?: number;
+  totalItems?: number;
+  error?: string;
 }
 

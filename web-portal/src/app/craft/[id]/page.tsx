@@ -1,8 +1,20 @@
-import { SEED_PRODUCTS, fetchProductById } from "@/lib/api";
+import { fetchProductById } from "@/lib/api";
 import CraftDetailClient from "@/components/CraftDetailClient";
 
-export function generateStaticParams() {
-  return SEED_PRODUCTS.map((p) => ({ id: p.id }));
+export async function generateStaticParams() {
+  return [
+    { id: 'prod-001' },
+    { id: 'prod-002' },
+    { id: 'prod-003' },
+    { id: 'prod-004' },
+    { id: 'prod-005' },
+    { id: 'prod-varanasi-001' },
+    { id: 'prod-bastar-001' },
+    { id: 'prod-bastar-002' },
+    { id: 'prod-khurja-001' },
+    { id: 'prod-madhubani-001' },
+    { id: 'prod-channapatna-001' },
+  ];
 }
 
 export default async function CraftDetailPage({

@@ -53,6 +53,18 @@ class Product(Base):
     stock_quantity = Column(Integer, default=5)
     is_active = Column(Boolean, default=True)
     qr_passport_id = Column(String(64), nullable=True, unique=True)
+    idempotency_key = Column(String(128), nullable=True, unique=True, index=True)
+
+    # Authoritative Geographical Indication (GI) Separation
+    gi_craft_registered = Column(Boolean, default=False, nullable=False)
+    gi_registration_name = Column(String(128), nullable=True)
+    gi_registration_reference = Column(String(64), nullable=True)
+    gi_registered_region = Column(String(128), nullable=True)
+    gi_artisan_authorization_status = Column(String(32), default="NOT_PROVIDED", nullable=False)  # NOT_PROVIDED, UNVERIFIED, PENDING_REVIEW, AUTHORIZED, REJECTED
+    gi_authorization_document_reference = Column(String(128), nullable=True)
+    gi_product_provenance_status = Column(String(32), default="UNVERIFIED", nullable=False)  # UNVERIFIED, PENDING_VERIFICATION, VERIFIED, FAILED
+    gi_verification_source = Column(String(128), nullable=True)
+    gi_verification_date = Column(DateTime, nullable=True)
     
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

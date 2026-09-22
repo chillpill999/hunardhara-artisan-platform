@@ -23,7 +23,7 @@ export default function AuthGuard({
 
   useEffect(() => {
     if (!isLoading && !user) {
-      const isAdminRoute = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && allowedRoles[0] === 'admin');
+      const isAdminRoute = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && (allowedRoles[0] === 'admin' || allowedRoles[0] === 'super_admin'));
       const redirectUrl = `/login?redirect=${encodeURIComponent(pathname || '/')}&msg=${encodeURIComponent(
         isAdminRoute
           ? 'प्रशासकीय लिंक अवरोधित: Direct admin link is blocked. Only authorised emails are valid.'
@@ -47,7 +47,7 @@ export default function AuthGuard({
 
   // Not authenticated
   if (!user) {
-    const isAdminRoute = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && allowedRoles[0] === 'admin');
+    const isAdminRoute = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && (allowedRoles[0] === 'admin' || allowedRoles[0] === 'super_admin'));
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-4">
         <div className="w-12 h-12 rounded-full bg-[#fef2f2] text-[#ef4444] flex items-center justify-center shadow-xs">
@@ -103,8 +103,8 @@ export default function AuthGuard({
 
   // Presentation-only guard. Sensitive admin operations are verified again by
   // the backend against a signed Supabase token and configured subject ID.
-  const isAdminTarget = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && allowedRoles[0] === 'admin');
-  if (isAdminTarget && role !== 'admin') {
+  const isAdminTarget = pathname?.startsWith('/admin') || (allowedRoles?.length === 1 && (allowedRoles[0] === 'admin' || allowedRoles[0] === 'super_admin'));
+  if (isAdminTarget && role !== 'admin' && role !== 'super_admin') {
     const isArtisan = role === 'artisan';
     return (
       <div className="min-h-[65vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-lg mx-auto">
@@ -177,7 +177,8 @@ export default function AuthGuard({
   }
 
   // Check Other Roles (e.g. Artisan vs Customer)
-  if (allowedRoles && role && !allowedRoles.includes(role)) {
+  const isAuthorized = !allowedRoles || (role ? allowedRoles.includes(role) || (allowedRoles.includes('admin') && role === 'super_admin') : false);
+  if (allowedRoles && role && !isAuthorized) {
     const isCustomerAccessingArtisan = role === 'customer' && allowedRoles.includes('artisan');
 
     if (isCustomerAccessingArtisan) {
@@ -233,7 +234,7 @@ export default function AuthGuard({
       );
     }
 
-    const isAdminAccessingArtisan = role === 'admin' && allowedRoles.includes('artisan');
+    const isAdminAccessingArtisan = (role === 'admin' || role === 'super_admin') && allowedRoles.includes('artisan');
     if (isAdminAccessingArtisan) {
       return (
         <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-md mx-auto">

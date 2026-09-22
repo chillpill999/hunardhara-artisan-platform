@@ -184,11 +184,30 @@ export default function MarketplacePage() {
       {/* 3. FEATURED CRAFTS / PRODUCTS                                             */}
       {/* ========================================================================= */}
       <section className="max-w-7xl mx-auto px-4 sm:px-8">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
-          {filteredProducts.map((product) => (
-            <CraftCard key={product.id} product={product} />
-          ))}
-        </div>
+        {filteredProducts.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] p-12 text-center space-y-4 max-w-md mx-auto shadow-2xs">
+            <div className="w-16 h-16 rounded-full bg-[#faf7f2] flex items-center justify-center mx-auto text-[#6f5f58]">
+              <Sparkles className="w-8 h-8 text-[#c85a32]" />
+            </div>
+            <h3 className="text-lg font-bold text-[#1c1917]">कोई शिल्प उपलब्ध नहीं है</h3>
+            <p className="text-xs text-[#545454]">
+              {searchQuery ? `"${searchQuery}" के लिए कोई शिल्प नहीं मिला।` : 'कारीगरों द्वारा सीधे नए शिल्प प्रकाशित किए जा रहे हैं। आप भी कारीगर स्टूडियो से अपना पहला शिल्प जोड़ सकते हैं।'}
+            </p>
+            <Link
+              href="/artisan"
+              className="inline-flex items-center gap-1.5 text-xs font-bold px-5 py-2.5 rounded-full bg-[#1b4332] text-white hover:bg-[#2d6a4f] transition-all"
+            >
+              <span>शिल्प जोड़ें (Start Selling)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
+            {filteredProducts.map((product) => (
+              <CraftCard key={product.id} product={product} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* ========================================================================= */}

@@ -283,3 +283,74 @@ class TestAIEvaluationFramework:
         assert export_result["total_curated_samples"] >= 1
         assert os.path.exists(export_result["export_filepath"])
 
+    def test_spoken_attributes_reflected_in_generated_catalog(self):
+        """
+        SIH26090 Feature 2: Multilingual Auto-Cataloger.
+        Asserts that specific items, motifs, colors, and materials spoken by artisans
+        directly shape the generated catalog titles and descriptions, eliminating canned templates.
+        """
+        # Case 1: Bastar Dhokra Brass Horse
+        voice_dhokra = "यह बस्तर का पारंपरिक ढोकरा पीतल का घोड़ा है जो चार दिन में लॉस्ट वैक्स तकनीक से बना है।"
+        cat_dhokra = ai_orchestrator.orchestrate_listing_pipeline(raw_text_or_transcript=voice_dhokra)
+        assert "Horse" in cat_dhokra.title_en or "Figurine" in cat_dhokra.title_en
+        assert "घोड़ा" in cat_dhokra.title_hi
+        assert "Bastar Dhokra" in cat_dhokra.title_en
+        assert cat_dhokra.title_en != "Handcrafted Bastar Dhokra Artisan Creation"
+        assert "Horse" in cat_dhokra.short_description_en or "Figurine" in cat_dhokra.short_description_en
+
+        # Case 2: Khurja Ceramic Tea Cup and Saucer Set
+        voice_khurja = "खुर्जा सिरेमिक की 6 पीस चाय की कप-प्लेट का सेट है, नीला फ्लोरल डिज़ाइन है। 3 दिन में भट्ठी में पकाकर तैयार हुआ।"
+        cat_khurja = ai_orchestrator.orchestrate_listing_pipeline(raw_text_or_transcript=voice_khurja)
+        assert "Cup and Saucer" in cat_khurja.title_en or "Tea Cup" in cat_khurja.title_en
+        assert "कप-प्लेट" in cat_khurja.title_hi
+        assert cat_khurja.title_en != "Handcrafted Khurja Ceramic Pottery Artisan Creation"
+
+        # Case 3: Varanasi Silk Yellow Saree
+        voice_saree = "यह हमारी हथकरघा बनारसी कतान सिल्क साड़ी है, पीला रंग है और पारंपरिक जरी का काम है। इसे बुनने में 14 दिन लगे हैं।"
+        cat_saree = ai_orchestrator.orchestrate_listing_pipeline(raw_text_or_transcript=voice_saree)
+        assert "Saree" in cat_saree.title_en
+        assert "Yellow" in cat_saree.title_en or "Katan" in cat_saree.title_en
+        assert "साड़ी" in cat_saree.title_hi
+        assert cat_saree.title_en != "Handcrafted Varanasi Silk Brocade (Banarasi Saree) Artisan Creation"
+
+    def test_dynamic_pricing_grounded_in_rag_benchmark_materials(self):
+        """
+        SIH26090 Feature 3: Dynamic Pricing Assistant.
+        Asserts that raw material cost is grounded in verified cluster benchmarks from RAG
+        when omitted by the artisan, rather than a circular fixed 30% of stated retail price.
+        """
+        # Varanasi Silk: Stated price ₹16,000, no material cost mentioned
+        voice = "यह हमारी हथकरघा बनारसी कतान सिल्क साड़ी है। इसे बुनने में 14 दिन लगे हैं।"
+        cat = ai_orchestrator.orchestrate_listing_pipeline(raw_text_or_transcript=voice)
+        
+        # Grounded in Varanasi Silk verified cluster benchmark (₹2,200), NOT 16000 * 0.3 (₹4,800)
+        assert cat.attributes.material_cost == 2200.0
+        # Cost estimate includes statutory labor (14 days * ₹750 = ₹10,500) + ₹2200 materials + ₹220 overhead = ₹12,920
+        assert cat.pricing.cost_estimate >= 12000.0
+        assert any("Verified cluster benchmark" in f for f in cat.pricing.factors_affecting_recommendation)
+
+    def test_dynamic_pricing_grounded_in_visual_inspection_and_embeddings(self):
+        """
+        SIH26090 Feature 3: Dynamic Pricing Assistant.
+        Asserts that visual quality score and image embeddings are incorporated into
+        pricing recommendations to adjust retail spreads and explainability.
+        """
+        # Base pricing with low visual quality
+        pricing_low = pricing_service.calculate_commerce_pricing(
+            craft_type="Bastar Dhokra",
+            material_cost=450.0,
+            production_time_days=4.0,
+            visual_quality_score=0.70
+        )
+
+        # Enhanced pricing with master craftsmanship visual quality
+        pricing_high = pricing_service.calculate_commerce_pricing(
+            craft_type="Bastar Dhokra",
+            material_cost=450.0,
+            production_time_days=4.0,
+            visual_quality_score=0.95
+        )
+
+        assert pricing_high.suggested_retail_max > pricing_low.suggested_retail_max
+        assert any("Visual inspection quality score" in f for f in pricing_high.factors_affecting_recommendation)
+

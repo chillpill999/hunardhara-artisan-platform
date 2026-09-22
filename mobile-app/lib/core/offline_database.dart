@@ -20,8 +20,9 @@ class OfflineDatabase {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _upgradeDB,
     );
   }
 
@@ -33,9 +34,27 @@ class OfflineDatabase {
         local_image_path TEXT NOT NULL,
         local_audio_path TEXT,
         title TEXT,
+        title_hi TEXT,
+        craft_type TEXT,
         materials TEXT,
+        days_of_labor INTEGER DEFAULT 1,
         estimated_price REAL,
+        cost_floor REAL,
         sync_status TEXT DEFAULT 'PENDING',
+        created_at TEXT NOT NULL
+      )
+    ''');
+
+    // Local Cached Products Table (for offline browsing)
+    await db.execute('''
+      CREATE TABLE cached_products (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        title_hi TEXT,
+        craft_type TEXT,
+        price REAL NOT NULL,
+        stock INTEGER DEFAULT 1,
+        image_url TEXT,
         created_at TEXT NOT NULL
       )
     ''');
@@ -52,6 +71,23 @@ class OfflineDatabase {
         created_at TEXT NOT NULL
       )
     ''');
+  }
+
+  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS cached_products (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          title_hi TEXT,
+          craft_type TEXT,
+          price REAL NOT NULL,
+          stock INTEGER DEFAULT 1,
+          image_url TEXT,
+          created_at TEXT NOT NULL
+        )
+      ''');
+    }
   }
 
   Future<int> insertDraft(Map<String, dynamic> row) async {
@@ -72,5 +108,37 @@ class OfflineDatabase {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  Future<void> cacheProducts(List<Map<String, dynamic>> products) async {
+    final db = await instance.database;
+    final batch = db.batch();
+    for (final p in products) {
+      batch.insert(
+        'cached_products',
+        {
+          'id': p['id']?.toString() ?? '',
+          'title': p['title']?.toString() ?? 'Handicraft',
+          'title_hi': p['title_hi']?.toString() ?? '',
+          'craft_type': p['craft_type']?.toString() ?? '',
+          'price': (p['artisan_price'] is num) ? (p['artisan_price'] as num).toDouble() : 0.0,
+          'stock': (p['stock'] is int) ? p['stock'] as int : 1,
+          'image_url': p['studio_image_url']?.toString() ?? p['raw_photo_url']?.toString() ?? '',
+          'created_at': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedProducts() async {
+    final db = await instance.database;
+    return await db.query('cached_products', orderBy: 'created_at DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedOrders() async {
+    final db = await instance.database;
+    return await db.query('cached_orders', orderBy: 'created_at DESC');
   }
 }

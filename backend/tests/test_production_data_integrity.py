@@ -162,3 +162,28 @@ class TestProductionDataIntegrity:
             )
             assert res.status_code == 502
             assert "AI provider service unavailable" in res.json()["detail"]
+
+    def test_auto_seed_rejected_in_production(self, monkeypatch):
+        """In production environment, AUTO_SEED=true must fail validation."""
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+        monkeypatch.setattr(settings, "DEBUG", False)
+        monkeypatch.setattr(settings, "DATABASE_URL", "postgresql://user:pass@localhost:5432/dbname")
+        monkeypatch.setattr(settings, "SUPABASE_JWT_SECRET", "super-secret-key-that-is-long-enough-for-test-32")
+        monkeypatch.setattr(settings, "AADHAAR_PEPPER_KEY", "aadhaar-pepper-production-key-mock-1234567890")
+        monkeypatch.setattr(settings, "STORAGE_SIGNED_URL_SECRET", "custom-storage-secret-9876543210")
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "MOCK_AI_SERVICES", False)
+        monkeypatch.setattr(settings, "ALLOWED_ORIGINS", "https://hunardhara.gov.in")
+        monkeypatch.setenv("AUTO_SEED", "true")
+
+        with pytest.raises(RuntimeError, match="AUTO_SEED cannot be enabled in production"):
+            settings.validate_production_configuration()
+
+    def test_b2b_candidates_prohibits_seed_fallback_in_production(self, monkeypatch):
+        """When ENVIRONMENT=production and db is None, candidate gathering must raise RuntimeError, never load seed data."""
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+        monkeypatch.setattr(settings, "OFFLINE_MODE", False)
+
+        service = B2BMatchingService()
+        with pytest.raises(RuntimeError, match="Real database session is strictly required"):
+            service.get_candidate_artisans(db=None)

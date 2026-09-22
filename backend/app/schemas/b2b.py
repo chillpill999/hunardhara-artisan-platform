@@ -25,6 +25,7 @@ class B2BRFQCreate(BaseModel):
     delivery_state: Optional[str] = Field(default=None, json_schema_extra={"example": "Delhi"})
     delivery_district: Optional[str] = Field(default=None, json_schema_extra={"example": "New Delhi"})
     requested_artisan_id: Optional[str] = Field(default=None, description="Optional target artisan ID; strictly verified without substitution")
+    idempotency_key: Optional[str] = Field(default=None, max_length=128, description="Optional client idempotency key")
 
     @model_validator(mode="before")
     @classmethod
@@ -75,6 +76,7 @@ class B2BArtisanMatchItem(BaseModel):
     artisan_name: str
     cluster_name: str
     location: str
+    product_id: Optional[str] = None
     match_percentage: float = Field(..., ge=0.0, le=100.0, json_schema_extra={"example": 94.2})
     breakdown: B2BMatchScoreBreakdown
     scores: Optional[Dict[str, float]] = None
@@ -171,6 +173,7 @@ class B2BMatchResponse(BaseModel):
 class B2BMatchRecordItem(BaseModel):
     id: str
     artisan_id: str
+    product_id: Optional[str] = None
     artisan_name: Optional[str] = None
     cluster_name: Optional[str] = None
     match_percentage: float
@@ -214,6 +217,7 @@ class B2BRFQResponse(BaseModel):
     buyer_name: Optional[str] = None
     buyer_organization: Optional[str] = None
     buyer_email: Optional[str] = None
+    idempotency_key: Optional[str] = None
     created_at: Optional[datetime] = None
     matches: List[B2BMatchRecordItem] = []
     consortium_feasible: Optional[bool] = None

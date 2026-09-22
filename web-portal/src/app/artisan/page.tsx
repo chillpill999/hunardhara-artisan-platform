@@ -7,7 +7,8 @@ import ArtisanRevenueLedger from '@/components/ArtisanRevenueLedger';
 import HunarSaathi from '@/components/HunarSaathi';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
-import { getUploadedProducts } from '@/lib/api';
+import { getUploadedProducts, LEGACY_MOCK_IDS } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import { getInquiriesForArtisan, syncInquiriesFromCloud, updateInquiryStatus, deleteInquiry, saveInquiry } from '@/lib/inquiries';
 import { ArtisanInquiry } from '@/lib/types';
 import {
@@ -52,67 +53,148 @@ function ArtisanPortalContent() {
   const [inquiries, setInquiries] = useState<ArtisanInquiry[]>([]);
   const [inquiryFilter, setInquiryFilter] = useState<'all' | 'new' | 'replied'>('all');
 
-  // Default sample artisan products
-  const defaultArtisanProducts = [
-    {
-      id: 'prod-001',
-      title: 'Varanasi Pure Katan Silk Saree',
-      titleHi: 'पारंपरिक बनारसी कतान सिल्क साड़ी',
-      price: 6160,
-      status: 'Live',
-      days: 10,
-      ordersCount: 4,
-      image: '/static/studio/varanasi_silk.jpg',
-    },
-    {
-      id: 'prod-002',
-      title: 'Bastar Dhokra Brass Tribal Figurine',
-      titleHi: 'बस्तर ढोकरा पीतल आदिवासी मूर्ति',
-      price: 1850,
-      status: 'Live',
-      days: 4,
-      ordersCount: 7,
-      image: '/static/studio/bastar_dhokra.jpg',
-    },
-  ];
-
-  // Dynamic live artisan products state
-  const [artisanProducts, setArtisanProducts] = useState(defaultArtisanProducts);
+  // Dynamic live artisan products state (zero fake seeds)
+  const [artisanProducts, setArtisanProducts] = useState<any[]>([]);
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
 
   useEffect(() => {
-    const syncArtisanProducts = () => {
+    let isMounted = true;
+    const syncArtisanProducts = async () => {
       try {
         const uploaded = getUploadedProducts();
-        if (uploaded.length > 0) {
-          const mappedUploaded = uploaded.map((p) => ({
-            id: p.id,
-            title: p.title_en,
-            titleHi: p.title_hi || p.title_en,
-            price: p.recommended_retail_d2c || p.floor_price,
-            status: 'Live',
-            days: p.production_time_days || 7,
-            ordersCount: 0,
-            image: p.studio_image_url || '/logo.png',
-          }));
-          const existingIds = new Set(mappedUploaded.map(p => p.id));
-          setArtisanProducts([...mappedUploaded, ...defaultArtisanProducts.filter(p => !existingIds.has(p.id))]);
+        let supaProducts: any[] = [];
+        if (user?.id) {
+          try {
+            const { data, error } = await supabase
+              .from('craft_products')
+              .select('*')
+              .eq('artisan_id', user.id);
+            if (!error && Array.isArray(data)) {
+              supaProducts = data;
+            }
+          } catch (e) {
+            console.warn('Supabase artisan products fetch note:', e);
+          }
+        }
+
+        const combined: any[] = [];
+        const seenIds = new Set<string>();
+
+        // Uploaded items from local storage for current user
+        for (const p of uploaded) {
+          if (!p || !p.id || LEGACY_MOCK_IDS.has(p.id)) continue;
+          if (user?.id) {
+            if (!p.artisan_id || (p.artisan_id !== user.id && p.artisan_id !== user.email)) {
+              continue;
+            }
+          }
+          if (!seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            combined.push({
+              id: p.id,
+              title: p.title_en || 'हस्तशिल्प',
+              titleHi: p.title_hi || p.title_en || 'हस्तशिल्प',
+              price: p.recommended_retail_d2c || p.floor_price || 0,
+              status: 'Live',
+              days: p.production_time_days || 7,
+              ordersCount: 0,
+              image: p.studio_image_url || '/logo.png',
+            });
+          }
+        }
+
+        // Cloud items from Supabase
+        for (const p of supaProducts) {
+          if (!p || !p.id || LEGACY_MOCK_IDS.has(p.id)) continue;
+          if (!seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            combined.push({
+              id: p.id,
+              title: p.title_en || p.title || 'हस्तशिल्प',
+              titleHi: p.title_hi || p.title_en || p.title || 'हस्तशिल्प',
+              price: p.recommended_retail_d2c || p.listing_price || p.floor_price || 0,
+              status: p.is_published !== false ? 'Live' : 'Draft',
+              days: p.production_time_days || 7,
+              ordersCount: 0,
+              image: p.studio_image_url || p.image_url || '/logo.png',
+            });
+          }
+        }
+
+        if (isMounted) {
+          setArtisanProducts(combined);
         }
       } catch (e) {
         console.warn('Sync artisan products error:', e);
+        if (isMounted) setArtisanProducts([]);
       }
     };
 
     syncArtisanProducts();
     window.addEventListener('hunardhara_product_published', syncArtisanProducts);
-    return () => window.removeEventListener('hunardhara_product_published', syncArtisanProducts);
-  }, []);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('hunardhara_product_published', syncArtisanProducts);
+    };
+  }, [user]);
+
+  // Sync real incoming artisan orders from database
+  useEffect(() => {
+    let isMounted = true;
+    const loadOrders = async () => {
+      if (!user?.id) {
+        if (isMounted) setActiveOrders([]);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, craft_products(title_en, title_hi), profiles:customer_id(full_name, phone)')
+          .eq('artisan_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          if (isMounted) {
+            setActiveOrders(
+              data.map((o: any) => ({
+                id: o.order_number || o.id,
+                customer: o.profiles?.full_name || 'Verified Customer',
+                craft: o.craft_products?.title_hi || o.craft_products?.title_en || o.product_title || 'हस्तशिल्प उत्पाद',
+                qty: o.quantity || 1,
+                amount: Number(o.total_price) || Number(o.total_amount) || 0,
+                date: new Date(o.created_at || Date.now()).toLocaleDateString('hi-IN', {
+                  day: 'numeric',
+                  month: 'short',
+                }),
+                status: o.status === 'confirmed' ? 'नया ऑर्डर (New Order)' : (o.status === 'delivered' ? 'सफलतापूर्वक प्राप्त (Delivered)' : 'प्रक्रिया में (Processing)'),
+                statusColor: o.status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800',
+              }))
+            );
+          }
+        } else {
+          if (isMounted) setActiveOrders([]);
+        }
+      } catch (e) {
+        console.warn('Load artisan orders note:', e);
+        if (isMounted) setActiveOrders([]);
+      }
+    };
+    loadOrders();
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
 
   // Sync inquiries specifically addressed to this artisan from cloud and local cache
   useEffect(() => {
     let isMounted = true;
     const syncInquiries = async () => {
       try {
-        const artisanId = user?.id || user?.email || '11111111-1111-1111-1111-111111111111';
+        const artisanId = user?.id || user?.email || '';
+        if (!artisanId) {
+          if (isMounted) setInquiries([]);
+          return;
+        }
         const inqs = await syncInquiriesFromCloud(artisanId);
         if (isMounted) {
           setInquiries(inqs);
@@ -133,23 +215,19 @@ function ArtisanPortalContent() {
   }, [user]);
 
   const handleSimulateInquiry = () => {
-    const sampleProduct = artisanProducts[0] || {
-      id: 'prod-001',
-      title: 'Varanasi Pure Katan Silk Saree',
-      image: '/static/studio/varanasi_silk.jpg'
-    };
+    const currentProduct = artisanProducts[0];
     saveInquiry({
-      product_id: sampleProduct.id,
-      product_title: sampleProduct.titleHi || sampleProduct.title,
-      product_image: sampleProduct.image,
-      artisan_id: user?.id || '11111111-1111-1111-1111-111111111111',
-      artisan_name: profile?.full_name || 'राधेश्याम अंसारी',
+      product_id: currentProduct?.id || `prod-inq-${Date.now()}`,
+      product_title: currentProduct?.titleHi || currentProduct?.title || 'हस्तशिल्प उत्पाद',
+      product_image: currentProduct?.image || '/logo.png',
+      artisan_id: user?.id || '',
+      artisan_name: profile?.full_name || (user?.user_metadata as any)?.full_name || 'कारीगर',
       customer_name: 'अपूर्वा मेहता (Apurva Mehta, Mumbai)',
       customer_phone: '+91 98112 34567',
       customer_email: 'apurva.mehta@gmail.com',
       inquiry_type: 'customization',
       quantity: 1,
-      message: 'नमस्ते जी! मुझे इस शिल्प की बनावट बहुत सुंदर लगी। क्या इसमें सिल्वर ज़री के साथ कस्टमाइज़ेशन संभव है? मुझे 10 दिनों में चाहिए।',
+      message: 'नमस्ते जी! मुझे इस शिल्प की बनावट बहुत सुंदर लगी। क्या इसमें कस्टमाइज़ेशन संभव है? मुझे 10 दिनों में चाहिए।',
     });
   };
 
@@ -160,29 +238,12 @@ function ArtisanPortalContent() {
     return true;
   });
 
-  // Sample active orders for "Orders" section
-  const activeOrders = [
-    {
-      id: 'ORD-9842',
-      customer: 'Priya Sharma (Mumbai)',
-      craft: 'Varanasi Pure Katan Silk Saree',
-      qty: 1,
-      amount: 6160,
-      date: 'आज (Today)',
-      status: 'नया ऑर्डर (New Order)',
-      statusColor: 'bg-emerald-100 text-emerald-800',
-    },
-    {
-      id: 'ORD-9839',
-      customer: 'FabIndia Craft Procurement',
-      craft: 'Bastar Dhokra Brass Figurines',
-      qty: 12,
-      amount: 22200,
-      date: '2 दिन पहले',
-      status: 'डिलीवरी के लिए तैयार (Dispatched)',
-      statusColor: 'bg-amber-100 text-amber-800',
-    },
-  ];
+  const totalEarned = activeOrders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+  const totalSavings = Math.round(totalEarned * 0.35);
+
+  const artisanDisplayName = profile?.full_name || (user?.user_metadata as any)?.full_name || user?.email?.split('@')[0] || 'प्रमाणित शिल्पकार';
+  const artisanDisplayInitial = artisanDisplayName.charAt(0).toUpperCase();
+  const artisanClusterState = profile?.state || (user?.user_metadata as any)?.state || '';
 
   return (
     <AuthGuard
@@ -196,7 +257,7 @@ function ArtisanPortalContent() {
         <div className="flex items-center justify-between bg-white rounded-3xl p-4 sm:p-5 border border-[#e6ded3] bento-shadow">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-[#1b4332] text-white flex items-center justify-center text-lg font-bold shadow-xs">
-              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : 'र'}
+              {artisanDisplayInitial}
             </div>
             <div>
               <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#c85a32] uppercase tracking-wider">
@@ -204,10 +265,10 @@ function ArtisanPortalContent() {
                 <span>कारीगर कार्यशाला • Artisan Atelier</span>
               </div>
               <h1 className="font-sans text-lg sm:text-xl font-extrabold text-[#231f1e]">
-                {profile?.full_name || 'राधेश्याम अंसारी'}
+                {artisanDisplayName}
               </h1>
               <p className="text-xs text-[#6f5f58]">
-                वाराणसी सिल्क क्लस्टर (उत्तर प्रदेश) • [प्रमाणित कारीगर]
+                {artisanClusterState ? `${artisanClusterState} • ` : ''}[प्रमाणित कारीगर]
               </p>
             </div>
           </div>
@@ -365,7 +426,7 @@ function ArtisanPortalContent() {
                   <ShoppingBag className="w-4 h-4 text-[#c85a32]" />
                 </div>
                 <div className="font-sans text-2xl font-extrabold text-[#231f1e] mt-1">
-                  2 नए ऑर्डर
+                  {activeOrders.length} {activeOrders.length === 1 ? 'ऑर्डर' : 'ऑर्डर'}
                 </div>
                 <span className="text-[11px] text-[#1b4332] font-semibold flex items-center gap-1 mt-1">
                   विवरण देखें <ArrowRight className="w-3 h-3" />
@@ -398,10 +459,10 @@ function ArtisanPortalContent() {
                   <TrendingUp className="w-4 h-4 text-[#2d6a4f]" />
                 </div>
                 <div className="font-sans text-2xl font-extrabold text-[#1b4332] mt-1">
-                  ₹42,500
+                  ₹{totalEarned.toLocaleString('en-IN')}
                 </div>
                 <span className="text-[11px] text-[#c85a32] font-semibold flex items-center gap-1 mt-1">
-                  +₹14,875 बचत <ArrowRight className="w-3 h-3" />
+                  {totalEarned > 0 ? `+₹${totalSavings.toLocaleString('en-IN')} बचत` : 'पारदर्शी सीधी आय'} <ArrowRight className="w-3 h-3" />
                 </span>
               </div>
             </div>
@@ -426,40 +487,62 @@ function ArtisanPortalContent() {
               </div>
 
               <div className="space-y-3">
-                {artisanProducts.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-3.5 bg-[#faf7f2] rounded-2xl border border-[#e6ded3] flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-xl bg-white border border-[#e6ded3] overflow-hidden shrink-0">
-                        <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
-                      </div>
-                      <div>
-                        <h4 className="font-sans font-bold text-xs sm:text-sm text-[#231f1e] line-clamp-1">
-                          {p.titleHi}
-                        </h4>
-                        <span className="text-xs font-extrabold text-[#c85a32] block mt-0.5">
-                          ₹{p.price.toLocaleString('en-IN')}
-                        </span>
-                      </div>
+                {artisanProducts.length === 0 ? (
+                  <div className="bg-[#faf7f2] rounded-2xl border border-dashed border-[#e6ded3] p-8 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-white border border-[#e6ded3] text-[#c85a32] flex items-center justify-center mx-auto">
+                      <Package className="w-6 h-6" />
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="bg-[#e8f5e9] text-[#1b4332] text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3 text-[#2d6a4f]" />
-                        <span>लाइव</span>
-                      </span>
-                      <Link
-                        href={`/craft/${p.id}`}
-                        className="p-2 rounded-xl bg-white border border-[#e6ded3] text-[#6f5f58] hover:text-[#1b4332]"
-                        title="देखें"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </Link>
+                    <div>
+                      <h4 className="font-bold text-sm text-[#231f1e]">कोई शिल्प सूचीबद्ध नहीं है</h4>
+                      <p className="text-xs text-[#6f5f58] mt-1 max-w-sm mx-auto">
+                        आपकी कार्यशाला में अभी कोई उत्पाद नहीं है। बोलकर या फोटो खींचकर 60 सेकंड में अपना पहला शिल्प जोड़ें।
+                      </p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('studio')}
+                      className="inline-flex items-center gap-1.5 bg-[#c85a32] hover:bg-[#b84e28] text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-xs cursor-pointer"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>पहला शिल्प जोड़ें (Add First Craft)</span>
+                    </button>
                   </div>
-                ))}
+                ) : (
+                  artisanProducts.map((p) => (
+                    <div
+                      key={p.id}
+                      className="p-3.5 bg-[#faf7f2] rounded-2xl border border-[#e6ded3] flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl bg-white border border-[#e6ded3] overflow-hidden shrink-0">
+                          <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
+                        </div>
+                        <div>
+                          <h4 className="font-sans font-bold text-xs sm:text-sm text-[#231f1e] line-clamp-1">
+                            {p.titleHi}
+                          </h4>
+                          <span className="text-xs font-extrabold text-[#c85a32] block mt-0.5">
+                            ₹{p.price.toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="bg-[#e8f5e9] text-[#1b4332] text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-[#2d6a4f]" />
+                          <span>लाइव</span>
+                        </span>
+                        <Link
+                          href={`/craft/${p.id}`}
+                          className="p-2 rounded-xl bg-white border border-[#e6ded3] text-[#6f5f58] hover:text-[#1b4332]"
+                          title="देखें"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Link>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -518,40 +601,62 @@ function ArtisanPortalContent() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {artisanProducts.map((p) => (
-                <div
-                  key={p.id}
-                  className="bg-white rounded-3xl border border-[#e6ded3] p-4 bento-shadow space-y-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-16 h-16 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] overflow-hidden shrink-0">
-                      <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-sans font-bold text-sm text-[#231f1e] line-clamp-1">
-                        {p.titleHi}
-                      </h4>
-                      <p className="text-xs text-[#6f5f58] truncate">{p.title}</p>
-                      <span className="font-sans text-base font-extrabold text-[#c85a32] block mt-0.5">
-                        ₹{p.price.toLocaleString('en-IN')}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between text-xs">
-                    <span className="text-[#6f5f58]">निर्माण: {p.days} दिन</span>
-                    <Link
-                      href={`/craft/${p.id}`}
-                      className="inline-flex items-center gap-1 text-xs font-bold text-[#1b4332] hover:underline"
-                    >
-                      <span>दुकान में देखें</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </Link>
-                  </div>
+            {artisanProducts.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-[#e6ded3] p-12 text-center space-y-4 bento-shadow">
+                <div className="w-16 h-16 rounded-full bg-[#faf7f2] border border-[#e6ded3] text-[#c85a32] flex items-center justify-center mx-auto">
+                  <Package className="w-8 h-8" />
                 </div>
-              ))}
-            </div>
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-[#231f1e]">आपकी कार्यशाला में अभी कोई शिल्प नहीं है</h3>
+                  <p className="text-xs text-[#6f5f58] max-w-md mx-auto">
+                    हुनरधारा AI स्टूडियो के माध्यम से अपनी कलाकृति की एक फोटो लें या बोलकर विवरण दें — AI तुरंत पेशेवर कैटलॉग तैयार करेगा।
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('studio')}
+                  className="inline-flex items-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white text-xs font-bold px-6 py-3 rounded-2xl transition-all shadow-xs cursor-pointer"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>नया शिल्प जोड़ें (Add Craft)</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {artisanProducts.map((p) => (
+                  <div
+                    key={p.id}
+                    className="bg-white rounded-3xl border border-[#e6ded3] p-4 bento-shadow space-y-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-16 h-16 rounded-2xl bg-[#faf7f2] border border-[#e6ded3] overflow-hidden shrink-0">
+                        <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-sans font-bold text-sm text-[#231f1e] line-clamp-1">
+                          {p.titleHi}
+                        </h4>
+                        <p className="text-xs text-[#6f5f58] truncate">{p.title}</p>
+                        <span className="font-sans text-base font-extrabold text-[#c85a32] block mt-0.5">
+                          ₹{p.price.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between text-xs">
+                      <span className="text-[#6f5f58]">निर्माण: {p.days} दिन</span>
+                      <Link
+                        href={`/craft/${p.id}`}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-[#1b4332] hover:underline"
+                      >
+                        <span>दुकान में देखें</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -569,46 +674,68 @@ function ArtisanPortalContent() {
               </p>
             </div>
 
-            <div className="space-y-3">
-              {activeOrders.map((o) => (
-                <div
-                  key={o.id}
-                  className="bg-white rounded-3xl border border-[#e6ded3] p-5 bento-shadow space-y-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <span className="text-[11px] font-bold text-[#6f5f58] uppercase">
-                        ऑर्डर आईडी: {o.id} • {o.date}
-                      </span>
-                      <h4 className="font-sans font-bold text-sm sm:text-base text-[#231f1e] mt-0.5">
-                        {o.craft}
-                      </h4>
-                      <p className="text-xs text-[#6f5f58]">ग्राहक: {o.customer}</p>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="font-sans text-lg font-extrabold text-[#1b4332] block">
-                        ₹{o.amount.toLocaleString('en-IN')}
-                      </span>
-                      <span className="text-[11px] text-[#6f5f58]">{o.qty} इकाई</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between">
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${o.statusColor}`}>
-                      {o.status}
-                    </span>
-
-                    <button
-                      onClick={() => alert(`ऑर्डर #${o.id} की रसीद तैयार है।`)}
-                      className="text-xs font-bold text-[#1b4332] hover:underline"
-                    >
-                      रसीद देखें
-                    </button>
-                  </div>
+            {activeOrders.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-[#e6ded3] p-12 text-center space-y-4 bento-shadow">
+                <div className="w-16 h-16 rounded-full bg-[#faf7f2] border border-[#e6ded3] text-[#1b4332] flex items-center justify-center mx-auto">
+                  <ShoppingBag className="w-8 h-8 text-[#a1a1aa]" />
                 </div>
-              ))}
-            </div>
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-[#231f1e]">अभी कोई नया ऑर्डर नहीं मिला है</h3>
+                  <p className="text-xs text-[#6f5f58] max-w-sm mx-auto">
+                    जैसे ही कोई ग्राहक या B2B खरीदार आपके शिल्पों का ऑर्डर देगा, वह विवरण यहाँ पर दिखाई देगा।
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('studio')}
+                  className="inline-flex items-center gap-1.5 bg-[#1b4332] hover:bg-[#2d6a4f] text-white text-xs font-bold px-5 py-2.5 rounded-full transition-all shadow-xs cursor-pointer"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>शिल्प जोड़ें ताकि ऑर्डर मिल सकें</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activeOrders.map((o) => (
+                  <div
+                    key={o.id}
+                    className="bg-white rounded-3xl border border-[#e6ded3] p-5 bento-shadow space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="text-[11px] font-bold text-[#6f5f58] uppercase">
+                          ऑर्डर आईडी: {o.id} • {o.date}
+                        </span>
+                        <h4 className="font-sans font-bold text-sm sm:text-base text-[#231f1e] mt-0.5">
+                          {o.craft}
+                        </h4>
+                        <p className="text-xs text-[#6f5f58]">ग्राहक: {o.customer}</p>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="font-sans text-lg font-extrabold text-[#1b4332] block">
+                          ₹{o.amount.toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-[11px] text-[#6f5f58]">{o.qty} इकाई</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#e6ded3] flex items-center justify-between">
+                      <span className={`text-xs font-bold px-3 py-1 rounded-full ${o.statusColor}`}>
+                        {o.status}
+                      </span>
+
+                      <button
+                        onClick={() => alert(`ऑर्डर #${o.id} की रसीद तैयार है।`)}
+                        className="text-xs font-bold text-[#1b4332] hover:underline"
+                      >
+                        रसीद देखें
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

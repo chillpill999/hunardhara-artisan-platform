@@ -286,10 +286,11 @@ def verify_file_token(category: str, filename: str, token: str) -> Tuple[bool, O
         return False, None
 
 
-def delete_stored_file(file_url_or_path: Optional[str]) -> bool:
+def delete_stored_file(file_url_or_path: Optional[str], owner_id: Optional[str] = None) -> bool:
     """
     Safely removes a stored file from disk given either its relative URL, API path, or disk path.
-    Enforces containment within STORAGE_DIR or STATIC_DIR.
+    Enforces containment within STORAGE_DIR or user-modifiable subdirectories of STATIC_DIR.
+    Optionally enforces ownership verification when owner_id is provided.
     """
     if not file_url_or_path:
         return False
@@ -326,20 +327,64 @@ def delete_stored_file(file_url_or_path: Optional[str]) -> bool:
         candidates.append(path_str)
 
     deleted = False
+    storage_base = os.path.abspath(settings.STORAGE_DIR)
+    static_base = os.path.abspath(settings.STATIC_DIR)
+
+    # Protected subdirectories in static that must NEVER be deleted via delete_stored_file
+    # Only studio outputs and temporary processed artifacts may be removed from static.
+    allowed_static_dirs = [
+        os.path.abspath(os.path.join(static_base, "studio")),
+        os.path.abspath(os.path.join(static_base, "studio_outputs")),
+    ]
+
+    expected_owner_hash = None
+    if owner_id and owner_id != "admin":
+        expected_owner_hash = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:8]
+
     for c in candidates:
         try:
             abs_candidate = os.path.abspath(c)
-            # Verify containment in either STORAGE_DIR or STATIC_DIR
-            storage_base = os.path.abspath(settings.STORAGE_DIR)
-            static_base = os.path.abspath(settings.STATIC_DIR)
 
             in_storage = os.path.commonpath([abs_candidate, storage_base]) == storage_base
             in_static = os.path.commonpath([abs_candidate, static_base]) == static_base
+
+            # Enforce that static files can ONLY be deleted if they are inside studio/ or studio_outputs/
+            if in_static:
+                is_allowed_static = any(
+                    os.path.commonpath([abs_candidate, a_dir]) == a_dir for a_dir in allowed_static_dirs
+                )
+                if not is_allowed_static:
+                    logger.warning(f"Refusing deletion of protected static asset: {abs_candidate}")
+                    continue
+
+            # Enforce ownership check if owner_id was provided
+            if expected_owner_hash:
+                fname = os.path.basename(abs_candidate)
+                # Check if the filename contains any 8-hex hash
+                # Format is typically {prefix}_{owner_hash}_{token}.ext or studio_{owner_hash}_...
+                parts = os.path.splitext(fname)[0].split("_")
+                hashes_in_fname = [p.lower() for p in parts if len(p) == 8 and all(ch in "0123456789abcdefABCDEF" for ch in p)]
+                if hashes_in_fname and expected_owner_hash not in hashes_in_fname:
+                    logger.warning(
+                        f"Ownership mismatch: refusing to delete file '{abs_candidate}' owned by hash {hashes_in_fname} "
+                        f"(requested owner {owner_id} hash {expected_owner_hash})"
+                    )
+                    continue
 
             if (in_storage or in_static) and os.path.isfile(abs_candidate):
                 os.remove(abs_candidate)
                 logger.info(f"Safely unlinked stored file: {abs_candidate}")
                 deleted = True
+
+                # Also clean up duplicate mirror in studio_outputs if unlinking from studio
+                if in_static and "studio" in abs_candidate and "studio_outputs" not in abs_candidate:
+                    mirror = os.path.join(static_base, "studio_outputs", os.path.basename(abs_candidate))
+                    if os.path.isfile(mirror):
+                        try:
+                            os.remove(mirror)
+                            logger.info(f"Unlinked redundant mirror file: {mirror}")
+                        except Exception:
+                            pass
         except Exception as e:
             logger.error(f"Failed to unlink file '{c}': {e}")
 
@@ -348,7 +393,8 @@ def delete_stored_file(file_url_or_path: Optional[str]) -> bool:
 
 def delete_user_stored_files(user_id: str) -> int:
     """
-    Scans storage categories and removes all files belonging to a specific user.
+    Scans storage categories and static studio directories and removes all files belonging
+    to a specific user.
     Matches the user's SHA-256 prefix hash or explicit user ID.
     Returns the count of removed files.
     """
@@ -359,7 +405,7 @@ def delete_user_stored_files(user_id: str) -> int:
     count = 0
     storage_base = os.path.abspath(settings.STORAGE_DIR)
 
-    # Search in STORAGE_DIR categories
+    # 1. Search in STORAGE_DIR categories
     for cat in ALLOWED_CATEGORIES:
         cat_dir = os.path.abspath(os.path.join(storage_base, cat))
         if not os.path.isdir(cat_dir):
@@ -378,6 +424,27 @@ def delete_user_stored_files(user_id: str) -> int:
                             logger.error(f"Error unlinking {fpath}: {e}")
         except Exception as e:
             logger.error(f"Error scanning category {cat} for user {user_id}: {e}")
+
+    # 2. Search in STATIC_DIR/studio and STATIC_DIR/studio_outputs
+    static_base = os.path.abspath(settings.STATIC_DIR)
+    for subdir in ("studio", "studio_outputs"):
+        s_dir = os.path.abspath(os.path.join(static_base, subdir))
+        if not os.path.isdir(s_dir):
+            continue
+        try:
+            for fname in os.listdir(s_dir):
+                if f"_{owner_hash}_" in fname or fname.startswith(f"{owner_hash}_") or f"studio_{owner_hash}_" in fname or user_id in fname:
+                    fpath = os.path.join(s_dir, fname)
+                    if os.path.isfile(fpath):
+                        try:
+                            if os.path.commonpath([fpath, s_dir]) == s_dir:
+                                os.remove(fpath)
+                                count += 1
+                                logger.info(f"Unlinked user static studio file for {user_id}: {fpath}")
+                        except Exception as e:
+                            logger.error(f"Error unlinking static studio file {fpath}: {e}")
+        except Exception as e:
+            logger.error(f"Error scanning static {subdir} for user {user_id}: {e}")
 
     return count
 

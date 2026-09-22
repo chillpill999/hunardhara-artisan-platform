@@ -14,7 +14,8 @@ class ConsentLog(Base):
     __tablename__ = "dpdp_consent_logs"
 
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    artisan_id = Column(String(64), ForeignKey("artisans.id"), nullable=False, index=True)
+    artisan_id = Column(String(64), ForeignKey("artisans.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(String(64), nullable=True, index=True)
     
     consent_type = Column(String(64), nullable=False, index=True)
     # Types: DATA_COLLECTION, VOICE_RECORDING, CATALOG_LISTING, AADHAAR_VAULT, RIGHT_TO_BE_FORGOTTEN

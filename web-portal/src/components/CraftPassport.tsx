@@ -62,6 +62,36 @@ export default function CraftPassport({ product }: CraftPassportProps) {
               &quot;{product.technique || "Traditional handmade craft technique"} crafted patiently using authentic raw materials and historic techniques.&quot;
             </p>
           </div>
+
+          {/* Provenance & GI Integrity Grid */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white p-3 rounded-2xl border border-[#e7e2d9]">
+              <div className="text-[10px] text-[#a8a29e] uppercase tracking-wider font-semibold">Craft Tradition</div>
+              <div className="font-bold text-[#1c1917] text-xs mt-1 truncate">
+                {product.gi_craft_registered
+                  ? `GI Registered (${product.gi_registration_reference || 'Tag'})`
+                  : 'Traditional Non-GI'}
+              </div>
+            </div>
+
+            <div className="bg-white p-3 rounded-2xl border border-[#e7e2d9]">
+              <div className="text-[10px] text-[#a8a29e] uppercase tracking-wider font-semibold">Artisan Auth</div>
+              <div className="font-bold text-[#1c1917] text-xs mt-1 truncate">
+                {product.gi_artisan_authorization_status === 'AUTHORIZED'
+                  ? 'Authorized'
+                  : product.gi_artisan_authorization_status === 'PENDING_REVIEW'
+                  ? 'Pending Review'
+                  : 'Unverified'}
+              </div>
+            </div>
+
+            <div className="bg-white p-3 rounded-2xl border border-[#e7e2d9]">
+              <div className="text-[10px] text-[#a8a29e] uppercase tracking-wider font-semibold">Product Provenance</div>
+              <div className="font-bold text-[#1c1917] text-xs mt-1 truncate">
+                {product.gi_product_provenance_status === 'VERIFIED' ? 'Verified Batch' : 'Unverified'}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* QR Verification Box */}

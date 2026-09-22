@@ -52,7 +52,7 @@ class TestSeedScriptIdempotency:
                 # Invariant counts
                 assert len(clusters) == 5, f"Run #{run_idx}: Expected 5 clusters, got {len(clusters)}"
                 assert len(artisans) == 10, f"Run #{run_idx}: Expected 10 artisans, got {len(artisans)}"
-                assert len(products) == 6, f"Run #{run_idx}: Expected 6 products, got {len(products)}"
+                assert len(products) == 0, f"Run #{run_idx}: Expected 0 seeded mock products (dynamic catalog only), got {len(products)}"
                 assert len(benchmarks) == 11, f"Run #{run_idx}: Expected 11 benchmarks, got {len(benchmarks)}"
                 assert len(consents) == 10, f"Run #{run_idx}: Expected 10 consent logs, got {len(consents)}"
 
@@ -64,7 +64,7 @@ class TestSeedScriptIdempotency:
                 assert len(artisan_ids) == len(set(artisan_ids)) == 10
 
                 product_ids = [p.id for p in products]
-                assert len(product_ids) == len(set(product_ids)) == 6
+                assert len(product_ids) == len(set(product_ids)) == 0
 
                 benchmark_ids = [b.id for b in benchmarks]
                 assert len(benchmark_ids) == len(set(benchmark_ids)) == 11

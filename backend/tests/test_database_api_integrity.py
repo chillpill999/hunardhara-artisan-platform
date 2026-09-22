@@ -426,3 +426,164 @@ class TestDatabaseAndAPIIntegrity:
         assert res.status_code == 201
         # Buyer email must be bound to the authenticated user's actual email
         assert res.json()["buyer_email"] == "realbuyer@enterprise.com"
+
+    def test_create_product_rejects_unregistered_artisan_404_no_auto_fabrication(self, client, db, test_cluster):
+        """
+        create_product MUST NOT fabricate an Artisan record with fake caste/phone/aadhaar.
+        An un-onboarded artisan user must be rejected with HTTP 404 ARTISAN_NOT_FOUND.
+        """
+        non_existent_artisan_id = "art-unonboarded-999"
+        # Ensure no artisan record exists
+        db.query(Artisan).filter(Artisan.id == non_existent_artisan_id).delete()
+        db.commit()
+
+        headers = auth_header(non_existent_artisan_id, "artisan")
+        res = client.post(
+            "/api/v1/products",
+            headers=headers,
+            json={
+                "title": "Unregistered Artisan Bell",
+                "craft_type": "Bastar Dhokra",
+                "technique": "Lost-Wax Casting",
+                "artisan_id": non_existent_artisan_id,
+                "cluster_id": test_cluster.id,
+                "cost_materials": 300.0,
+                "labor_hours": 6.0,
+                "listing_price": 2500.0
+            }
+        )
+        assert res.status_code == 404
+        assert "ARTISAN_NOT_FOUND" in res.json()["detail"]
+
+        # Crucial check: verify that NO artisan record was silently auto-created in the database
+        created = db.query(Artisan).filter(Artisan.id == non_existent_artisan_id).first()
+        assert created is None, "Demographic/identity data was fabricated for an un-onboarded artisan!"
+
+    def test_create_product_rejects_deactivated_artisan_403(self, client, db, test_cluster):
+        """Deactivated artisan accounts must be rejected with HTTP 403 ACCOUNT_DEACTIVATED."""
+        deactivated_id = "art-deactivated-001"
+        artisan = db.query(Artisan).filter(Artisan.id == deactivated_id).first()
+        if not artisan:
+            artisan = Artisan(
+                id=deactivated_id,
+                full_name="Deactivated Test Artisan",
+                phone_number="+919999000088",
+                masked_aadhaar="XXXXXXXX8888",
+                aadhaar_hash="test-aadhaar-hash-deactivated-01",
+                social_category="General",
+                cluster_id=test_cluster.id,
+                state="Chhattisgarh",
+                district="Bastar",
+                latitude=19.07,
+                longitude=82.03,
+                primary_craft="Bastar Dhokra",
+                is_active=False
+            )
+            db.add(artisan)
+            db.commit()
+        else:
+            artisan.is_active = False
+            db.commit()
+
+        headers = auth_header(deactivated_id, "artisan")
+        res = client.post(
+            "/api/v1/products",
+            headers=headers,
+            json={
+                "title": "Deactivated Artisan Item",
+                "craft_type": "Bastar Dhokra",
+                "technique": "Lost-Wax Casting",
+                "artisan_id": deactivated_id,
+                "cluster_id": test_cluster.id,
+                "cost_materials": 200.0,
+                "labor_hours": 5.0,
+                "listing_price": 2000.0
+            }
+        )
+        assert res.status_code == 403
+        assert "ACCOUNT_DEACTIVATED" in res.json()["detail"]
+
+    def test_create_product_visual_embedding_computation(self, client, db, test_artisan, test_cluster, sample_dhokra_image_path):
+        """
+        Visual embedding must be extracted from actual image pixels when image is provided,
+        and fall back to deterministic semantic text embedding when no image is provided.
+        """
+        headers = auth_header(test_artisan.id, "artisan")
+
+        # 1. Without image URL -> falls back to embed_text
+        res_no_img = client.post(
+            "/api/v1/products",
+            headers=headers,
+            json={
+                "title": "Text Only Product Without Image",
+                "craft_type": "Bastar Dhokra",
+                "technique": "Lost-Wax Casting",
+                "artisan_id": test_artisan.id,
+                "cluster_id": test_cluster.id,
+                "cost_materials": 300.0,
+                "labor_hours": 6.0,
+                "listing_price": 2500.0
+            }
+        )
+        assert res_no_img.status_code == 201
+        prod_no_img = db.query(Product).filter(Product.id == res_no_img.json()["id"]).first()
+        assert prod_no_img is not None
+        vec_text = prod_no_img.visual_embedding
+        assert vec_text is not None
+        assert len(vec_text) == 768
+
+        # 2. With real image URL pointing to local file
+        res_with_img = client.post(
+            "/api/v1/products",
+            headers=headers,
+            json={
+                "title": "Image Product With Real Pixels",
+                "craft_type": "Bastar Dhokra",
+                "technique": "Lost-Wax Casting",
+                "artisan_id": test_artisan.id,
+                "cluster_id": test_cluster.id,
+                "cost_materials": 300.0,
+                "labor_hours": 6.0,
+                "listing_price": 2500.0,
+                "studio_image_url": sample_dhokra_image_path
+            }
+        )
+        assert res_with_img.status_code == 201
+        prod_with_img = db.query(Product).filter(Product.id == res_with_img.json()["id"]).first()
+        assert prod_with_img is not None
+        vec_img = prod_with_img.visual_embedding
+        assert vec_img is not None
+        assert len(vec_img) == 768
+        # Visual vector from actual pixels must be different from the purely text-based vector
+        assert vec_img != vec_text
+
+    def test_create_product_commit_failure_raises_http500(self, client, test_artisan, test_cluster, monkeypatch):
+        """
+        When database commit fails during product creation, the transaction must rollback
+        and raise HTTP 500 PRODUCT_CREATE_FAILED rather than returning a fake HTTP 201.
+        """
+        headers = auth_header(test_artisan.id, "artisan")
+
+        from sqlalchemy.orm import Session
+        def mock_commit(self):
+            raise RuntimeError("Simulated database disk I/O failure on commit")
+
+        monkeypatch.setattr(Session, "commit", mock_commit)
+
+        res = client.post(
+            "/api/v1/products",
+            headers=headers,
+            json={
+                "title": "Failure Test Product",
+                "craft_type": "Bastar Dhokra",
+                "technique": "Lost-Wax Casting",
+                "artisan_id": test_artisan.id,
+                "cluster_id": test_cluster.id,
+                "cost_materials": 300.0,
+                "labor_hours": 6.0,
+                "listing_price": 2500.0
+            }
+        )
+        assert res.status_code == 500
+        assert "PRODUCT_CREATE_FAILED" in res.json()["detail"]
+

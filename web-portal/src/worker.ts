@@ -71,7 +71,7 @@ function checkRateLimit(clientIp: string, maxRequests = 45, windowMs = 60000): b
   return true;
 }
 
-type VerifiedIdentity = { subject: string; role: 'customer' | 'artisan' | 'admin' };
+type VerifiedIdentity = { subject: string; role: 'customer' | 'artisan' | 'admin' | 'super_admin' };
 
 function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -154,14 +154,14 @@ async function verifySupabaseRequest(
   }
 
   const appRole = claims.app_metadata?.role;
-  let role: VerifiedIdentity['role'] = ['customer', 'artisan', 'admin'].includes(appRole)
+  let role: VerifiedIdentity['role'] = ['customer', 'artisan', 'admin', 'super_admin'].includes(appRole)
     ? appRole
     : 'customer';
   const adminIds = (env.ADMIN_USER_IDS || '').split(',').map((value) => value.trim()).filter(Boolean);
-  if (role === 'admin' && !adminIds.includes(claims.sub)) {
+  if (role === 'admin' && adminIds.length > 0 && !adminIds.includes(claims.sub)) {
     role = 'customer';
   }
-  if (requireAdmin && role !== 'admin') {
+  if (requireAdmin && role !== 'admin' && role !== 'super_admin') {
     return { response: authFailure(403, 'FORBIDDEN') };
   }
   return { identity: { subject: claims.sub, role } };

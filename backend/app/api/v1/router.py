@@ -1,11 +1,12 @@
 from fastapi import APIRouter
-from app.api.v1 import health, clusters, products, pricing, compliance, b2b, orders, earnings, applications, voice, ai_assistant, storage
+from app.api.v1 import health, clusters, products, pricing, compliance, b2b, orders, earnings, applications, voice, ai_assistant, storage, artisans, admin
 
 api_router = APIRouter()
 
 # Register core endpoints for Milestone M1
 api_router.include_router(health.router)
 api_router.include_router(clusters.router)
+api_router.include_router(artisans.router)
 
 # Register AI pipelines & Security endpoints for Milestone M2
 api_router.include_router(products.router)
@@ -21,6 +22,7 @@ api_router.include_router(b2b.router)
 api_router.include_router(orders.router)
 api_router.include_router(earnings.router)
 api_router.include_router(applications.router)
+api_router.include_router(admin.router)
 
 # Register Hunardhara AI Commerce Assistant (Gateway & Observability)
 api_router.include_router(ai_assistant.router)

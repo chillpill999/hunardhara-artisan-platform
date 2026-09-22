@@ -41,11 +41,17 @@ export default function ArtisanRevenueLedger() {
   // Fetch real database records protected by Supabase RLS
   useEffect(() => {
     async function loadRealEarnings() {
+      if (!user?.id) {
+        setDbPayouts([]);
+        setIsLoading(false);
+        return;
+      }
       try {
         setIsLoading(true);
         const { data, error } = await supabase
           .from('artisan_earnings')
           .select('id, order_id, payout_date, product_title, order_type, quantity, gross_amount, artisan_wage_payout, middleman_saved, status')
+          .eq('artisan_id', user.id)
           .order('payout_date', { ascending: false });
 
         if (!error && data && data.length > 0) {

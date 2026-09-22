@@ -7,7 +7,17 @@ import {
   fetchProducts,
   removeProduct,
   restoreAllProducts,
-  getRemovedProductIds
+  getRemovedProductIds,
+  fetchAdminApplications,
+  approveAdminApplication,
+  rejectAdminApplication,
+  fetchAdminUsers,
+  grantAdminRole,
+  revokeAdminRole,
+  fetchAuditLogs,
+  ArtisanApplicationItem,
+  AdminUserItem,
+  AdminAuditLogItem
 } from '@/lib/api';
 import { getAllInquiries, updateInquiryStatus, deleteInquiry } from '@/lib/inquiries';
 import { CraftCluster, Product, ArtisanInquiry } from '@/lib/types';
@@ -45,7 +55,12 @@ import {
   Check,
   Clock,
   Send,
-  Plus
+  Plus,
+  UserCheck,
+  UserX,
+  History,
+  KeyRound,
+  Shield
 } from 'lucide-react';
 
 interface AdminB2BRFQ {
@@ -76,8 +91,8 @@ interface MasterArtisanItem {
 }
 
 export default function AdminDashboardPage() {
-  const { user, role } = useAuth();
-  const [activeTab, setActiveTab] = useState<'products' | 'clusters' | 'b2b' | 'inquiries' | 'artisans' | 'security'>('products');
+  const { user, role, isAdmin, isSuperAdmin } = useAuth();
+  const [activeTab, setActiveTab] = useState<'products' | 'clusters' | 'b2b' | 'inquiries' | 'artisans' | 'security' | 'applications' | 'admin_management' | 'audit_logs'>('products');
   const [clusters, setClusters] = useState<CraftCluster[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [removedCount, setRemovedCount] = useState<number>(0);
@@ -93,6 +108,19 @@ export default function AdminDashboardPage() {
   // Master Artisans State
   const [artisans, setArtisans] = useState<MasterArtisanItem[]>([]);
 
+  // Artisan Applications State
+  const [applications, setApplications] = useState<ArtisanApplicationItem[]>([]);
+
+  // Admins State (Super Admin Only)
+  const [adminUsers, setAdminUsers] = useState<AdminUserItem[]>([]);
+  const [newAdminUserId, setNewAdminUserId] = useState('');
+
+  // Audit Logs State
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLogItem[]>([]);
+
+  // Async Action in Progress
+  const [isActionPending, setIsActionPending] = useState(false);
+
   // Editable Wage Baseline
   const [editingWageClusterId, setEditingWageClusterId] = useState<string | null>(null);
   const [tempWageValue, setTempWageValue] = useState<number>(650);
@@ -103,16 +131,25 @@ export default function AdminDashboardPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const loadData = async () => {
-    if (role !== 'admin') {
+    if (!isAdmin) {
       return;
     }
     try {
-      const [clusterData, productData] = await Promise.all([
+      const [clusterData, productData, appList, logList] = await Promise.all([
         fetchClusters(),
-        fetchProducts()
+        fetchProducts(),
+        fetchAdminApplications(),
+        fetchAuditLogs(50)
       ]);
       setClusters(clusterData);
       setProducts(productData);
+      setApplications(appList);
+      setAuditLogs(logList);
+
+      if (isSuperAdmin) {
+        const users = await fetchAdminUsers();
+        setAdminUsers(users);
+      }
       setRemovedCount(getRemovedProductIds().length);
       setInquiries(getAllInquiries());
 
@@ -269,6 +306,102 @@ export default function AdminDashboardPage() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // Handle Application Approval (Super Admin Only)
+  const handleApproveApp = async (appId: string) => {
+    if (!isSuperAdmin) {
+      setToastMessage('त्रुटि: केवल सुपर एडमिन ही कारीगर आवेदन स्वीकृत कर सकते हैं (Super Admin clearance required)।');
+      setTimeout(() => setToastMessage(null), 4000);
+      return;
+    }
+    setIsActionPending(true);
+    try {
+      const res = await approveAdminApplication(appId);
+      if (res.success) {
+        setToastMessage(`आवेदन #${appId} स्वीकृत! कारीगर खाता सक्रिय कर दिया गया।`);
+        await loadData();
+      } else {
+        setToastMessage(`त्रुटि: ${res.error || 'अनुमोदन विफल'}`);
+      }
+    } catch (e: any) {
+      setToastMessage(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+      setTimeout(() => setToastMessage(null), 4000);
+    }
+  };
+
+  // Handle Application Rejection (Super Admin Only)
+  const handleRejectApp = async (appId: string) => {
+    if (!isSuperAdmin) {
+      setToastMessage('त्रुटि: केवल सुपर एडमिन ही कारीगर आवेदन अस्वीकृत कर सकते हैं (Super Admin clearance required)।');
+      setTimeout(() => setToastMessage(null), 4000);
+      return;
+    }
+    const reason = window.prompt("कृपया कारीगर आवेदन अस्वीकृत करने का कारण दर्ज करें (Enter reason for rejection):");
+    if (!reason || !reason.trim()) {
+      setToastMessage('त्रुटि: अस्वीकृति का कारण अनिवार्य है।');
+      setTimeout(() => setToastMessage(null), 4000);
+      return;
+    }
+    setIsActionPending(true);
+    try {
+      const res = await rejectAdminApplication(appId, reason.trim());
+      if (res.success) {
+        setToastMessage(`आवेदन #${appId} अस्वीकृत किया गया।`);
+        await loadData();
+      } else {
+        setToastMessage(`त्रुटि: ${res.error || 'अस्वीकृति विफल'}`);
+      }
+    } catch (e: any) {
+      setToastMessage(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+      setTimeout(() => setToastMessage(null), 4000);
+    }
+  };
+
+  // Handle Grant Admin Role
+  const handleGrantAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminUserId.trim()) return;
+    setIsActionPending(true);
+    try {
+      const res = await grantAdminRole(newAdminUserId.trim());
+      if (res.success) {
+        setToastMessage(res.message || 'प्रशासक पद सफलतापूर्वक दिया गया।');
+        setNewAdminUserId('');
+        await loadData();
+      } else {
+        setToastMessage(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      setToastMessage(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+      setTimeout(() => setToastMessage(null), 4000);
+    }
+  };
+
+  // Handle Revoke Admin Role
+  const handleRevokeAdmin = async (userId: string) => {
+    if (!confirm(`क्या आप वाकई उपयोगकर्ता ${userId} से प्रशासक पद वापस लेना चाहते हैं?`)) return;
+    setIsActionPending(true);
+    try {
+      const res = await revokeAdminRole(userId);
+      if (res.success) {
+        setToastMessage(res.message || 'प्रशासक पद वापस ले लिया गया।');
+        await loadData();
+      } else {
+        setToastMessage(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      setToastMessage(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+      setTimeout(() => setToastMessage(null), 4000);
+    }
+  };
+
   // Filtered Inquiries
   const filteredInquiries = useMemo(() => {
     if (inquiryFilter === 'all') return inquiries;
@@ -277,7 +410,7 @@ export default function AdminDashboardPage() {
 
   return (
     <AuthGuard
-      allowedRoles={['admin']}
+      allowedRoles={['admin', 'super_admin']}
       redirectMessage="Sign in as Administrator to access governance and cluster monitoring."
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-12 space-y-8">
@@ -456,6 +589,47 @@ export default function AdminDashboardPage() {
           >
             <ShieldCheck className="w-4 h-4" />
             <span>सुरक्षा व DPDP ऑडिट</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('applications')}
+            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+              activeTab === 'applications'
+                ? 'bg-[#b45309] text-white shadow-sm'
+                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+            }`}
+          >
+            <UserCheck className="w-4 h-4" />
+            <span>कारीगर आवेदन ({applications.filter((a) => a.status === 'pending').length} लंबित)</span>
+          </button>
+
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('admin_management')}
+              className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                activeTab === 'admin_management'
+                  ? 'bg-[#7c2d12] text-white shadow-sm'
+                  : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+              }`}
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>प्रशासक प्रबंधन ({adminUsers.length})</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('audit_logs')}
+            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+              activeTab === 'audit_logs'
+                ? 'bg-[#4338ca] text-white shadow-sm'
+                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+            }`}
+          >
+            <History className="w-4 h-4" />
+            <span>ऑडिट लॉग्स ({auditLogs.length})</span>
           </button>
         </div>
 
@@ -1229,6 +1403,318 @@ export default function AdminDashboardPage() {
                   Administrator identity is configured server-side.
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* TAB 7: ARTISAN UPGRADE APPLICATIONS                                   */}
+        {/* ===================================================================== */}
+        {activeTab === 'applications' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-1">
+                    <KeyRound className="w-3 h-3 text-purple-700" />
+                    <span>Super Admin Authorization Required</span>
+                  </div>
+                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
+                    कारीगर उन्नयन आवेदन (Artisan Upgrade Applications)
+                  </h3>
+                  <p className="text-xs text-[#545454] mt-0.5">
+                    शिल्पकारों द्वारा जमा किए गए आवेदनों की समीक्षा। सुरक्षा एवं नीतिगत कारणों से अनुमोदन केवल सुपर एडमिन (Super Admin) द्वारा ही मान्य है।
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                    {applications.filter((a) => a.status === 'pending').length} लंबित आवेदन
+                  </span>
+                  <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    {applications.filter((a) => a.status === 'approved').length} स्वीकृत
+                  </span>
+                </div>
+              </div>
+
+              {applications.length === 0 ? (
+                <div className="text-center py-12 space-y-3 bg-[#faf7f2] rounded-2xl border border-dashed border-[#e6ded3]">
+                  <UserCheck className="w-10 h-10 text-[#a89e96] mx-auto" />
+                  <p className="text-sm font-bold text-[#1c1917]">कोई कारीगर आवेदन नहीं मिला</p>
+                  <p className="text-xs text-[#545454]">नये आवेदन प्राप्त होते ही यहाँ प्रदर्शित होंगे।</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-[#e6ded3] text-[#6f5f58] uppercase text-[10px] font-bold">
+                        <th className="py-3 px-3">आवेदक ID</th>
+                        <th className="py-3 px-3">शिल्प श्रेणी</th>
+                        <th className="py-3 px-3">अनुभव</th>
+                        <th className="py-3 px-3">स्थान</th>
+                        <th className="py-3 px-3">आवेदन तिथि</th>
+                        <th className="py-3 px-3">स्थिति</th>
+                        <th className="py-3 px-3 text-right">कार्यवाही</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#f4f0ea]">
+                      {applications.map((app) => (
+                        <tr key={app.id} className="hover:bg-[#faf7f2] transition-colors">
+                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#1c1917]">
+                            {app.user_id.slice(0, 14)}...
+                          </td>
+                          <td className="py-3.5 px-3 font-bold text-[#1c1917]">
+                            {app.craft_category}
+                          </td>
+                          <td className="py-3.5 px-3 text-[#545454]">
+                            {app.experience_years} वर्ष
+                          </td>
+                          <td className="py-3.5 px-3 text-[#545454]">
+                            {app.state || 'N/A'}{app.district ? `, ${app.district}` : ''}
+                          </td>
+                          <td className="py-3.5 px-3 text-[#545454]">
+                            {app.created_at ? new Date(app.created_at).toLocaleDateString('hi-IN') : 'हाल ही में'}
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {app.status === 'pending' && (
+                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                                <Clock className="w-3 h-3" /> लंबित (Pending)
+                              </span>
+                            )}
+                            {app.status === 'approved' && (
+                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3" /> स्वीकृत (Approved)
+                              </span>
+                            )}
+                            {app.status === 'rejected' && (
+                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-red-50 text-red-800 border border-red-200">
+                                <UserX className="w-3 h-3" /> अस्वीकृत (Rejected)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3 text-right">
+                            {app.status === 'pending' && (
+                              isSuperAdmin ? (
+                                <div className="inline-flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApproveApp(app.id)}
+                                    disabled={isActionPending}
+                                    className="inline-flex items-center gap-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all shadow-2xs disabled:opacity-50 cursor-pointer"
+                                  >
+                                    <UserCheck className="w-3 h-3" />
+                                    <span>स्वीकार करें (Approve)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRejectApp(app.id)}
+                                    disabled={isActionPending}
+                                    className="inline-flex items-center gap-1 bg-white hover:bg-red-50 text-red-700 border border-red-200 font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+                                  >
+                                    <UserX className="w-3 h-3" />
+                                    <span>अस्वीकार (Reject)</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                                  <Lock className="w-3 h-3 text-amber-700" /> केवल सुपर एडमिन
+                                </span>
+                              )
+                            )}
+                            {app.status !== 'pending' && (
+                              <span className="text-[11px] text-[#a89e96] italic">संसाधित</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* TAB 8: ADMIN USER GOVERNANCE (SUPER ADMIN ONLY)                       */}
+        {/* ===================================================================== */}
+        {activeTab === 'admin_management' && isSuperAdmin && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 bg-amber-100/60 text-amber-900 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-1">
+                    <KeyRound className="w-3 h-3 text-amber-700" />
+                    <span>Super Admin Clearance Only</span>
+                  </div>
+                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
+                    प्रशासक खाता प्रबंधन (Platform Administrator Governance)
+                  </h3>
+                  <p className="text-xs text-[#545454] mt-0.5">
+                    प्लेटफ़ॉर्म प्रशासक नियुक्त करें या पद वापस लें। प्राथमिक सुपर एडमिन को हटाया नहीं जा सकता।
+                  </p>
+                </div>
+              </div>
+
+              {/* Grant Form */}
+              <div className="bg-[#faf7f2] p-5 rounded-2xl border border-[#e6ded3] space-y-3">
+                <h4 className="text-xs font-bold text-[#1c1917] uppercase tracking-wider">
+                  नया प्रशासक नियुक्त करें (Grant Administrator Role)
+                </h4>
+                <form onSubmit={handleGrantAdmin} className="flex flex-col sm:flex-row gap-2.5">
+                  <input
+                    type="text"
+                    required
+                    placeholder="उपयोगकर्ता UUID दर्ज करें (Enter User ID)..."
+                    value={newAdminUserId}
+                    onChange={(e) => setNewAdminUserId(e.target.value)}
+                    className="flex-1 bg-white border border-[#e6ded3] rounded-2xl px-4 py-2.5 text-xs text-[#1c1917] focus:ring-2 focus:ring-[#1b4332] focus:outline-hidden font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isActionPending || !newAdminUserId.trim()}
+                    className="bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-xs px-5 py-2.5 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-2xs disabled:opacity-50 cursor-pointer"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>प्रशासक बनाएं (Grant Admin)</span>
+                  </button>
+                </form>
+                <p className="text-[11px] text-[#6f5f58]">
+                  नियुक्त किए गए उपयोगकर्ता को सर्वर-साइड Supabase app_metadata में 'admin' भूमिका प्राप्त होगी।
+                </p>
+              </div>
+
+              {/* Admins Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[#e6ded3] text-[#6f5f58] uppercase text-[10px] font-bold">
+                      <th className="py-3 px-3">उपयोगकर्ता ID</th>
+                      <th className="py-3 px-3">ईमेल</th>
+                      <th className="py-3 px-3">भूमिका (Role)</th>
+                      <th className="py-3 px-3">सृजन तिथि</th>
+                      <th className="py-3 px-3 text-right">कार्यवाही</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#f4f0ea]">
+                    {adminUsers.map((adm) => {
+                      const isSelf = adm.id === user?.id;
+                      const isSuper = adm.role === 'super_admin';
+                      return (
+                        <tr key={adm.id} className="hover:bg-[#faf7f2] transition-colors">
+                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#1c1917]">
+                            {adm.id}
+                          </td>
+                          <td className="py-3.5 px-3 font-medium text-[#1c1917]">
+                            {adm.email || 'N/A'}
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {isSuper ? (
+                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
+                                <KeyRound className="w-3 h-3" /> SUPER ADMIN
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200">
+                                <Shield className="w-3 h-3" /> ADMIN
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3 text-[#545454]">
+                            {adm.created_at ? new Date(adm.created_at).toLocaleDateString('hi-IN') : 'N/A'}
+                          </td>
+                          <td className="py-3.5 px-3 text-right">
+                            {isSuper || isSelf ? (
+                              <span className="text-[10px] text-[#a89e96] italic">सुरक्षित खाता</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleRevokeAdmin(adm.id)}
+                                disabled={isActionPending}
+                                className="inline-flex items-center gap-1 bg-white hover:bg-red-50 text-red-700 border border-red-200 font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+                              >
+                                <UserX className="w-3 h-3" />
+                                <span>पद वापस लें (Revoke)</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================================================== */}
+        {/* TAB 9: ADMINISTRATIVE AUDIT LOGS                                      */}
+        {/* ===================================================================== */}
+        {activeTab === 'audit_logs' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
+                <div>
+                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
+                    प्रशासनिक ऑडिट लॉग (Administrative Audit Trail)
+                  </h3>
+                  <p className="text-xs text-[#545454] mt-0.5">
+                    प्लेटफ़ॉर्म पर किए गए सभी प्रशासनिक निर्णयों, भूमिका परिवर्तनों और कारीगर स्वीकृतियों का अपरिवर्तनीय सर्वर लॉग।
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadData()}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl border border-[#e6ded3] bg-[#faf7f2] hover:bg-white text-[#1c1917] transition-all cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>रिफ्रेश लॉग्स</span>
+                </button>
+              </div>
+
+              {auditLogs.length === 0 ? (
+                <div className="text-center py-12 space-y-3 bg-[#faf7f2] rounded-2xl border border-dashed border-[#e6ded3]">
+                  <History className="w-10 h-10 text-[#a89e96] mx-auto" />
+                  <p className="text-sm font-bold text-[#1c1917]">कोई ऑडिट लॉग रिकॉर्ड नहीं मिला</p>
+                  <p className="text-xs text-[#545454]">प्रशासनिक गतिविधियों के साथ ऑडिट लॉग स्वतः दर्ज होते हैं।</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-[#e6ded3] text-[#6f5f58] uppercase text-[10px] font-bold">
+                        <th className="py-3 px-3">समय (Timestamp)</th>
+                        <th className="py-3 px-3">कार्यवाही (Action)</th>
+                        <th className="py-3 px-3">प्रशासक (Actor)</th>
+                        <th className="py-3 px-3">लक्षित खाता (Target User)</th>
+                        <th className="py-3 px-3">विवरण (Details)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#f4f0ea]">
+                      {auditLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-[#faf7f2] transition-colors">
+                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#545454] whitespace-nowrap">
+                            {new Date(log.created_at).toLocaleString('hi-IN')}
+                          </td>
+                          <td className="py-3.5 px-3 font-mono font-bold text-[11px] text-[#1c1917]">
+                            <span className="bg-[#faf7f2] px-2 py-0.5 rounded-md border border-[#e6ded3]">
+                              {log.action}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-3 text-[#1c1917]">
+                            {log.actor_email || log.actor_id.slice(0, 12)}
+                          </td>
+                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#545454]">
+                            {log.target_user_id ? log.target_user_id.slice(0, 14) + '...' : '-'}
+                          </td>
+                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#6f5f58] max-w-xs truncate">
+                            {log.details || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}

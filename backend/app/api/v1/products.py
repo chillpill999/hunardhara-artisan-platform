@@ -1,3 +1,4 @@
+import os
 import uuid
 import math
 import random
@@ -5,13 +6,20 @@ import logging
 import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from PIL import Image
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status, Header
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import CurrentUser, require_artisan, require_admin, RateLimiter
-from app.core.storage_security import validate_uploaded_file, generate_secure_filename, delete_stored_file
+from app.core.storage_security import (
+    validate_uploaded_file,
+    generate_secure_filename,
+    delete_stored_file,
+    ALLOWED_CATEGORIES,
+    resolve_safe_storage_path,
+)
 from app.models.product import Product
 from app.models.artisan import Artisan
 from app.models.craft_cluster import CraftCluster
@@ -23,6 +31,7 @@ from app.services.studio_service import studio_service
 from app.services.voice_service import voice_service
 from app.services.pricing_service import pricing_service
 from app.services.openrouter_service import openrouter_service
+from app.services.embedding_service import embedding_service
 
 logger = logging.getLogger("artisan_platform.api.products")
 router = APIRouter(prefix="/products", tags=["Products & AI Pipelines"])
@@ -63,6 +72,7 @@ async def product_studio_upload(
     try:
         result = studio_service.process_image_bytes(
             image_bytes=image_bytes,
+            owner_id=current_user.id,
             original_filename=safe_filename,
             canvas_size=safe_canvas_size
         )
@@ -173,6 +183,113 @@ async def product_voice_catalog_upload(
         raise HTTPException(status_code=400, detail=f"VOICE_PROCESSING_ERROR: {str(e)}")
 
 
+def _resolve_image_for_embedding(image_url: Optional[str]) -> Optional[Image.Image]:
+    """
+    Resolves a stored image URL or file path to a PIL Image instance.
+    Loads actual image pixels for computing genuine SigLIP visual feature vectors.
+    """
+    if not image_url:
+        return None
+    try:
+        path_str = image_url.strip()
+        if path_str.startswith("http://") or path_str.startswith("https://"):
+            path_str = "/" + path_str.split("://", 1)[1].split("/", 1)[-1]
+
+        candidates = []
+        # 1. /storage/files/{category}/{filename}
+        if "/storage/files/" in path_str:
+            sub = path_str.split("/storage/files/", 1)[1].split("?")[0]
+            parts = sub.split("/", 1)
+            if len(parts) == 2 and parts[0] in ALLOWED_CATEGORIES:
+                try:
+                    candidates.append(resolve_safe_storage_path(parts[0], parts[1]))
+                except Exception:
+                    pass
+
+        # 2. /static/{subdir}/{filename}
+        if path_str.startswith("/static/"):
+            rel_static = path_str[len("/static/"):].split("?")[0]
+            safe_rel = os.path.normpath(rel_static).lstrip("\\/")
+            if ".." not in safe_rel:
+                candidates.append(os.path.join(settings.STATIC_DIR, safe_rel))
+                backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                candidates.append(os.path.join(backend_dir, "static", safe_rel))
+                root_dir = os.path.abspath(os.path.join(backend_dir, ".."))
+                candidates.append(os.path.join(root_dir, "static", safe_rel))
+
+        # 3. Direct filesystem paths
+        if os.path.isabs(path_str):
+            candidates.append(path_str)
+        else:
+            candidates.append(os.path.join(os.getcwd(), path_str))
+            candidates.append(os.path.join(settings.STORAGE_DIR, path_str))
+
+        for c in candidates:
+            if c and os.path.isfile(c):
+                try:
+                    img = Image.open(c)
+                    img.load()
+                    return img
+                except Exception as img_err:
+                    logger.warning(f"Failed opening image candidate at {c}: {img_err}")
+    except Exception as e:
+        logger.warning(f"Failed to resolve image for embedding from '{image_url}': {e}")
+    return None
+
+
+def _validate_media_url_ownership(
+    media_url: Optional[str],
+    owner_id: str,
+    is_admin: bool = False,
+    field_name: str = "media_url"
+) -> None:
+    """
+    Validates that a client-supplied media URL belongs to the target owner if it points
+    to private storage or user-scoped studio directories, preventing cross-user file association or unauthorized deletion.
+    """
+    if not media_url:
+        return
+
+    clean_url = media_url.strip()
+    if ".." in clean_url or "\x00" in clean_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"INVALID_{field_name.upper()}: Path traversal sequence detected in media URL."
+        )
+
+    if is_admin:
+        return
+
+    owner_hash = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:8]
+    norm_url = clean_url.replace("\\", "/")
+
+    # 1. Check if URL points to private storage
+    if "/storage/files/" in norm_url:
+        sub = norm_url.split("/storage/files/", 1)[1].split("?")[0]
+        parts = sub.split("/", 1)
+        if len(parts) == 2:
+            cat, filename = parts
+            if cat in ALLOWED_CATEGORIES:
+                parts_fn = os.path.splitext(filename)[0].split("_")
+                hashes_in_fn = [p.lower() for p in parts_fn if len(p) == 8 and all(ch in "0123456789abcdefABCDEF" for ch in p)]
+                if hashes_in_fn and owner_hash not in hashes_in_fn:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"FORBIDDEN_FILE_ACCESS: Cannot attach private storage file in {field_name} belonging to another user."
+                    )
+
+    # 2. Check if URL points to static studio
+    if norm_url.startswith("/static/studio/"):
+        filename = norm_url[len("/static/studio/"):].split("?")[0]
+        parts_fn = os.path.splitext(filename)[0].split("_")
+        hashes_in_fn = [p.lower() for p in parts_fn if len(p) == 8 and all(ch in "0123456789abcdefABCDEF" for ch in p)]
+        if hashes_in_fn and owner_hash not in hashes_in_fn:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"FORBIDDEN_FILE_ACCESS: Cannot attach studio output file in {field_name} belonging to another user."
+            )
+
+
 @router.post(
     "",
     response_model=ProductResponse,
@@ -182,6 +299,7 @@ async def product_voice_catalog_upload(
 )
 def create_product(
     product_in: ProductCreate,
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
     current_user: CurrentUser = Depends(require_artisan),
     db: Session = Depends(get_db)
 ):
@@ -189,8 +307,23 @@ def create_product(
     R6 Server-Side HTTP 422 Price Floor Guardrail & RBAC:
     Requires authenticated artisan or admin role.
     Rejects any marketplace listing priced below the certified cost-plus anti-exploitation floor.
+    Guarantees idempotency via X-Idempotency-Key header or idempotency_key payload.
     """
-    # 0. Enforce strict numeric and stock validation
+    # 0. Idempotency Check: Safely return existing product on retries
+    effective_idempotency_key = (x_idempotency_key or product_in.idempotency_key)
+    if effective_idempotency_key:
+        effective_idempotency_key = effective_idempotency_key.strip()
+        existing = db.query(Product).filter(Product.idempotency_key == effective_idempotency_key).first()
+        if existing:
+            if not current_user.is_admin and existing.artisan_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN_IDEMPOTENCY_KEY: This idempotency key belongs to another artisan."
+                )
+            logger.info(f"Idempotent replay: Returning existing product '{existing.id}' for key '{effective_idempotency_key}'")
+            return existing
+
+    # 1. Enforce strict numeric and stock validation
     if product_in.cost_materials < 0:
         raise HTTPException(status_code=400, detail="INVALID_COST: Material cost cannot be negative.")
     if product_in.labor_hours <= 0:
@@ -206,7 +339,10 @@ def create_product(
         base_id = product_in.cluster_id.rsplit("-", 1)[0] if "-" in product_in.cluster_id else product_in.cluster_id
         cluster = db.query(CraftCluster).filter(CraftCluster.id == base_id).first()
     if not cluster:
-        cluster = db.query(CraftCluster).filter(CraftCluster.name.ilike(f"%{product_in.cluster_id}%")).first()
+        # Tighter match: exact case-insensitive match on craft_name or cluster name (avoid ambiguous loose substrings)
+        cluster = db.query(CraftCluster).filter(
+            (CraftCluster.craft_name.ilike(product_in.cluster_id)) | (CraftCluster.name.ilike(product_in.cluster_id))
+        ).first()
     if not cluster:
         raise HTTPException(
             status_code=400,
@@ -219,34 +355,25 @@ def create_product(
     else:
         if not product_in.artisan_id:
             product_in.artisan_id = current_user.id
-        else:
-            existing_artisan = db.query(Artisan).filter(Artisan.id == product_in.artisan_id).first()
-            if not existing_artisan:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"INVALID_ARTISAN_ID: Artisan '{product_in.artisan_id}' does not exist."
-                )
 
-    # Ensure Artisan record exists for this artisan_id
+    # Strictly require an existing, active Artisan record. NEVER fabricate fake caste, phone, or Aadhaar data.
     artisan_record = db.query(Artisan).filter(Artisan.id == product_in.artisan_id).first()
     if not artisan_record:
-        artisan_record = Artisan(
-            id=product_in.artisan_id,
-            full_name=current_user.email.split("@")[0].title() if current_user.email else f"Artisan {product_in.artisan_id[:8]}",
-            phone_number=f"+9198{uuid.uuid4().int % 100000000:08d}",
-            masked_aadhaar="XXXXXXXX0000",
-            aadhaar_hash=hashlib.sha256(f"seed-aadhaar-{product_in.artisan_id}".encode()).hexdigest(),
-            social_category="OBC",
-            cluster_id=cluster.id,
-            state=cluster.state,
-            district=cluster.district,
-            latitude=cluster.latitude,
-            longitude=cluster.longitude,
-            primary_craft=product_in.craft_type,
-            is_active=True
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"ARTISAN_NOT_FOUND: Artisan profile '{product_in.artisan_id}' not found — complete onboarding first before creating craft products."
         )
-        db.add(artisan_record)
-        db.flush()
+    if not artisan_record.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ACCOUNT_DEACTIVATED: Cannot create products for an inactive or deactivated artisan account."
+        )
+
+    # Validate media URLs ownership to prevent cross-user file association or unauthorized deletion
+    _validate_media_url_ownership(product_in.raw_photo_url, owner_id=product_in.artisan_id, is_admin=current_user.is_admin, field_name="raw_photo_url")
+    _validate_media_url_ownership(product_in.raw_audio_url, owner_id=product_in.artisan_id, is_admin=current_user.is_admin, field_name="raw_audio_url")
+    _validate_media_url_ownership(product_in.studio_image_url, owner_id=product_in.artisan_id, is_admin=current_user.is_admin, field_name="studio_image_url")
+    _validate_media_url_ownership(product_in.before_after_preview_url, owner_id=product_in.artisan_id, is_admin=current_user.is_admin, field_name="before_after_preview_url")
 
     hourly_wage = max(cluster.statutory_hourly_wage, product_in.hourly_wage_rate or cluster.statutory_hourly_wage)
 
@@ -274,12 +401,54 @@ def create_product(
 
     dimensions_dict = product_in.dimensions.model_dump() if hasattr(product_in.dimensions, "model_dump") else product_in.dimensions
 
-    # 6. Compute deterministic normalized 768-dim visual embedding
-    emb_seed = sum(ord(c) for c in (product_in.title + product_in.craft_type))
-    rnd = random.Random(emb_seed)
-    raw_vec = [rnd.gauss(0, 1.0) for _ in range(768)]
-    norm = math.sqrt(sum(x * x for x in raw_vec)) or 1.0
-    visual_embedding = [round(x / norm, 6) for x in raw_vec]
+    # 6. Compute 768-dimensional visual embedding from actual product image
+    visual_embedding = None
+    target_img_url = product_in.studio_image_url or product_in.raw_photo_url
+    if target_img_url:
+        img = _resolve_image_for_embedding(target_img_url)
+        if img:
+            visual_embedding = embedding_service.generate_embedding_from_image(img)
+
+    # Fallback to deterministic semantic text embedding if no image is uploaded or resolved
+    if not visual_embedding:
+        semantic_desc = f"{product_in.title} {product_in.craft_type} {product_in.technique} {' '.join(product_in.dominant_colors or [])}"
+        visual_embedding = embedding_service.embed_text(semantic_desc)
+
+    # 7. Authoritative Geographical Indication (GI) Separation
+    # Craft-level registration: strictly derived from verified CraftCluster
+    gi_craft_registered = False
+    gi_registration_name = None
+    gi_registration_reference = None
+    gi_registered_region = None
+
+    if cluster:
+        tag_status = (cluster.gi_tag_status or "").lower()
+        if cluster.gi_tag_number or "registered" in tag_status:
+            gi_craft_registered = True
+            gi_registration_name = cluster.craft_name
+            gi_registration_reference = cluster.gi_tag_number or cluster.gi_tag_status
+            gi_registered_region = f"{cluster.district}, {cluster.state}"
+
+    # Artisan-level authorization: individual documentation required
+    # Region + craft matching alone does NOT mark an artisan or product as certified
+    doc_ref = (product_in.gi_authorization_document_reference or "").strip() or None
+    gi_verif_date = None
+    gi_verif_source = None
+
+    if current_user.is_admin and product_in.gi_artisan_authorization_status == "AUTHORIZED" and doc_ref:
+        gi_artisan_status = "AUTHORIZED"
+        gi_verif_source = "MoSJE GI Registry Authority"
+        gi_verif_date = datetime.now(timezone.utc)
+    elif doc_ref:
+        gi_artisan_status = "PENDING_REVIEW"
+    else:
+        gi_artisan_status = "NOT_PROVIDED"
+
+    # Product provenance status: independent batch verification required
+    if current_user.is_admin and product_in.gi_product_provenance_status == "VERIFIED":
+        gi_provenance_status = "VERIFIED"
+    else:
+        gi_provenance_status = "UNVERIFIED"
 
     product = Product(
         id=product_id,
@@ -312,7 +481,17 @@ def create_product(
         transcription_english=product_in.transcription_english,
         visual_embedding=visual_embedding,
         is_active=True,
-        qr_passport_id=qr_passport_id
+        qr_passport_id=qr_passport_id,
+        idempotency_key=effective_idempotency_key,
+        gi_craft_registered=gi_craft_registered,
+        gi_registration_name=gi_registration_name,
+        gi_registration_reference=gi_registration_reference,
+        gi_registered_region=gi_registered_region,
+        gi_artisan_authorization_status=gi_artisan_status,
+        gi_authorization_document_reference=doc_ref,
+        gi_product_provenance_status=gi_provenance_status,
+        gi_verification_source=gi_verif_source,
+        gi_verification_date=gi_verif_date
     )
 
     db.add(product)
@@ -321,8 +500,17 @@ def create_product(
         db.refresh(product)
     except Exception as e:
         db.rollback()
-        logger.warning(f"Note on product commit: {e}")
-        product.created_at = datetime.now(timezone.utc)
+        # If another concurrent request committed with this same idempotency_key just now, return it
+        if effective_idempotency_key:
+            concurrent_existing = db.query(Product).filter(Product.idempotency_key == effective_idempotency_key).first()
+            if concurrent_existing:
+                logger.info(f"Concurrent race resolved: returning existing product '{concurrent_existing.id}' for key '{effective_idempotency_key}'")
+                return concurrent_existing
+        logger.error(f"Failed to commit product '{product.id}' to database: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="PRODUCT_CREATE_FAILED: Database commit failed. The product was not saved."
+        )
 
     return product
 
@@ -433,6 +621,44 @@ def update_product(
     prod.wholesale_b2b_price = tiers["wholesale_price"]
     prod.hourly_wage_rate = effective_wage
 
+    # 5. Guard GI updates
+    update_data.pop("gi_craft_registered", None)
+    update_data.pop("gi_registration_name", None)
+    update_data.pop("gi_registration_reference", None)
+    update_data.pop("gi_registered_region", None)
+
+    if "gi_authorization_document_reference" in update_data:
+        doc_ref = (update_data["gi_authorization_document_reference"] or "").strip()
+        if doc_ref:
+            update_data["gi_authorization_document_reference"] = doc_ref
+            if not current_user.is_admin:
+                update_data["gi_artisan_authorization_status"] = "PENDING_REVIEW"
+        else:
+            update_data["gi_authorization_document_reference"] = None
+            if not current_user.is_admin:
+                update_data["gi_artisan_authorization_status"] = "NOT_PROVIDED"
+
+    if "gi_artisan_authorization_status" in update_data:
+        req_status = update_data["gi_artisan_authorization_status"]
+        if not current_user.is_admin:
+            if req_status in ["AUTHORIZED", "REJECTED"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="FORBIDDEN_GI_VERIFICATION: Only platform administrators can certify or reject artisan GI authorization."
+                )
+        else:
+            if req_status == "AUTHORIZED":
+                prod.gi_verification_source = update_data.get("gi_verification_source") or "MoSJE GI Administrative Audit"
+                prod.gi_verification_date = datetime.now(timezone.utc)
+
+    if "gi_product_provenance_status" in update_data:
+        prov_status = update_data["gi_product_provenance_status"]
+        if not current_user.is_admin and prov_status == "VERIFIED":
+            raise HTTPException(
+                status_code=403,
+                detail="FORBIDDEN_PROVENANCE_VERIFICATION: Only platform administrators can verify physical product provenance."
+            )
+
     for key, value in update_data.items():
         setattr(prod, key, value)
     prod.updated_at = datetime.now(timezone.utc)
@@ -462,10 +688,10 @@ def delete_product(
         )
 
     # Safe removal of associated stored files from disk
-    delete_stored_file(prod.studio_image_url)
-    delete_stored_file(prod.before_after_preview_url)
-    delete_stored_file(prod.raw_photo_url)
-    delete_stored_file(prod.raw_audio_url)
+    delete_stored_file(prod.studio_image_url, owner_id=prod.artisan_id)
+    delete_stored_file(prod.before_after_preview_url, owner_id=prod.artisan_id)
+    delete_stored_file(prod.raw_photo_url, owner_id=prod.artisan_id)
+    delete_stored_file(prod.raw_audio_url, owner_id=prod.artisan_id)
 
     db.delete(prod)
     db.commit()

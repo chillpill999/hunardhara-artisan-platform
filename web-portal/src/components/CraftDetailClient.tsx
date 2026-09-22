@@ -20,8 +20,10 @@ import {
   MapPin,
   User,
   Trash2,
-  MessageSquareQuote
+  MessageSquareQuote,
+  ShoppingBag
 } from 'lucide-react';
+
 
 interface CraftDetailClientProps {
   initialProduct: Product | null;
@@ -66,9 +68,32 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
   const [product, setProduct] = useState<Product | null>(initialProduct);
   const [loading, setLoading] = useState<boolean>(false);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [orderSent, setOrderSent] = useState(false);
+  const [addedToCart, setAddedToCart] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
+
+  const addToCartInternal = (goToCart = false) => {
+    if (!product) return;
+    try {
+      const raw = localStorage.getItem('hunardhara_customer_cart');
+      const cart: { id: string; quantity: number }[] = raw ? JSON.parse(raw) : [];
+      const existingIdx = cart.findIndex((i) => i.id === product.id);
+      if (existingIdx >= 0) {
+        cart[existingIdx].quantity += quantity;
+      } else {
+        cart.push({ id: product.id, quantity });
+      }
+      localStorage.setItem('hunardhara_customer_cart', JSON.stringify(cart));
+      if (goToCart) {
+        router.push('/cart');
+      } else {
+        setAddedToCart(true);
+        setTimeout(() => setAddedToCart(false), 3500);
+      }
+    } catch (e) {
+      console.error('Add to cart error:', e);
+    }
+  };
 
   // Handlers enforcing authentication for purchases and inquiries
   const handlePurchase = () => {
@@ -77,8 +102,18 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
       router.push(`/login?redirect=${encodeURIComponent(returnUrl)}&msg=${encodeURIComponent('खरीदारी के लिए कृपया लॉगिन करें। केवल सत्यापित खरीदार ही कारीगर से सीधे ऑर्डर कर सकते हैं। (Please sign in to buy this craft.)')}`);
       return;
     }
-    setOrderSent(true);
+    addToCartInternal(true);
   };
+
+  const handleAddToCart = () => {
+    if (!user) {
+      const returnUrl = `/craft/${activeId || id}`;
+      router.push(`/login?redirect=${encodeURIComponent(returnUrl)}&msg=${encodeURIComponent('टोकरी में जोड़ने के लिए कृपया लॉगिन करें। (Please sign in to add this craft to your cart.)')}`);
+      return;
+    }
+    addToCartInternal(false);
+  };
+
 
   const handleOpenInquiry = () => {
     if (!user) {
@@ -265,12 +300,20 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
             </div>
 
             {/* Subtle GI Provenance Badge */}
-            {product.gi_certified && (
-              <div className="absolute top-5 left-5 bg-white/95 backdrop-blur-xs text-[#1b4332] border border-[#e6ded3] text-[11px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
-                <Award className="w-3.5 h-3.5 text-[#c85a32]" />
-                <span>GI Heritage Verified</span>
+            {product.is_gi_certified_product ? (
+              <div className="absolute top-5 left-5 bg-white/95 backdrop-blur-xs text-[#1b4332] border border-emerald-300 text-[11px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
+                <Award className="w-3.5 h-3.5 text-emerald-600" />
+                <span>✓ GI Certified Product</span>
               </div>
-            )}
+            ) : product.gi_craft_registered ? (
+              <div
+                className="absolute top-5 left-5 bg-white/95 backdrop-blur-xs text-[#6f5f58] border border-[#e6ded3] text-[11px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs"
+                title={product.gi_registration_reference || undefined}
+              >
+                <Award className="w-3.5 h-3.5 text-[#c85a32]" />
+                <span>GI Registered Craft Tradition</span>
+              </div>
+            ) : null}
           </div>
 
           {/* Clean View Toggle */}
@@ -392,6 +435,59 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
             </div>
           </div>
 
+          {/* Transparent GI Verification Breakdown */}
+          <div className="bg-[#faf7f2] p-4 rounded-2xl border border-[#e6ded3] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#6f5f58] flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-[#c85a32]" />
+                भौगोलिक उपदर्शन (GI) प्रमाणिकता स्थिति
+              </span>
+              <span
+                className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                  product.is_gi_certified_product
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    : 'bg-amber-50 text-amber-800 border-amber-300'
+                }`}
+              >
+                {product.is_gi_certified_product ? 'पूर्ण प्रमाणित (Fully Certified)' : 'पारंपरिक शिल्प (Craft Tradition)'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-[11px]">
+              <div className="bg-white p-2.5 rounded-xl border border-[#e6ded3]">
+                <span className="text-[#6f5f58] block text-[10px] font-medium">1. शिल्प पंजीकरण (Craft)</span>
+                <span className="font-bold text-[#231f1e] mt-0.5 block truncate">
+                  {product.gi_craft_registered
+                    ? `पंजीकृत (${product.gi_registration_reference || 'GI Tag'})`
+                    : 'गैर-पंजीकृत पारंपरिक'}
+                </span>
+              </div>
+              <div className="bg-white p-2.5 rounded-xl border border-[#e6ded3]">
+                <span className="text-[#6f5f58] block text-[10px] font-medium">2. कारीगर प्राधिकरण (Artisan)</span>
+                <span className="font-bold mt-0.5 block text-[#231f1e] truncate">
+                  {product.gi_artisan_authorization_status === 'AUTHORIZED'
+                    ? '✓ प्राधिकृत (Authorized)'
+                    : product.gi_artisan_authorization_status === 'PENDING_REVIEW'
+                    ? 'जांच प्रगति पर (In Review)'
+                    : 'उपलब्ध नहीं / असत्यापित'}
+                </span>
+              </div>
+              <div className="bg-white p-2.5 rounded-xl border border-[#e6ded3]">
+                <span className="text-[#6f5f58] block text-[10px] font-medium">3. उत्पाद उत्पत्ति (Provenance)</span>
+                <span className="font-bold mt-0.5 block text-[#231f1e] truncate">
+                  {product.gi_product_provenance_status === 'VERIFIED'
+                    ? '✓ सत्यापित (Verified)'
+                    : 'असत्यापित (Unverified)'}
+                </span>
+              </div>
+            </div>
+            {!product.is_gi_certified_product && product.gi_craft_registered && (
+              <p className="text-[10px] text-[#6f5f58] italic leading-tight">
+                * यह शिल्प GI-पंजीकृत पारंपरिक श्रेणी से सुसंगत है। उत्पाद-स्तरीय प्रमाणन के लिए अधिकृत कारीगर कार्ड व बैच सत्यापन अनिवार्य है।
+              </p>
+            )}
+          </div>
+
           {/* Direct Order Request & Actions */}
           <div className="pt-3 border-t border-[#e6ded3] space-y-3">
             {/* Guest Browsing Policy Notice */}
@@ -409,58 +505,78 @@ export default function CraftDetailClient({ initialProduct, id }: CraftDetailCli
               </div>
             )}
 
-            {orderSent ? (
-              <div className="bg-[#e8f5e9] border border-[#c8e6c9] text-[#1b4332] p-5 rounded-2xl flex items-center gap-3.5">
-                <CheckCircle2 className="w-6 h-6 text-[#2d6a4f] shrink-0" />
-                <div>
-                  <h4 className="font-bold text-sm">मांग सीधे कार्यशाला को भेजी गई</h4>
-                  <p className="text-xs text-[#2d6a4f] mt-0.5">
-                    कारीगर {product.artisan_name || 'राधेश्याम जी'} को सूचना प्रेषित कर दी गई है।
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="flex items-center justify-between sm:justify-center border border-[#e6ded3] rounded-full bg-white px-4 py-2 sm:py-0">
-                  <span className="text-[11px] font-bold text-[#6f5f58] sm:hidden">इकाइयाँ (Quantity):</span>
-                  <div className="flex items-center">
-                    <button
-                      onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                      className="px-2 py-1 text-[#6f5f58] font-bold hover:text-[#231f1e]"
-                    >
-                      -
-                    </button>
-                    <span className="px-3 text-xs font-bold text-[#231f1e]">{quantity}</span>
-                    <button
-                      onClick={() => setQuantity(quantity + 1)}
-                      className="px-2 py-1 text-[#6f5f58] font-bold hover:text-[#231f1e]"
-                    >
-                      +
-                    </button>
+            {addedToCart && (
+              <div className="bg-[#e8f5e9] border border-[#c8e6c9] text-[#1b4332] p-4 rounded-2xl flex items-center justify-between gap-3 animate-fade-in">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="w-5 h-5 text-[#2d6a4f] shrink-0" />
+                  <div>
+                    <h4 className="font-bold text-xs sm:text-sm">टोकरी में सफलतापूर्वक जोड़ा गया!</h4>
+                    <p className="text-[11px] text-[#2d6a4f]">
+                      {quantity} इकाई • ₹{Number((product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0) * quantity).toLocaleString('en-IN')}
+                    </p>
                   </div>
                 </div>
-
-                <button
-                  onClick={handlePurchase}
-                  className="flex-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-sm py-4 px-6 rounded-full transition-all shadow-xs flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
+                <Link
+                  href="/cart"
+                  className="bg-[#1b4332] hover:bg-[#2d6a4f] text-white text-xs font-bold px-4 py-2 rounded-full transition-all flex items-center gap-1 shrink-0"
                 >
-                  {!user && <Lock className="w-4 h-4 text-[#e9a83a]" />}
-                  <span>
-                    {user
-                      ? `कारीगर से सीधे खरीदें (₹${Number((product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0) * quantity).toLocaleString('en-IN')})`
-                      : 'खरीदने के लिए लॉगिन करें (Sign In to Buy)'}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => alert('सत्यापित शिल्प लिंक कॉपी हो गया')}
-                  className="p-3.5 rounded-full border border-[#e6ded3] bg-white text-[#6f5f58] hover:bg-[#faf7f2] self-center sm:self-auto cursor-pointer"
-                  title="साझा करें"
-                >
-                  <Share2 className="w-4 h-4" />
-                </button>
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>टोकरी देखें</span>
+                </Link>
               </div>
             )}
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex items-center justify-between sm:justify-center border border-[#e6ded3] rounded-full bg-white px-4 py-2 sm:py-0">
+                <span className="text-[11px] font-bold text-[#6f5f58] sm:hidden">इकाइयाँ (Quantity):</span>
+                <div className="flex items-center">
+                  <button
+                    onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                    className="px-2 py-1 text-[#6f5f58] font-bold hover:text-[#231f1e]"
+                  >
+                    -
+                  </button>
+                  <span className="px-3 text-xs font-bold text-[#231f1e]">{quantity}</span>
+                  <button
+                    onClick={() => setQuantity(quantity + 1)}
+                    className="px-2 py-1 text-[#6f5f58] font-bold hover:text-[#231f1e]"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAddToCart}
+                className="border border-[#1b4332] text-[#1b4332] hover:bg-[#1b4332]/5 font-bold text-xs sm:text-sm py-3.5 px-5 rounded-full transition-all flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>टोकरी में जोड़ें (Add to Cart)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePurchase}
+                className="flex-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-xs sm:text-sm py-3.5 px-6 rounded-full transition-all shadow-xs flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
+              >
+                {!user && <Lock className="w-4 h-4 text-[#e9a83a]" />}
+                <span>
+                  {user
+                    ? `सीधे खरीदें (₹${Number((product.recommended_retail_d2c ?? (product as any).recommended_retail_price ?? product.floor_price ?? 0) * quantity).toLocaleString('en-IN')})`
+                    : 'खरीदने के लिए लॉगिन करें (Sign In to Buy)'}
+                </span>
+              </button>
+
+              <button
+                onClick={() => alert('सत्यापित शिल्प लिंक कॉपी हो गया')}
+                className="p-3.5 rounded-full border border-[#e6ded3] bg-white text-[#6f5f58] hover:bg-[#faf7f2] self-center sm:self-auto cursor-pointer"
+                title="साझा करें"
+              >
+                <Share2 className="w-4 h-4" />
+              </button>
+            </div>
+
 
             {/* Direct Inquiry with Artisan CTA */}
             <button

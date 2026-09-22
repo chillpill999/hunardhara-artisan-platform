@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class ProductDimensions(BaseModel):
@@ -43,6 +43,13 @@ class ProductCreate(ProductBase):
     raw_audio_url: Optional[str] = None
     transcription_regional: Optional[str] = None
     transcription_english: Optional[str] = None
+    idempotency_key: Optional[str] = Field(None, max_length=128, description="Client-provided idempotency key (UUID) to prevent duplicate creation on retry")
+
+    # Optional client-submitted GI evidence (strictly validated server-side)
+    gi_authorization_document_reference: Optional[str] = Field(None, description="Artisan GI authorization certificate or card number")
+    gi_artisan_authorization_status: Optional[str] = Field(None, description="Requested artisan status; evaluated and guarded server-side")
+    gi_product_provenance_status: Optional[str] = Field(None, description="Requested provenance status; verified server-side")
+    gi_certified: Optional[bool] = Field(None, description="Legacy client parameter; overridden server-side based on evidence")
 
 
 class ProductUpdate(BaseModel):
@@ -54,6 +61,12 @@ class ProductUpdate(BaseModel):
     description_hindi: Optional[str] = None
     description_english: Optional[str] = None
     is_active: Optional[bool] = None
+
+    # GI Verification Updates (admin or evidence review)
+    gi_authorization_document_reference: Optional[str] = None
+    gi_artisan_authorization_status: Optional[str] = None
+    gi_product_provenance_status: Optional[str] = None
+    gi_verification_source: Optional[str] = None
 
 
 class ProductResponse(ProductBase):
@@ -68,7 +81,36 @@ class ProductResponse(ProductBase):
     wholesale_b2b_price: float
     is_active: bool
     qr_passport_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+    # Distinct GI Fields
+    gi_craft_registered: bool = False
+    gi_registration_name: Optional[str] = None
+    gi_registration_reference: Optional[str] = None
+    gi_registered_region: Optional[str] = None
+    gi_artisan_authorization_status: str = "NOT_PROVIDED"
+    gi_authorization_document_reference: Optional[str] = None
+    gi_product_provenance_status: str = "UNVERIFIED"
+    gi_verification_source: Optional[str] = None
+    gi_verification_date: Optional[datetime] = None
+
     created_at: Optional[datetime] = None
+
+    @computed_field
+    @property
+    def is_gi_certified_product(self) -> bool:
+        """
+        Strict Product-Level GI Certification Rule:
+        A product is ONLY certified when:
+        1. The craft tradition is officially GI-registered,
+        2. The individual artisan has authorized GI user status,
+        3. The specific product provenance has been independently verified.
+        """
+        return bool(
+            self.gi_craft_registered and
+            self.gi_artisan_authorization_status == "AUTHORIZED" and
+            self.gi_product_provenance_status == "VERIFIED"
+        )
 
     model_config = ConfigDict(from_attributes=True)
 

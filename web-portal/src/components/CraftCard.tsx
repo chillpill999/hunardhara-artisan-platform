@@ -58,11 +58,19 @@ export default function CraftCard({ product }: CraftCardProps) {
             </button>
           )}
 
-          {product.gi_certified && (
-            <span className="text-[10px] font-bold text-[#c85a32] uppercase tracking-wider bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-full border border-[#e6ded3] shadow-xs">
-              GI Tagged
+          {product.is_gi_certified_product ? (
+            <span className="text-[10px] font-bold text-[#1b4332] bg-emerald-50/95 backdrop-blur-xs px-2.5 py-1 rounded-full border border-emerald-300 shadow-xs flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+              GI Certified Product
             </span>
-          )}
+          ) : product.gi_craft_registered ? (
+            <span
+              className="text-[10px] font-bold text-[#c85a32] uppercase tracking-wider bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-full border border-[#e6ded3] shadow-xs"
+              title={`GI Registered Craft Tradition (${product.gi_registration_reference || product.craft_type})`}
+            >
+              GI Craft Tradition
+            </span>
+          ) : null}
         </div>
 
         {/* Live Upload Badge for Presentation Demo */}

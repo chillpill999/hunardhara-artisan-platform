@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { matchB2BRFQ } from "@/lib/api";
 import { B2BMatchResponse } from "@/lib/types";
+import { useAuth } from "@/context/AuthContext";
 import MatchResultCard from "@/components/MatchResultCard";
 import {
   Building2,
@@ -11,10 +13,13 @@ import {
   Search,
   ArrowRight,
   ShieldCheck,
+  ShieldAlert,
+  AlertCircle,
   Compass
 } from "lucide-react";
 
 export default function B2BMatchmakerPage() {
+  const { user, session } = useAuth();
   const [craftType, setCraftType] = useState("Bastar Dhokra");
   const [quantity, setQuantity] = useState(150);
   const [budgetPerUnit, setBudgetPerUnit] = useState(1800);
@@ -23,23 +28,54 @@ export default function B2BMatchmakerPage() {
   const [companyName, setCompanyName] = useState("");
   const [isMatching, setIsMatching] = useState(false);
   const [matchResult, setMatchResult] = useState<B2BMatchResponse | null>(null);
+  const [errorState, setErrorState] = useState<{ status: number; message: string } | null>(null);
 
   const handleExecuteMatch = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorState(null);
+
+    if (!user || !session) {
+      setErrorState({
+        status: 401,
+        message: "Authentication Required: Please sign in to submit B2B procurement RFQs and link with verified artisans.",
+      });
+      return;
+    }
+
     setIsMatching(true);
 
     try {
-      const result = await matchB2BRFQ({
-        required_craft_type: craftType,
-        quantity: Number(quantity),
-        budget_per_unit: Number(budgetPerUnit),
-        delivery_days_deadline: Number(deadlineDays),
-        delivery_state: deliveryState,
-        buyer_company_name: companyName,
+      const idempotencyKey = `rfq-${user.id.substring(0, 8)}-${Date.now()}`;
+      const result = await matchB2BRFQ(
+        {
+          required_craft_type: craftType,
+          quantity: Number(quantity),
+          budget_per_unit: Number(budgetPerUnit),
+          delivery_days_deadline: Number(deadlineDays),
+          delivery_state: deliveryState,
+          buyer_company_name: companyName || user.user_metadata?.full_name || "Institutional Buyer",
+          buyer_contact_email: user.email || undefined,
+          idempotency_key: idempotencyKey,
+        },
+        session.access_token
+      );
+
+      if (!result.success) {
+        setErrorState({
+          status: result.statusCode || 500,
+          message: result.error || "Failed to execute B2B matching.",
+        });
+        setMatchResult(null);
+      } else {
+        setErrorState(null);
+        setMatchResult(result.data || null);
+      }
+    } catch (err: any) {
+      setErrorState({
+        status: 500,
+        message: `Network error: ${err.message || String(err)}`,
       });
-      setMatchResult(result);
-    } catch (err) {
-      console.error(err);
+      setMatchResult(null);
     } finally {
       setIsMatching(false);
     }
@@ -213,13 +249,95 @@ export default function B2BMatchmakerPage() {
             )}
           </div>
 
+          {/* 1. Error States */}
+          {errorState && (
+            errorState.status === 401 ? (
+              <div className="bg-[#fef2f2] border border-[#fecaca] rounded-3xl p-8 text-center space-y-4 shadow-xs">
+                <div className="w-12 h-12 rounded-full bg-[#fee2e2] text-[#dc2626] flex items-center justify-center mx-auto">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-serif font-bold text-base text-[#991b1b]">
+                    Buyer Authentication Required
+                  </h4>
+                  <p className="text-xs text-[#7f1d1d] mt-1 max-w-md mx-auto leading-relaxed">
+                    Institutional procurement and direct artisan bulk RFQs require a verified buyer account to ensure genuine transactions.
+                  </p>
+                </div>
+                <Link
+                  href="/login?redirect=/b2b"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#991b1b] hover:bg-[#7f1d1d] text-white text-xs font-semibold rounded-full shadow-sm transition-colors cursor-pointer"
+                >
+                  <span>Sign In as Verified Buyer</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            ) : errorState.status === 422 ? (
+              <div className="bg-[#fffbeb] border border-[#fef3c7] rounded-3xl p-6 text-xs text-[#92400e] flex items-start gap-3 shadow-xs">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-[#d97706]" />
+                <div>
+                  <span className="font-bold text-sm block mb-1">Invalid Sourcing Specification</span>
+                  <span className="text-xs text-[#78350f]">{errorState.message}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-[#fef2f2] border border-[#fecaca] rounded-3xl p-6 text-xs text-[#991b1b] flex items-start justify-between gap-4 shadow-xs">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-[#dc2626]" />
+                  <div>
+                    <span className="font-bold text-sm block mb-1">Matchmaker Service Notice</span>
+                    <span className="text-xs text-[#7f1d1d]">{errorState.message}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExecuteMatch}
+                  className="px-3.5 py-1.5 bg-[#dc2626] text-white rounded-full font-medium hover:bg-[#b91c1c] text-xs transition-colors flex-shrink-0 cursor-pointer"
+                >
+                  Retry
+                </button>
+              </div>
+            )
+          )}
+
+          {/* 2. Success Result Display */}
           {matchResult ? (
             <div className="space-y-4">
-              {matchResult.matched_artisans.map((match, index) => (
-                <MatchResultCard key={match.artisan_id} match={match} rank={index + 1} />
-              ))}
+              {/* Authoritative RFQ Status Header */}
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-[#faf8f5] border border-[#e7e2d9] p-3.5 rounded-2xl text-xs">
+                <div className="flex items-center gap-2 text-[#44403c]">
+                  <span className="font-bold">RFQ Reference:</span>
+                  <code className="bg-white px-2 py-0.5 rounded-lg border border-[#e7e2d9] text-[#1c1917] font-mono text-[11px] font-semibold">
+                    {matchResult.rfq_id || "Persisted"}
+                  </code>
+                  <span className="text-[10px] text-[#059669] font-medium bg-[#ecfdf5] px-2 py-0.5 rounded-full border border-[#a7f3d0] inline-flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-[#059669]" /> Audited in Database
+                  </span>
+                </div>
+                <span className="text-[#78716c] font-medium">
+                  {matchResult.total_matches_found} candidate{matchResult.total_matches_found === 1 ? "" : "s"} found
+                </span>
+              </div>
+
+              {matchResult.total_matches_found === 0 || matchResult.matched_artisans.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-[#e7e2d9] p-10 text-center space-y-3 shadow-xs">
+                  <div className="w-12 h-12 rounded-full bg-[#f5f2eb] text-[#78716c] flex items-center justify-center mx-auto text-xl">
+                    🔍
+                  </div>
+                  <h4 className="font-serif font-bold text-base text-[#1c1917]">
+                    No Active Artisans Match Current Parameters
+                  </h4>
+                  <p className="text-xs text-[#78716c] max-w-md mx-auto leading-relaxed">
+                    We could not find active verified workshops currently offering <span className="font-semibold text-[#1c1917]">{matchResult.required_craft}</span> within your target budget of ₹{matchResult.buyer_budget.toLocaleString("en-IN")}/unit for {matchResult.quantity} units. Consider adjusting your unit budget or lead time.
+                  </p>
+                </div>
+              ) : (
+                matchResult.matched_artisans.map((match, index) => (
+                  <MatchResultCard key={match.artisan_id} match={match} rank={index + 1} />
+                ))
+              )}
             </div>
-          ) : (
+          ) : !errorState && (
             <div className="bg-white rounded-3xl border border-dashed border-[#d6cebf] p-12 text-center space-y-3">
               <div className="w-14 h-14 rounded-full bg-[#f5f2eb] text-[#9a3412] flex items-center justify-center mx-auto text-xl">
                 ⚖️
@@ -230,12 +348,6 @@ export default function B2BMatchmakerPage() {
               <p className="text-xs text-[#78716c] max-w-sm mx-auto">
                 Fill in your parameters on the left and submit to view certified artisan workshops evaluated for capacity, price, and craft excellence.
               </p>
-              <button
-                onClick={handleExecuteMatch}
-                className="text-xs text-[#9a3412] font-semibold underline hover:text-[#b45309]"
-              >
-                Sample search: Bastar Dhokra (150 units @ ₹1,800)
-              </button>
             </div>
           )}
         </div>

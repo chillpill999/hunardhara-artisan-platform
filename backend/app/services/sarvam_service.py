@@ -569,10 +569,22 @@ class SarvamService:
             craft = "Bastar Dhokra" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Metal Craft"
             name_hi = "हाथ से बनी पीतल की घंटी" if any(k in t_lower for k in ["पीतल", "brass"]) else "हाथ से बनी घंटी"
             name_en = "Handcrafted Brass Bell" if any(k in t_lower for k in ["पीतल", "brass"]) else "Handcrafted Bell"
+        elif any(k in t_lower for k in ["घोड़ा", "horse", "अश्व"]):
+            craft = "Bastar Dhokra" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Metal Craft"
+            name_hi = "हस्तनिर्मित बस्तर ढोकरा पीतल का घोड़ा" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "हस्तनिर्मित धातु का घोड़ा"
+            name_en = "Handcrafted Bastar Dhokra Brass Horse Figurine" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Handcrafted Metal Horse Figurine"
+        elif any(k in t_lower for k in ["दीया", "दीया स्टैंड", "diya", "lamp"]):
+            craft = "Bastar Dhokra" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Metal Craft"
+            name_hi = "हस्तनिर्मित बस्तर ढोकरा पीतल का दीया स्टैंड"
+            name_en = "Handcrafted Bastar Dhokra Brass Diya Stand"
+        elif any(k in t_lower for k in ["कप-प्लेट", "कप", "cup", "saucer"]):
+            craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "Pottery"
+            name_hi = "खुर्जा हस्तनिर्मित सिरेमिक कप-प्लेट सेट (6 पीस)" if "6" in t_lower else "खुर्जा हस्तनिर्मित सिरेमिक कप-प्लेट सेट"
+            name_en = "Handcrafted Khurja Ceramic Tea Cup and Saucer Set (6 Pcs)" if "6" in t_lower else "Handcrafted Khurja Ceramic Tea Cup and Saucer Set"
         elif any(k in t_lower for k in ["फूलदान", "vase"]):
-            craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja"]) else "Pottery"
-            name_hi = "मिट्टी का फूलदान" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "हस्तनिर्मित फूलदान"
-            name_en = "Handcrafted Earthen Clay Vase" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "Handcrafted Vase"
+            craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "Pottery"
+            name_hi = "खुर्जा हस्तनिर्मित सिरेमिक फूलदान" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "मिट्टी का फूलदान" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "हस्तनिर्मित फूलदान"
+            name_en = "Handcrafted Khurja Glazed Ceramic Flower Vase" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "Handcrafted Earthen Clay Vase" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "Handcrafted Vase"
         elif any(k in t_lower for k in ["घड़ा", "घैला", "घइला", "पॉट", "pottery", "कुल्हड़"]):
             craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja"]) else "Pottery"
             name_hi = "चाक पर बना हस्तनिर्मित माटी का घड़ा"
@@ -581,22 +593,34 @@ class SarvamService:
             craft = "Woodcraft"
             name_hi = "काष्ठ आभूषण डिब्बा" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "हस्तनिर्मित डिब्बा"
             name_en = "Hand-Carved Wooden Jewelry Box" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "Handcrafted Box"
-        elif any(k in t_lower for k in ["खिलौना", "toy"]):
-            craft = "Channapatna Toys" if any(k in t_lower for k in ["चन्नपटना", "channapatna"]) else "Woodcraft"
-            name_hi = "हस्तनिर्मित काष्ठ खिलौना" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "हस्तनिर्मित खिलौना"
-            name_en = "Handcrafted Wooden Toy" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "Handcrafted Toy"
+        elif any(k in t_lower for k in ["खिलौना", "toy", "ಆಟಿಕೆ", "aatike"]):
+            craft = "Channapatna Toys" if any(k in t_lower for k in ["चन्नपटना", "चन्नापटना", "channapatna", "ಚನ್ನಪಟ್ಟಣ"]) else "Woodcraft"
+            name_hi = "चन्नापटना हस्तनिर्मित गैर-विषाक्त लकड़ी का खिलौना" if "चन्न" in t_lower or "ಚನ್ನ" in t_lower else "हस्तनिर्मित काष्ठ खिलौना"
+            name_en = "Handcrafted Channapatna Non-Toxic Wooden Toy" if "चन्न" in t_lower or "ಚನ್ನ" in t_lower else "Handcrafted Wooden Toy"
+        elif any(k in t_lower for k in ["दुपट्टा", "dupatta"]):
+            craft = "Varanasi Silk" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "सिल्क"]) else "Handloom Weaving"
+            name_hi = "हथकरघा बनारसी सिल्क दुपट्टा" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "सिल्क"]) else "हस्तनिर्मित हथकरघा दुपट्टा"
+            name_en = "Handloom Banarasi Silk Dupatta" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "सिल्क"]) else "Handloom Woven Dupatta"
+        elif any(k in t_lower for k in ["स्टोल", "stole"]):
+            craft = "Madhubani Painting" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila", "तसर", "tussar"]) else "Handloom Weaving"
+            name_hi = "हस्तचित्रित मधुबनी तसर सिल्क स्टोल" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "तसर"]) else "हस्तनिर्मित सिल्क स्टोल"
+            name_en = "Hand-painted Madhubani Tree of Life Tussar Silk Stole" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "तसर"]) else "Handcrafted Silk Stole"
         elif any(k in t_lower for k in ["मधुबनी", "मिथिला", "painting", "चित्रकला", "पेंटिंग"]):
             craft = "Madhubani Painting" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "Folk Art"
-            name_hi = "हस्तचित्रित मिथिला/मधुबनी पेंटिंग" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "हस्तचित्रित पारंपरिक पेंटिंग"
-            name_en = "Handpainted Mithila Folk Painting" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "Handpainted Folk Art"
+            if any(k in t_lower for k in ["मछली", "कमल", "fish", "lotus"]):
+                name_hi = "हस्तचित्रित मधुबनी मछली और कमल पारंपरिक पेंटिंग"
+                name_en = "Hand-painted Madhubani Fish and Lotus Folk Art"
+            else:
+                name_hi = "हस्तचित्रित मिथिला/मधुबनी पेंटिंग" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "हस्तचित्रित पारंपरिक पेंटिंग"
+                name_en = "Handpainted Mithila Folk Painting" if any(k in t_lower for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]) else "Handpainted Folk Art"
         elif any(k in t_lower for k in ["मोजरी", "जूती", "mojari"]):
             craft = "Leather Craft"
             name_hi = "हस्तनिर्मित पारंपरिक लेदर मोजरी"
             name_en = "Handcrafted Traditional Leather Mojari"
         elif any(k in t_lower for k in ["साड़ी", "saree"]):
             craft = "Varanasi Silk" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "Handloom Weaving"
-            name_hi = "पारंपरिक बनारसी कतान सिल्क साड़ी" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "हस्तनिर्मित हथकरघा साड़ी"
-            name_en = "Varanasi Pure Katan Silk Handloom Saree" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "Handloom Woven Saree"
+            name_hi = "हथकरघा बनारसी कतान सिल्क साड़ी" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "हथकरघा सूती साड़ी" if "cotton" in t_lower or "सूती" in t_lower else "हस्तनिर्मित हथकरघा साड़ी"
+            name_en = "Handloom Banarasi Katan Silk Saree" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "कातान", "katan", "सिल्क"]) else "Handcrafted Cotton Handloom Saree" if "cotton" in t_lower or "सूती" in t_lower else "Handloom Woven Saree"
         else:
             craft = None
             name_hi = None

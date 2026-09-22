@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ArtisanBase(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=128, example="Rameshwar Baghel")
     phone_number: str = Field(..., pattern=r"^\+?[0-9]{10,13}$", example="+919876543210")
-    social_category: str = Field(default="ST", example="ST")  # ST, SC, OBC, General, Divyangjan
+    social_category: str = Field(default="ST", example="ST")  # ST, SC, OBC, General, Divyangjan (Internal MoSJE)
     gender: Optional[str] = Field(None, example="Male")
     cluster_id: str = Field(..., example="cluster-bastar-dhokra")
     state: str = Field(..., example="Chhattisgarh")
@@ -32,6 +32,16 @@ class ArtisanCreate(ArtisanBase):
     )
 
 
+class ArtisanUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=2, max_length=128)
+    village: Optional[str] = None
+    experience_years: Optional[int] = Field(None, ge=0)
+    monthly_capacity_units: Optional[int] = Field(None, ge=1)
+    preferred_language: Optional[str] = None
+    profile_photo_url: Optional[str] = None
+    voice_intro_url: Optional[str] = None
+
+
 class ArtisanResponse(ArtisanBase):
     id: str
     masked_aadhaar: str = Field(..., example="XXXXXXXX1098")
@@ -44,16 +54,20 @@ class ArtisanResponse(ArtisanBase):
 
 
 class ArtisanPublicProfile(BaseModel):
+    """
+    Publicly safe artisan representation with Zero PII exposure:
+    Phone numbers, Aadhaar hashes, exact GPS coordinates, and sensitive affirmative action
+    demographic categories (social_category / caste) are strictly stripped.
+    """
     id: str
     full_name: str
     primary_craft: str
     cluster_name: Optional[str] = None
+    cluster_id: Optional[str] = None
     state: str
     district: str
-    village: Optional[str] = None
     experience_years: int
     profile_photo_url: Optional[str] = None
-    social_category: str
-    preferred_language: str
+    preferred_language: str = "hi"
 
     model_config = ConfigDict(from_attributes=True)

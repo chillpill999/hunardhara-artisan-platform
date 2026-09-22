@@ -1,11 +1,20 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OrderCreate(BaseModel):
     product_id: str = Field(..., description="ID of the craft product")
     quantity: int = Field(default=1, ge=1, description="Quantity to purchase")
+
+
+class CartItemCreate(BaseModel):
+    product_id: str = Field(..., description="ID of the craft product")
+    quantity: int = Field(default=1, ge=1, description="Quantity to purchase")
+
+
+class CartCheckoutRequest(BaseModel):
+    items: List[CartItemCreate] = Field(..., min_length=1, description="List of items in the shopping cart to checkout")
 
 
 class OrderPaymentVerifyRequest(BaseModel):
@@ -19,6 +28,8 @@ class OrderStatusUpdateRequest(BaseModel):
 
 
 class OrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     order_number: str
     customer_id: str
@@ -33,6 +44,15 @@ class OrderResponse(BaseModel):
     payment_provider: Optional[str] = None
     paid_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+    product_image_url: Optional[str] = None
+    craft_type: Optional[str] = None
+    artisan_name: Optional[str] = None
+    cluster_name: Optional[str] = None
+    statutory_wage: Optional[float] = None
 
-    class Config:
-        from_attributes = True
+
+class CartCheckoutResponse(BaseModel):
+    orders: List[OrderResponse]
+    total_amount: float
+    total_items: int
+

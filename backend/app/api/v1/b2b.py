@@ -14,6 +14,9 @@ from app.schemas.b2b import (
     B2BMatchResponse,
     B2BRFQResponse,
     B2BMatchRecordItem,
+    B2BArtisanMatchItem,
+    B2BMatchScoreBreakdown,
+    B2BRFQSummary,
     B2BRFQUpdateRequest,
     B2BMatchStatusUpdateRequest,
 )
@@ -52,7 +55,8 @@ def _filter_buyer_email(
     description=(
         "Executes multi-factor AI matching (Craft 35%, Price 30%, Capacity 25%, Location 10%) "
         "against registered artisans and craft clusters. Evaluates solo capacity feasibility "
-        "and cluster consortium fulfillment options. Requires authentication."
+        "and cluster consortium fulfillment options. Persists RFQ and match audit records in PostgreSQL. "
+        "Requires authentication."
     ),
     dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="b2b_match"))]
 )
@@ -63,9 +67,34 @@ def match_b2b_rfq(
 ):
     """
     R4 / A3 Acceptance Criterion:
-    Evaluates buyer RFQ, calculates match percentages and capacity feasibility flags.
+    Evaluates buyer RFQ, calculates match percentages, capacity feasibility flags,
+    and persists an authoritative RFQ and match records in PostgreSQL.
     Requires authentication. If requested_artisan_id is provided, verifies it exists and is active.
     """
+    quantity = rfq_in.quantity or rfq_in.required_quantity or 0
+    if quantity < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="INVALID_QUANTITY: Required quantity must be at least 1."
+        )
+    if rfq_in.unit_budget <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="INVALID_BUDGET: Unit budget must be greater than zero."
+        )
+    deadline_days = rfq_in.deadline_days or rfq_in.days_to_deadline or 0
+    if deadline_days < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="INVALID_DEADLINE: Deadline days must be at least 1."
+        )
+    if not rfq_in.craft_type or not rfq_in.craft_type.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="INVALID_CRAFT_TYPE: Craft type must be a non-empty string."
+        )
+
+    # Verify requested artisan existence without substitution
     if rfq_in.requested_artisan_id:
         target_artisan = db.query(Artisan).filter(
             Artisan.id == rfq_in.requested_artisan_id,
@@ -77,15 +106,137 @@ def match_b2b_rfq(
                 detail=f"ARTISAN_NOT_FOUND: Requested artisan '{rfq_in.requested_artisan_id}' does not exist or is inactive."
             )
 
+    # Bind buyer identity strictly to verified user credentials
+    buyer_id = current_user.id
+    if current_user.is_admin:
+        effective_buyer_email = rfq_in.buyer_email or current_user.email or "admin@hunardhara.gov.in"
+        effective_buyer_name = rfq_in.buyer_name or "Procurement Administrator"
+    else:
+        effective_buyer_email = current_user.email
+        effective_buyer_name = rfq_in.buyer_name or (current_user.email.split("@")[0].title() if current_user.email else "Verified Buyer")
+
+    # Idempotency check: if an RFQ with this idempotency_key already exists for this buyer, return existing matches
+    if rfq_in.idempotency_key:
+        existing_rfq = db.query(B2BRFQ).filter(
+            B2BRFQ.idempotency_key == rfq_in.idempotency_key,
+            B2BRFQ.buyer_id == buyer_id
+        ).first()
+        if existing_rfq:
+            db_matches = db.query(B2BMatchRecord).filter(B2BMatchRecord.rfq_id == existing_rfq.id).all()
+            matched_items = []
+            for dm in db_matches:
+                artisan = dm.artisan
+                cluster = artisan.cluster if artisan else None
+                matched_items.append(
+                    B2BArtisanMatchItem(
+                        artisan_id=dm.artisan_id,
+                        artisan_name=artisan.full_name if artisan else "Artisan",
+                        cluster_name=cluster.name if cluster else "Cluster",
+                        location=f"{artisan.district or ''}, {artisan.state or ''}".strip(", ") if artisan else "India",
+                        product_id=dm.product_id,
+                        match_percentage=dm.match_percentage,
+                        breakdown=B2BMatchScoreBreakdown(
+                            craft_compatibility=dm.score_craft,
+                            price_compatibility=dm.score_price,
+                            capacity_feasibility=dm.score_capacity,
+                            location_score=dm.score_location
+                        ),
+                        scores={
+                            "craft": dm.score_craft,
+                            "price": dm.score_price,
+                            "capacity": dm.score_capacity,
+                            "location": dm.score_location
+                        },
+                        capacity_feasible=dm.capacity_feasible,
+                        estimated_production_days=dm.estimated_production_days,
+                        offered_wholesale_price=dm.quoted_unit_price,
+                        distance_km=dm.distance_km,
+                        match_explanation=dm.match_explanation
+                    )
+                )
+            summary = B2BRFQSummary(
+                craft_type=existing_rfq.craft_type,
+                required_quantity=existing_rfq.required_quantity,
+                unit_budget=existing_rfq.unit_budget,
+                days_to_deadline=existing_rfq.deadline_days
+            )
+            return B2BMatchResponse(
+                status="success",
+                rfq_id=existing_rfq.id,
+                rfq_summary=summary,
+                total_matches_found=len(matched_items),
+                matches=matched_items
+            )
+
+    rfq_id = f"rfq-{uuid.uuid4().hex[:12]}"
     try:
-        response = b2b_matching_service.match_rfq(rfq=rfq_in, db=db)
-        return response
+        response = b2b_matching_service.match_rfq(rfq=rfq_in, db=db, rfq_id=rfq_id)
     except Exception as e:
         logger.error(f"B2B matchmaker error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"B2B_MATCHING_ERROR: {str(e)}"
         )
+
+    # Persist the RFQ and matches authoritatively in PostgreSQL transaction
+    rfq_status = "MATCHED" if response.total_matches_found > 0 else "OPEN"
+    rfq_model = B2BRFQ(
+        id=rfq_id,
+        buyer_id=buyer_id,
+        buyer_name=effective_buyer_name,
+        buyer_organization=rfq_in.buyer_organization,
+        buyer_email=effective_buyer_email,
+        buyer_phone=rfq_in.buyer_phone,
+        craft_type=rfq_in.craft_type,
+        required_quantity=quantity,
+        unit_budget=rfq_in.unit_budget,
+        total_budget=round(rfq_in.unit_budget * quantity, 2),
+        deadline_days=deadline_days,
+        delivery_state=rfq_in.delivery_state,
+        delivery_district=rfq_in.delivery_district,
+        delivery_latitude=rfq_in.delivery_latitude,
+        delivery_longitude=rfq_in.delivery_longitude,
+        status=rfq_status,
+        idempotency_key=rfq_in.idempotency_key,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(rfq_model)
+
+    existing_db_artisan_ids = {a.id for a in db.query(Artisan.id).filter(Artisan.is_active == True).all()}
+    for m in response.matches:
+        if m.artisan_id in existing_db_artisan_ids:
+            record_id = f"match-{uuid.uuid4().hex[:12]}"
+            match_rec = B2BMatchRecord(
+                id=record_id,
+                rfq_id=rfq_id,
+                artisan_id=m.artisan_id,
+                product_id=m.product_id,
+                match_percentage=m.match_percentage,
+                score_craft=m.breakdown.craft_compatibility,
+                score_price=m.breakdown.price_compatibility,
+                score_capacity=m.breakdown.capacity_feasibility,
+                score_location=m.breakdown.location_score,
+                capacity_feasible=m.capacity_feasible,
+                estimated_production_days=m.estimated_production_days,
+                quoted_unit_price=m.offered_wholesale_price,
+                distance_km=m.distance_km or 0.0,
+                match_explanation=m.match_explanation,
+                status="PROPOSED",
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(match_rec)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error persisting RFQ match transaction: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"DATABASE_TRANSACTION_ERROR: Failed to persist B2B RFQ: {str(e)}"
+        )
+
+    return response
 
 
 @router.post(
@@ -108,27 +259,45 @@ def create_b2b_rfq(
     quantity = rfq_in.quantity or rfq_in.required_quantity or 0
     if quantity < 1:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="INVALID_QUANTITY: Required quantity must be at least 1."
         )
     if rfq_in.unit_budget <= 0:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="INVALID_BUDGET: Unit budget must be greater than zero."
         )
     deadline_days = rfq_in.deadline_days or rfq_in.days_to_deadline or 0
     if deadline_days < 1:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="INVALID_DEADLINE: Deadline days must be at least 1."
         )
 
     # Validate craft_type
     if not rfq_in.craft_type or not rfq_in.craft_type.strip():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="INVALID_CRAFT_TYPE: Craft type must be a non-empty string."
         )
+
+    # Prevent buyer impersonation: authenticated non-admins are strictly bound to their verified credentials
+    buyer_id = current_user.id
+    if current_user.is_admin:
+        effective_buyer_email = rfq_in.buyer_email or current_user.email or "admin@hunardhara.gov.in"
+        effective_buyer_name = rfq_in.buyer_name or "Procurement Administrator"
+    else:
+        effective_buyer_email = current_user.email
+        effective_buyer_name = rfq_in.buyer_name or (current_user.email.split("@")[0].title() if current_user.email else "Verified Buyer")
+
+    # Check idempotency
+    if rfq_in.idempotency_key:
+        existing_rfq = db.query(B2BRFQ).filter(
+            B2BRFQ.idempotency_key == rfq_in.idempotency_key,
+            B2BRFQ.buyer_id == buyer_id
+        ).first()
+        if existing_rfq:
+            return get_b2b_rfq(rfq_id=existing_rfq.id, current_user=current_user, db=db)
 
     # Verify requested artisan existence without substitution
     if rfq_in.requested_artisan_id:
@@ -141,15 +310,6 @@ def create_b2b_rfq(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"ARTISAN_NOT_FOUND: Requested artisan '{rfq_in.requested_artisan_id}' does not exist or is inactive."
             )
-
-    # Prevent buyer impersonation: authenticated non-admins are strictly bound to their verified credentials
-    buyer_id = current_user.id
-    if current_user.is_admin:
-        effective_buyer_email = rfq_in.buyer_email or current_user.email or "admin@hunardhara.gov.in"
-        effective_buyer_name = rfq_in.buyer_name or "Procurement Administrator"
-    else:
-        effective_buyer_email = current_user.email
-        effective_buyer_name = rfq_in.buyer_name or (current_user.email.split("@")[0].title() if current_user.email else "Verified Buyer")
 
     total_budget = round(rfq_in.unit_budget * quantity, 2)
     rfq_id = f"rfq-{uuid.uuid4().hex[:12]}"
@@ -177,6 +337,7 @@ def create_b2b_rfq(
         delivery_latitude=rfq_in.delivery_latitude,
         delivery_longitude=rfq_in.delivery_longitude,
         status=rfq_status,
+        idempotency_key=rfq_in.idempotency_key,
         created_at=datetime.now(timezone.utc)
     )
     db.add(rfq_model)
@@ -192,6 +353,7 @@ def create_b2b_rfq(
                 id=record_id,
                 rfq_id=rfq_id,
                 artisan_id=m.artisan_id,
+                product_id=m.product_id,
                 match_percentage=m.match_percentage,
                 score_craft=m.breakdown.craft_compatibility,
                 score_price=m.breakdown.price_compatibility,
@@ -211,6 +373,7 @@ def create_b2b_rfq(
                 B2BMatchRecordItem(
                     id=record_id,
                     artisan_id=m.artisan_id,
+                    product_id=m.product_id,
                     artisan_name=m.artisan_name,
                     cluster_name=m.cluster_name,
                     match_percentage=m.match_percentage,
@@ -234,7 +397,11 @@ def create_b2b_rfq(
         db.refresh(rfq_model)
     except Exception as e:
         db.rollback()
-        logger.warning(f"Error persisting RFQ: {e}")
+        logger.error(f"Error persisting RFQ: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"DATABASE_TRANSACTION_ERROR: Failed to save B2B RFQ: {str(e)}"
+        )
 
     return B2BRFQResponse(
         id=rfq_model.id,
@@ -299,6 +466,53 @@ def list_b2b_rfqs(
                 buyer_name=r.buyer_name,
                 buyer_organization=r.buyer_organization,
                 buyer_email=_filter_buyer_email(r.buyer_email, current_user, r.buyer_id),
+                idempotency_key=r.idempotency_key,
+                created_at=r.created_at,
+                matches=[]
+            )
+        )
+    return results
+
+
+@router.get(
+    "/rfq/my",
+    response_model=List[B2BRFQResponse],
+    summary="List Authenticated Buyer's RFQs"
+)
+def list_my_rfqs(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Lists all B2B procurement RFQs created by the authenticated buyer.
+    """
+    query = db.query(B2BRFQ)
+    if not current_user.is_admin:
+        query = query.filter(
+            (B2BRFQ.buyer_id == current_user.id) |
+            (B2BRFQ.buyer_email == current_user.email)
+        )
+    rfqs = query.order_by(B2BRFQ.created_at.desc()).all()
+    results = []
+    for r in rfqs:
+        results.append(
+            B2BRFQResponse(
+                id=r.id,
+                buyer_id=r.buyer_id,
+                craft_type=r.craft_type,
+                required_quantity=r.required_quantity,
+                unit_budget=r.unit_budget,
+                total_budget=r.total_budget,
+                deadline_days=r.deadline_days,
+                delivery_state=r.delivery_state,
+                delivery_district=r.delivery_district,
+                delivery_latitude=r.delivery_latitude,
+                delivery_longitude=r.delivery_longitude,
+                status=r.status,
+                buyer_name=r.buyer_name,
+                buyer_organization=r.buyer_organization,
+                buyer_email=_filter_buyer_email(r.buyer_email, current_user, r.buyer_id),
+                idempotency_key=r.idempotency_key,
                 created_at=r.created_at,
                 matches=[]
             )
@@ -341,6 +555,7 @@ def get_b2b_rfq(
                 B2BMatchRecordItem(
                     id=dm.id,
                     artisan_id=dm.artisan_id,
+                    product_id=dm.product_id,
                     artisan_name=artisan.full_name if artisan else "Artisan",
                     cluster_name=cluster.name if cluster else "Cluster",
                     match_percentage=dm.match_percentage,
@@ -376,6 +591,7 @@ def get_b2b_rfq(
                 B2BMatchRecordItem(
                     id=m.artisan_id,
                     artisan_id=m.artisan_id,
+                    product_id=m.product_id,
                     artisan_name=m.artisan_name,
                     cluster_name=m.cluster_name,
                     match_percentage=m.match_percentage,
@@ -410,6 +626,7 @@ def get_b2b_rfq(
         buyer_name=rfq.buyer_name,
         buyer_organization=rfq.buyer_organization,
         buyer_email=_filter_buyer_email(rfq.buyer_email, current_user, rfq.buyer_id),
+        idempotency_key=rfq.idempotency_key,
         created_at=rfq.created_at,
         matches=match_items,
         consortium_feasible=consortium_feasible,

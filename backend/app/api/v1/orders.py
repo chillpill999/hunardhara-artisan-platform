@@ -11,7 +11,16 @@ from app.core.security import CurrentUser, get_current_user, require_customer, r
 from app.core.idempotency import check_idempotency_header, idempotency_store
 from app.models.order import Order
 from app.models.product import Product
-from app.schemas.orders import OrderCreate, OrderResponse, OrderPaymentVerifyRequest, OrderStatusUpdateRequest
+from app.models.artisan import Artisan
+from app.models.craft_cluster import CraftCluster
+from app.schemas.orders import (
+    OrderCreate,
+    OrderResponse,
+    OrderPaymentVerifyRequest,
+    OrderStatusUpdateRequest,
+    CartCheckoutRequest,
+    CartCheckoutResponse,
+)
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -26,6 +35,34 @@ VALID_TRANSITIONS = {
 }
 
 
+def enrich_order_response(order: Order, db: Session) -> OrderResponse:
+    """
+    Enriches the basic Order database model into OrderResponse with
+    authoritative product, artisan, craft cluster, and wage protection details.
+    """
+    resp = OrderResponse.model_validate(order)
+    product = db.query(Product).filter(Product.id == order.product_id).first()
+    artisan = db.query(Artisan).filter(Artisan.id == order.artisan_id).first()
+
+    if product:
+        resp.product_image_url = getattr(product, "studio_image_url", None) or getattr(product, "raw_photo_url", None)
+        resp.craft_type = getattr(product, "craft_type", None)
+        wage_rate = getattr(product, "hourly_wage_rate", 50.0) or 50.0
+        hours = getattr(product, "labor_hours", 5.0) or 5.0
+        resp.statutory_wage = round(wage_rate * hours * (order.quantity or 1), 2)
+
+    if artisan:
+        resp.artisan_name = getattr(artisan, "full_name", None)
+        cluster_id = getattr(artisan, "cluster_id", None)
+        if cluster_id:
+            cluster = db.query(CraftCluster).filter(CraftCluster.id == cluster_id).first()
+            if cluster:
+                resp.cluster_name = getattr(cluster, "name", None) or getattr(cluster, "district", None) or getattr(cluster, "craft_name", None)
+
+    return resp
+
+
+
 @router.get("/customer", response_model=List[OrderResponse], summary="List Authenticated Customer's Orders")
 def list_customer_orders(
     current_user: CurrentUser = Depends(require_customer),
@@ -35,10 +72,14 @@ def list_customer_orders(
     Returns only the authenticated customer's own order history.
     Admins can view all orders.
     Artisans without customer or administrator privileges are rejected with HTTP 403.
+    Enriches order records with live product, artisan, and statutory wage details.
     """
     if current_user.is_admin:
-        return db.query(Order).order_by(Order.created_at.desc()).all()
-    return db.query(Order).filter(Order.customer_id == current_user.id).order_by(Order.created_at.desc()).all()
+        orders = db.query(Order).order_by(Order.created_at.desc()).all()
+    else:
+        orders = db.query(Order).filter(Order.customer_id == current_user.id).order_by(Order.created_at.desc()).all()
+
+    return [enrich_order_response(o, db) for o in orders]
 
 
 @router.post(
@@ -56,7 +97,7 @@ def create_customer_order(
     db: Session = Depends(get_db)
 ):
     """
-    Allows authenticated customers (or admins) to place an order for a craft product.
+    Allows authenticated customers (or admins) to place an order for a single craft product.
     Enforces atomic inventory decrements to prevent overselling.
     Supports Idempotency-Key / X-Idempotency-Key to prevent duplicate order placements.
     """
@@ -137,15 +178,157 @@ def create_customer_order(
         db.commit()
         db.refresh(new_order)
 
-        order_data = OrderResponse.model_validate(new_order).model_dump(mode="json")
+        enriched = enrich_order_response(new_order, db)
+        order_data = enriched.model_dump(mode="json")
         if effective_idempotency_key:
             idempotency_store.complete(effective_idempotency_key, response_data=order_data, status_code=201, scope=scope)
 
-        return new_order
+        return enriched
     except Exception:
+        db.rollback()
         if effective_idempotency_key:
             idempotency_store.abort(effective_idempotency_key, scope=scope)
         raise
+
+
+@router.post(
+    "/checkout",
+    response_model=CartCheckoutResponse,
+    status_code=201,
+    summary="Checkout Customer Shopping Cart",
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="orders_checkout"))]
+)
+def checkout_customer_cart(
+    checkout_in: CartCheckoutRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
+    current_user: CurrentUser = Depends(require_customer),
+    db: Session = Depends(get_db)
+):
+    """
+    Authoritative transactional multi-item cart checkout.
+    Validates product availability, active status, non-zero pricing, and inventory.
+    Atomically reserves inventory for all items in a single transaction.
+    If any single item fails or is out of stock, the entire cart checkout rolls back.
+    Supports Idempotency-Key to prevent duplicate checkouts.
+    """
+    effective_idempotency_key = idempotency_key or x_idempotency_key
+    scope = f"checkout:{current_user.id}"
+
+    if effective_idempotency_key:
+        cached = check_idempotency_header(effective_idempotency_key, scope=scope)
+        if cached:
+            status_code, data = cached
+            return JSONResponse(status_code=status_code, content=data, headers={"Idempotent-Replay": "true"})
+
+    if not checkout_in.items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="EMPTY_CART: Cart must contain at least one item."
+        )
+
+    # Validate each item quantity
+    for item in checkout_in.items:
+        if item.quantity < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_QUANTITY: Quantity for each item must be at least 1."
+            )
+
+    try:
+        created_orders = []
+        total_amount = 0.0
+        total_items = 0
+
+        # Validate all items and reserve stock
+        for item in checkout_in.items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if not product:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"PRODUCT_NOT_FOUND: Product with ID '{item.product_id}' does not exist."
+                )
+
+            if not product.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"PRODUCT_UNAVAILABLE: Product '{product.title}' is currently inactive."
+                )
+
+            if product.listing_price <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"INVALID_PRICE: Product '{product.title}' listing price is invalid."
+                )
+
+            if product.stock_quantity < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"INSUFFICIENT_STOCK: Requested {item.quantity} units of '{product.title}', but only {product.stock_quantity} available in inventory."
+                )
+
+            rows_updated = db.query(Product).filter(
+                Product.id == product.id,
+                Product.stock_quantity >= item.quantity,
+                Product.is_active == True
+            ).update(
+                {Product.stock_quantity: Product.stock_quantity - item.quantity},
+                synchronize_session="fetch"
+            )
+            if rows_updated == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"INSUFFICIENT_STOCK: Could not allocate {item.quantity} units of '{product.title}' due to concurrent purchase activity."
+                )
+
+            order_id = f"ord-{uuid.uuid4().hex[:12]}"
+            order_number = f"HN-{datetime.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
+            item_total = round(product.listing_price * item.quantity, 2)
+
+            new_order = Order(
+                id=order_id,
+                order_number=order_number,
+                customer_id=current_user.id,
+                artisan_id=product.artisan_id,
+                product_id=product.id,
+                product_title=product.title,
+                quantity=item.quantity,
+                total_price=item_total,
+                status="pending",
+                payment_status="unpaid",
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(new_order)
+            created_orders.append(new_order)
+            total_amount += item_total
+            total_items += item.quantity
+
+        db.commit()
+
+        # Refresh and enrich all created orders
+        enriched_orders = []
+        for order in created_orders:
+            db.refresh(order)
+            enriched_orders.append(enrich_order_response(order, db))
+
+        response_payload = CartCheckoutResponse(
+            orders=enriched_orders,
+            total_amount=round(total_amount, 2),
+            total_items=total_items
+        )
+
+        response_dict = response_payload.model_dump(mode="json")
+        if effective_idempotency_key:
+            idempotency_store.complete(effective_idempotency_key, response_data=response_dict, status_code=201, scope=scope)
+
+        return response_payload
+
+    except Exception:
+        db.rollback()
+        if effective_idempotency_key:
+            idempotency_store.abort(effective_idempotency_key, scope=scope)
+        raise
+
 
 
 @router.get("/artisan", response_model=List[OrderResponse], summary="List Authenticated Artisan's Incoming Orders")
@@ -156,10 +339,20 @@ def list_artisan_orders(
     """
     Returns only orders placed for crafts created by the authenticated artisan.
     Admins can view all orders.
+    Customer payment identifiers (payment_id, payment_provider) are sanitized for artisan privacy.
     """
     if current_user.is_admin:
         return db.query(Order).order_by(Order.created_at.desc()).all()
-    return db.query(Order).filter(Order.artisan_id == current_user.id).order_by(Order.created_at.desc()).all()
+    orders = db.query(Order).filter(Order.artisan_id == current_user.id).order_by(Order.created_at.desc()).all()
+    # Data minimization: Artisans fulfill based on payment_status ('paid', 'confirmed'),
+    # but must not receive customer's financial payment IDs or gateway tokens.
+    sanitized_orders = []
+    for o in orders:
+        resp = enrich_order_response(o, db)
+        resp.payment_id = None
+        resp.payment_provider = None
+        sanitized_orders.append(resp)
+    return sanitized_orders
 
 
 @router.get("/{order_id}", response_model=OrderResponse, summary="Get Order by ID")
@@ -171,6 +364,7 @@ def get_order(
     """
     Retrieves single order with strict ownership validation:
     Only the purchasing customer, fulfilling artisan, or a verified administrator can view the order.
+    Redacts customer's payment gateway reference from fulfilling artisan viewers.
     """
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
@@ -181,7 +375,15 @@ def get_order(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to view this order."
         )
-    return order
+
+    resp = enrich_order_response(order, db)
+    # Data minimization: If viewer is artisan (and not customer or admin), strip payment identifiers
+    if current_user.id == order.artisan_id and current_user.id != order.customer_id and not current_user.is_admin:
+        resp.payment_id = None
+        resp.payment_provider = None
+
+    return resp
+
 
 
 @router.post(

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,14 +21,27 @@ class ConsentLogCreate(BaseModel):
 
 class ConsentLogResponse(BaseModel):
     id: str
-    artisan_id: str
+    artisan_id: Optional[str] = None
+    user_id: Optional[str] = None
     consent_type: str
     granted: bool
     purpose: str
     language: str
+    revoked_at: Optional[datetime] = None
     timestamp: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ConsentRevokeRequest(BaseModel):
+    reason: Optional[str] = Field(default="Consent withdrawn by data principal under DPDP Act 2023 Section 6(4)")
+
+
+class ConsentRevokeResponse(BaseModel):
+    status: str = "revoked"
+    consent_id: str
+    revoked_at: datetime
+    message: str = "Consent revoked successfully under DPDP Act 2023 Section 6(4)."
 
 
 class RightToBeForgottenRequest(BaseModel):
@@ -43,3 +56,24 @@ class RightToBeForgottenResponse(BaseModel):
     message: str = "All personal identifiers and biometric audio artifacts have been purged in compliance with DPDP Act 2023."
     records_redacted: int
     timestamp: datetime
+
+
+class UserDataIdentity(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    role: str
+    is_active: bool
+
+
+class DataExportResponse(BaseModel):
+    export_id: str
+    standard: str = "DPDP_ACT_2023_DATA_PORTABILITY_SECTION_11"
+    user_id: str
+    generated_at: datetime
+    account: UserDataIdentity
+    artisan_profile: Optional[Dict[str, Any]] = None
+    products: List[Dict[str, Any]] = Field(default_factory=list)
+    orders: List[Dict[str, Any]] = Field(default_factory=list)
+    b2b_rfqs: List[Dict[str, Any]] = Field(default_factory=list)
+    applications: List[Dict[str, Any]] = Field(default_factory=list)
+    consent_records: List[Dict[str, Any]] = Field(default_factory=list)

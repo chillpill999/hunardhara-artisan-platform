@@ -70,8 +70,12 @@ class PricingRecommendation(BaseModel):
 class CertificationStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    gi_status: str = Field("unverified", description="'verified', 'unverified', or 'not_applicable'")
-    gi_registration_number: Optional[str] = Field(None, description="Government GI registration number if verified")
+    gi_status: str = Field("unverified", description="'verified_cluster', 'unverified_region', 'unverified', or 'not_applicable'")
+    gi_craft_registered: bool = Field(False, description="Whether craft tradition has official GI registration")
+    gi_registration_number: Optional[str] = Field(None, description="Government GI registration number if craft registered")
+    artisan_authorization_status: str = Field("UNVERIFIED", description="'UNVERIFIED', 'PENDING_REVIEW', 'AUTHORIZED', or 'NOT_PROVIDED'")
+    product_provenance_status: str = Field("UNVERIFIED", description="'UNVERIFIED', 'PENDING_VERIFICATION', or 'VERIFIED'")
+    is_certified_product: bool = Field(False, description="Strict product-level certification (craft + artisan + provenance)")
     material_purity_status: str = Field("artisan_stated", description="'ai_detected', 'artisan_stated', or 'verified'")
     provenance_claim: str = Field("Craft tradition style", description="Accurate provenance statement")
 

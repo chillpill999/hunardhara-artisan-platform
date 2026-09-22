@@ -1,5 +1,6 @@
-import { CraftCluster, Product, B2BRFQRequest, B2BMatchResponse, ArtisanEarnings, ArtisanStudioDraft } from "./types";
+import { CraftCluster, Product, B2BRFQRequest, B2BMatchResponse, B2BMatchRecordItem, B2BMatchApiResult, ArtisanEarnings, ArtisanStudioDraft, CustomerOrder, CartCheckoutResult } from "./types";
 import { supabase } from "./supabase";
+
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://hunardhara-artisan-platform.onrender.com/api/v1";
 
@@ -10,317 +11,56 @@ async function getSupabaseAuthorizationHeader(): Promise<Record<string, string>>
     : {};
 }
 
-// Bidirectional mapping between backend IDs and short demo IDs
-export const ID_ALIASES: Record<string, string> = {
-  'prod-001': 'prod-varanasi-001',
-  'prod-varanasi-001': 'prod-001',
-  'prod-002': 'prod-bastar-001',
-  'prod-bastar-001': 'prod-002',
-  'prod-003': 'prod-khurja-001',
-  'prod-khurja-001': 'prod-003',
-  'prod-004': 'prod-madhubani-001',
-  'prod-madhubani-001': 'prod-004',
-  'prod-005': 'prod-channapatna-001',
-  'prod-channapatna-001': 'prod-005',
-};
+// Legacy ID mapping (cleared of mock products)
+export const ID_ALIASES: Record<string, string> = {};
 
-// Fallback seed products for zero-downtime offline presentation
-export const SEED_PRODUCTS: Product[] = [
-  // Canonical Backend Primary Products
-  {
-    id: "prod-varanasi-001",
-    artisan_id: "art-varanasi-001",
-    cluster_id: "cluster-varanasi-silk",
-    title_en: "Varanasi Pure Katan Silk Brocade Saree",
-    title_hi: "वाराणसी शुद्ध कतान सिल्क बनारसी ब्रोकेड साड़ी",
-    craft_type: "Varanasi Silk",
-    materials: ["Pure Katan Mulberry Silk", "Pure Gold Zari Thread", "Silver Brocade Weft"],
-    dimensions: "5.5m x 1.2m",
-    production_time_days: 14,
-    technique: "Kadwa Jacquard Handloom Weaving",
-    color: "Imperial Crimson Red & Rich Antique Gold",
-    description_en: "Handwoven by Master Weaver Radheshyam Ansari on traditional pit looms of Varanasi. Features authentic Kadwa floral motifs where each gold brocade pattern is individually hand-threaded.",
-    description_hi: "वाराणसी के बुनकर राधेश्याम अंसारी द्वारा हथकरघे पर बुनी गई पारंपरिक कतान सिल्क साड़ी। कड़वा तकनीक में प्रत्येक बूटी को सोने की ज़री से अलग से बुना गया है।",
-    seo_tags: ["Varanasi Silk", "Banarasi Saree", "GI Craft", "Handloom", "Wedding"],
-    studio_image_url: "/static/studio/varanasi_silk.jpg",
-    floor_price: 6500,
-    recommended_retail_d2c: 12500,
-    wholesale_b2b: 8500,
-    available_stock: 6,
-    is_published: true,
-    created_at: "2026-09-08T10:00:00Z",
-    artisan_name: "Radheshyam Ansari",
-    artisan_state: "Uttar Pradesh",
-    gi_certified: true
-  },
-  {
-    id: "prod-bastar-001",
-    artisan_id: "art-bastar-001",
-    cluster_id: "cluster-bastar-dhokra",
-    title_en: "Handcrafted Bastar Dhokra Brass Bull Figurine",
-    title_hi: "बस्तर ढोकरा जनजातीय बेल मेटल नंदी प्रतिमा",
-    craft_type: "Bastar Dhokra",
-    materials: ["Bell Metal Brass", "Brass Scrap", "Natural Beeswax", "Indravati River Clay"],
-    dimensions: "18cm x 14cm x 8cm",
-    production_time_days: 5,
-    technique: "4000-Year-Old Lost-Wax Bell Metal Casting (Cire Perdue)",
-    color: "Antique Golden Brass & Earth Clay Patina",
-    description_en: "Authentic non-ferrous tribal casting hand-modeled in the forested heart of Bastar, Chhattisgarh by master artisan Rameshwar Baghel using ancient lost-wax technique.",
-    description_hi: "बस्तर के शिल्पकार रामेश्वर बघेल द्वारा 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से निर्मित पारंपरिक नंदी बैल। यह प्राचीन जनजातीय कला समृद्धि और शक्ति का प्रतीक है।",
-    seo_tags: ["Bastar Dhokra", "Tribal Art", "Bell Metal", "GI Tagged", "MoSJE Certified"],
-    studio_image_url: "/static/studio/bastar_dhokra.jpg",
-    floor_price: 1674,
-    recommended_retail_d2c: 2850,
-    wholesale_b2b: 2090,
-    available_stock: 12,
-    is_published: true,
-    created_at: "2026-09-08T11:00:00Z",
-    artisan_name: "Rameshwar Baghel",
-    artisan_state: "Chhattisgarh",
-    gi_certified: true
-  },
-  {
-    id: "prod-bastar-002",
-    artisan_id: "art-bastar-002",
-    cluster_id: "cluster-bastar-dhokra",
-    title_en: "Bastar Dhokra Tribal Musician Quintet Set",
-    title_hi: "बस्तर ढोकरा जनजातीय संगीतकार समूह (५ प्रतिमाएं)",
-    craft_type: "Bastar Dhokra",
-    materials: ["Bell Metal Brass", "Natural Beeswax", "River Silt Clay"],
-    dimensions: "25cm x 6cm x 18cm",
-    production_time_days: 7,
-    technique: "Lost-Wax Bell Metal Casting",
-    color: "Burnished Brass Gold & Rustic Charcoal Patina",
-    description_en: "A striking set of 5 tribal musicians playing traditional Bastar percussion and wind instruments. Each individual piece is uniquely sculpted with beeswax threads before brass pouring.",
-    description_hi: "बस्तर के लोक वाद्ययंत्र बजाते 5 संगीतकारों का अनूठा ढोकरा समूह। प्रत्येक आकृति को मोम के बारीक धागों से अलंकृत किया गया है।",
-    seo_tags: ["Dhokra Musicians", "Bastar Bell Metal", "Tribal Folk Art"],
-    studio_image_url: "/static/studio/bastar_dhokra.jpg",
-    floor_price: 3218,
-    recommended_retail_d2c: 5600,
-    wholesale_b2b: 4050,
-    available_stock: 6,
-    is_published: true,
-    created_at: "2026-09-08T12:00:00Z",
-    artisan_name: "Sukhdev Baghel",
-    artisan_state: "Chhattisgarh",
-    gi_certified: true
-  },
-  {
-    id: "prod-khurja-001",
-    artisan_id: "art-khurja-001",
-    cluster_id: "cluster-khurja-pottery",
-    title_en: "Mughal Floral Hand-Painted Ceramic Stoneware Vase",
-    title_hi: "खुर्जा हस्तनिर्मित मुग़ल फ्लोरल सिरेमिक फूलदान",
-    craft_type: "Khurja Pottery",
-    materials: ["Kaolin China Clay", "Cobalt Glaze Oxide", "Feldspar Stone Powder"],
-    dimensions: "32cm x 22cm x 22cm",
-    production_time_days: 3,
-    technique: "Wheel Throwing & 1200°C High-Fire Kiln Vitrification",
-    color: "Cobalt Blue, Persian Turquoise & Ivory White",
-    description_en: "Hand-thrown ceramic flower vase featuring intricate Persian-Mughal vine brushwork in cobalt blue by master potter Dinesh Prajapati in Khurja's historic ceramic district.",
-    description_hi: "खुर्जा के कुम्हार दिनेश प्रजापति द्वारा चाक पर निर्मित और कोबाल्ट नीले रंग से हस्तचित्रित चीनी मिट्टी का फूलदान। 1250 डिग्री पर पकाया गया।",
-    seo_tags: ["Khurja Pottery", "Ceramic Stoneware Vase", "Cobalt Hand Painted Pot", "GI Certified"],
-    studio_image_url: "/static/studio/khurja_pottery.jpg",
-    floor_price: 940,
-    recommended_retail_d2c: 1750,
-    wholesale_b2b: 1250,
-    available_stock: 25,
-    is_published: true,
-    created_at: "2026-09-09T09:00:00Z",
-    artisan_name: "Dinesh Prajapati",
-    artisan_state: "Uttar Pradesh",
-    gi_certified: true
-  },
-  {
-    id: "prod-madhubani-001",
-    artisan_id: "art-madhubani-001",
-    cluster_id: "cluster-madhubani-painting",
-    title_en: "Mithila Tree of Life Auspicious Folk Painting",
-    title_hi: "मिथिला जीवन वृक्ष हस्तचित्रित तुषार लोक चित्र",
-    craft_type: "Madhubani Painting",
-    materials: ["Handspun Tussar Silk", "Organic Plant & Mineral Dyes", "Bamboo Twig Nib"],
-    dimensions: "90cm x 60cm",
-    production_time_days: 8,
-    technique: "Mithila Kachni & Bharni Line Work with Bamboo Nib",
-    color: "Natural Ochre Yellow, Indigo Blue & Leaf Green",
-    description_en: "Sacred Mithila Tree of Life folk painting rendered entirely with natural plant pigments and fine bamboo stylus by award-winning artisan Sita Devi Paswan in Jitwarpur village, Bihar.",
-    description_hi: "बिहार के मधुबनी की लोक कलाकार सीता देवी पासवान द्वारा प्राकृतिक रंगों और बांस की कलम से चित्रित 'ट्री ऑफ लाइफ'। प्राकृतिक रंगों से निर्मित।",
-    seo_tags: ["Madhubani Painting", "Mithila Folk Art", "Tree of Life Canvas", "GI Bihar"],
-    studio_image_url: "/static/studio/madhubani_art.jpg",
-    floor_price: 1231,
-    recommended_retail_d2c: 2400,
-    wholesale_b2b: 1700,
-    available_stock: 8,
-    is_published: true,
-    created_at: "2026-09-09T14:30:00Z",
-    artisan_name: "Sita Devi Paswan",
-    artisan_state: "Bihar",
-    gi_certified: true
-  },
-  {
-    id: "prod-channapatna-001",
-    artisan_id: "art-channapatna-001",
-    cluster_id: "cluster-channapatna-toys",
-    title_en: "Channapatna Eco-Friendly Rainbow Stacking Ring Tower",
-    title_hi: "चन्नापटना पर्यावरण-अनुकूल सतरंगी लकड़ी का स्टैकिंग खिलौना",
-    craft_type: "Channapatna Wooden Toys",
-    materials: ["Hale Wood (Wrightia Tinctoria)", "Natural Non-Toxic Vegetable Lac"],
-    dimensions: "24cm x 10cm x 10cm",
-    production_time_days: 2,
-    technique: "Hand Lathe Turning & Friction Lacquering",
-    color: "Vibrant Turmeric Yellow, Vermilion & Leaf Green",
-    description_en: "100% child-safe Montessori wooden toy turned on traditional power lathes and polished with natural vegetable dyes by artisan B. Venkatesh in Channapatna, Karnataka.",
-    description_hi: "कर्नाटक के चन्नापटना में सुरक्षित आले की लकड़ी और प्राकृतिक लाख से बना हस्तनिर्मित खिलौना। बच्चों के लिए शत-प्रतिशत सुरक्षित।",
-    seo_tags: ["Channapatna Toys", "Wooden Toy", "Non-Toxic", "GI Karnataka", "Montessori"],
-    studio_image_url: "/static/studio/channapatna_toy.jpg",
-    floor_price: 520,
-    recommended_retail_d2c: 1250,
-    wholesale_b2b: 750,
-    available_stock: 30,
-    is_published: true,
-    created_at: "2026-09-10T08:00:00Z",
-    artisan_name: "B. Venkatesh",
-    artisan_state: "Karnataka",
-    gi_certified: true
-  },
+// Production-only dynamic database catalog - all mock seed products eliminated
 
-  // Seed Aliases for Backward Compatibility and Statically Exported Routes
-  {
-    id: "prod-001",
-    artisan_id: "art-varanasi-01",
-    cluster_id: "cluster-varanasi-silk",
-    title_en: "Varanasi Pure Katan Silk Brocade Saree",
-    title_hi: "वाराणसी शुद्ध कतान सिल्क बनारसी ब्रोकेड साड़ी",
-    craft_type: "Varanasi Silk",
-    materials: ["Pure Katan Silk", "Gold Zari Thread"],
-    dimensions: "5.5m x 1.2m",
-    production_time_days: 14,
-    technique: "Handloom Jacquard Kadwa Weaving",
-    color: "Crimson Red with Antique Gold",
-    description_en: "Handwoven by Master Weaver Radheshyam Ansari in the sacred looms of Varanasi. Features intricate Kadwa bootis and pure gold zari motifs.",
-    description_hi: "वाराणसी के बुनकर राधेश्याम अंसारी द्वारा हथकरघे पर बुनी गई पारंपरिक कतान सिल्क साड़ी।",
-    seo_tags: ["Varanasi Silk", "Banarasi Saree", "GI Craft", "Handloom", "Wedding"],
-    studio_image_url: "/static/studio/varanasi_silk.jpg",
-    floor_price: 6500,
-    recommended_retail_d2c: 12500,
-    wholesale_b2b: 8500,
-    available_stock: 6,
-    is_published: true,
-    created_at: "2026-09-08T10:00:00Z",
-    artisan_name: "Radheshyam Ansari",
-    artisan_state: "Uttar Pradesh",
-    gi_certified: true,
-    is_alias: true
-  },
-  {
-    id: "prod-002",
-    artisan_id: "art-bastar-01",
-    cluster_id: "cluster-bastar-dhokra",
-    title_en: "Bastar Dhokra Tribal Bell Metal Nandi Figurine",
-    title_hi: "बस्तर ढोकरा जनजातीय बेल मेटल नंदी प्रतिमा",
-    craft_type: "Bastar Dhokra",
-    materials: ["Bell Metal", "Brass", "Natural Beeswax"],
-    dimensions: "18cm x 14cm x 8cm",
-    production_time_days: 5,
-    technique: "4000-Year-Old Lost-Wax Bell Metal Casting",
-    color: "Antique Brass Patina",
-    description_en: "Authentic non-ferrous tribal casting hand-modeled in the forested heart of Bastar, Chhattisgarh by master artisan Sukhdev Baghel.",
-    description_hi: "बस्तर के शिल्पकार सुखदेव बघेल द्वारा 4000 वर्ष पुरानी लॉस्ट-वैक्स तकनीक से निर्मित पारंपरिक नंदी।",
-    seo_tags: ["Bastar Dhokra", "Tribal Art", "Bell Metal", "GI Tagged", "MoSJE Certified"],
-    studio_image_url: "/static/studio/bastar_dhokra.jpg",
-    floor_price: 1674,
-    recommended_retail_d2c: 2950,
-    wholesale_b2b: 2150,
-    available_stock: 12,
-    is_published: true,
-    created_at: "2026-09-08T11:00:00Z",
-    artisan_name: "Sukhdev Baghel",
-    artisan_state: "Chhattisgarh",
-    gi_certified: true,
-    is_alias: true
-  },
-  {
-    id: "prod-003",
-    artisan_id: "art-khurja-01",
-    cluster_id: "cluster-khurja-pottery",
-    title_en: "Khurja Hand-Glazed Ceramic Water Dispenser with Stand",
-    title_hi: "खुर्जा हस्तनिर्मित ग्लेज्ड सिरेमिक वाटर पॉट",
-    craft_type: "Khurja Pottery",
-    materials: ["Terracotta Clay", "Lead-Free Cobalt Glaze", "Feldspar"],
-    dimensions: "32cm x 22cm x 22cm",
-    production_time_days: 3,
-    technique: "Wheel Throwing & 1200°C High-Fire Kiln Vitrification",
-    color: "Cobalt Blue & Floral Ivory",
-    description_en: "Artisanal food-safe ceramic vessel crafted by master potter Mohammad Aslam in Khurja's historic ceramic district.",
-    description_hi: "खुर्जा के कुम्हार मोहम्मद असलम द्वारा चाक पर निर्मित और 1200 डिग्री पर पकाया गया सिरेमिक बर्तन।",
-    seo_tags: ["Khurja Pottery", "Ceramic Art", "Handmade Glaze", "GI Certified"],
-    studio_image_url: "/static/studio/khurja_pottery.jpg",
-    floor_price: 850,
-    recommended_retail_d2c: 1850,
-    wholesale_b2b: 1200,
-    available_stock: 25,
-    is_published: true,
-    created_at: "2026-09-09T09:00:00Z",
-    artisan_name: "Mohammad Aslam",
-    artisan_state: "Uttar Pradesh",
-    gi_certified: true,
-    is_alias: true
-  },
-  {
-    id: "prod-004",
-    artisan_id: "art-madhubani-01",
-    cluster_id: "cluster-madhubani-painting",
-    title_en: "Madhubani Tree of Life Hand-Painted Tussar Silk Scroll",
-    title_hi: "मधुबनी जीवन वृक्ष हस्तचित्रित तुषार सिल्क स्क्रॉल",
-    craft_type: "Madhubani Painting",
-    materials: ["Handspun Tussar Silk", "Organic Plant & Mineral Dyes", "Bamboo Twig Nib"],
-    dimensions: "90cm x 60cm",
-    production_time_days: 8,
-    technique: "Mithila Kachni & Bharni Line Work with Bamboo Nib",
-    color: "Natural Ochre, Indigo & Forest Green",
-    description_en: "Painted by award-winning artisan Devi Bai in Madhubani, Bihar depicting the eternal cycle of nature using natural indigo, turmeric, and soot dyes.",
-    description_hi: "बिहार के मधुबनी की लोक कलाकार देवी बाई द्वारा प्राकृतिक रंगों और बांस की कलम से चित्रित 'ट्री ऑफ लाइफ'।",
-    seo_tags: ["Madhubani Art", "Mithila Painting", "Tussar Silk", "GI Bihar", "Folk Art"],
-    studio_image_url: "/static/studio/madhubani_art.jpg",
-    floor_price: 2200,
-    recommended_retail_d2c: 4800,
-    wholesale_b2b: 3100,
-    available_stock: 8,
-    is_published: true,
-    created_at: "2026-09-09T14:30:00Z",
-    artisan_name: "Devi Bai",
-    artisan_state: "Bihar",
-    gi_certified: true,
-    is_alias: true
-  },
-  {
-    id: "prod-005",
-    artisan_id: "art-channapatna-01",
-    cluster_id: "cluster-channapatna-toys",
-    title_en: "Channapatna Eco-Friendly Lacquer Wooden Stacking Tower",
-    title_hi: "चन्नापटना पर्यावरण-अनुकूल लाख पॉलिश लकड़ी का खिलौना",
-    craft_type: "Channapatna Wooden Toys",
-    materials: ["Hale Wood (Wrightia Tinctoria)", "Natural Non-Toxic Vegetable Lac"],
-    dimensions: "24cm x 10cm x 10cm",
-    production_time_days: 2,
-    technique: "Hand Lathe Turning & Friction Lacquering",
-    color: "Vibrant Turmeric Yellow, Vermilion & Leaf Green",
-    description_en: "100% child-safe Montessori wooden toy turned on traditional power lathes and polished with natural vegetable dyes by artisan B. Venkatesh.",
-    description_hi: "कर्नाटक के चन्नापटना में सुरक्षित आले की लकड़ी और प्राकृतिक लाख से बना हस्तनिर्मित खिलौना।",
-    seo_tags: ["Channapatna Toys", "Wooden Toy", "Non-Toxic", "GI Karnataka", "Montessori"],
-    studio_image_url: "/static/studio/channapatna_toy.jpg",
-    floor_price: 450,
-    recommended_retail_d2c: 1100,
-    wholesale_b2b: 680,
-    available_stock: 40,
-    is_published: true,
-    created_at: "2026-09-10T08:00:00Z",
-    artisan_name: "B. Venkatesh",
-    artisan_state: "Karnataka",
-    gi_certified: true,
-    is_alias: true
+export const LEGACY_MOCK_IDS = new Set([
+  'prod-001', 'prod-002', 'prod-003', 'prod-004', 'prod-005',
+  'prod-varanasi-001', 'prod-bastar-001', 'prod-bastar-002',
+  'prod-khurja-001', 'prod-madhubani-001', 'prod-madhubani-002', 'prod-channapatna-001',
+  '44444444-4444-4444-4444-444444444441',
+  '44444444-4444-4444-4444-444444444442',
+  '44444444-4444-4444-4444-444444444443',
+  'prod-artisan-live-101',
+  'prod-live-989099',
+]);
+
+/**
+ * Purge any mock/sample products and legacy mock items from browser local storage.
+ */
+export function purgeLegacyMockProducts(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(UPLOADED_PRODUCTS_KEY);
+    if (raw) {
+      const items: Product[] = JSON.parse(raw);
+      const cleaned = items.filter((p) => p && !LEGACY_MOCK_IDS.has(p.id));
+      if (cleaned.length !== items.length) {
+        localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(cleaned));
+      }
+    }
+    const cartRaw = localStorage.getItem('hunardhara_customer_cart');
+    if (cartRaw) {
+      const cartItems: any[] = JSON.parse(cartRaw);
+      const cleanedCart = cartItems.filter((i: any) => i && !LEGACY_MOCK_IDS.has(i.id));
+      if (cleanedCart.length !== cartItems.length) {
+        localStorage.setItem('hunardhara_customer_cart', JSON.stringify(cleanedCart));
+      }
+    }
+    const inqRaw = localStorage.getItem('hunardhara_artisan_inquiries');
+    if (inqRaw) {
+      const inqItems: any[] = JSON.parse(inqRaw);
+      const cleanedInqs = inqItems.filter((i: any) => i && !LEGACY_MOCK_IDS.has(i.product_id) && !LEGACY_MOCK_IDS.has(i.id));
+      if (cleanedInqs.length !== inqItems.length) {
+        localStorage.setItem('hunardhara_artisan_inquiries', JSON.stringify(cleanedInqs));
+      }
+    }
+  } catch (e) {
+    console.warn('Purge legacy mock items error:', e);
   }
-];
+}
 
 const UPLOADED_PRODUCTS_KEY = "hunardhara_artisan_uploaded_products";
 const REMOVED_PRODUCTS_KEY = "hunardhara_removed_product_ids";
@@ -408,7 +148,7 @@ export function getUploadedProducts(): Product[] {
     if (!raw) return [];
     const items: Product[] = JSON.parse(raw);
     const removedIds = new Set(getRemovedProductIds());
-    return items.filter((p) => !removedIds.has(p.id));
+    return items.filter((p) => p && p.id && !removedIds.has(p.id) && !LEGACY_MOCK_IDS.has(p.id));
   } catch (e) {
     console.error("Failed to read uploaded products from localStorage", e);
     return [];
@@ -459,7 +199,11 @@ export function normalizeProduct(raw: any): Product {
       created_at: new Date().toISOString(),
       artisan_name: 'Master Artisan',
       artisan_state: 'India',
-      gi_certified: true,
+      gi_craft_registered: false,
+      gi_artisan_authorization_status: 'NOT_PROVIDED',
+      gi_product_provenance_status: 'UNVERIFIED',
+      is_gi_certified_product: false,
+      gi_certified: false,
     };
   }
 
@@ -523,6 +267,30 @@ export function normalizeProduct(raw: any): Product {
     raw.state ||
     'India';
 
+  // Authoritative GI Separation
+  const giCraftRegistered = Boolean(
+    raw.gi_craft_registered ??
+    (raw.cluster?.gi_tag_number || (raw.cluster?.gi_tag_status && String(raw.cluster.gi_tag_status).toLowerCase().includes('registered'))) ??
+    false
+  );
+  const giRegName = raw.gi_registration_name || raw.cluster?.craft_name || undefined;
+  const giRegRef = raw.gi_registration_reference || raw.cluster?.gi_tag_number || undefined;
+  const giRegRegion = raw.gi_registered_region || (raw.cluster ? `${raw.cluster.district}, ${raw.cluster.state}` : undefined);
+  const giArtisanStatus = (raw.gi_artisan_authorization_status as any) || 'NOT_PROVIDED';
+  const giAuthDocRef = raw.gi_authorization_document_reference || undefined;
+  const giProvStatus = (raw.gi_product_provenance_status as any) || 'UNVERIFIED';
+  const giVerifSource = raw.gi_verification_source || undefined;
+  const giVerifDate = raw.gi_verification_date || undefined;
+
+  // Product is strictly GI Certified ONLY when:
+  // 1. Craft tradition is registered
+  // 2. Artisan is AUTHORIZED
+  // 3. Product provenance is independently VERIFIED
+  const isGiCertifiedProduct = Boolean(
+    raw.is_gi_certified_product ??
+    (giCraftRegistered && giArtisanStatus === 'AUTHORIZED' && giProvStatus === 'VERIFIED')
+  );
+
   return {
     id: String(raw.id || `prod-${Date.now()}`),
     artisan_id: String(raw.artisan_id || ''),
@@ -548,15 +316,24 @@ export function normalizeProduct(raw: any): Product {
     created_at: raw.created_at ? String(raw.created_at) : new Date().toISOString(),
     artisan_name: artisanName,
     artisan_state: artisanState,
-    gi_certified: raw.gi_certified !== false,
+    gi_craft_registered: giCraftRegistered,
+    gi_registration_name: giRegName,
+    gi_registration_reference: giRegRef,
+    gi_registered_region: giRegRegion,
+    gi_artisan_authorization_status: giArtisanStatus,
+    gi_authorization_document_reference: giAuthDocRef,
+    gi_product_provenance_status: giProvStatus,
+    gi_verification_source: giVerifSource,
+    gi_verification_date: giVerifDate,
+    is_gi_certified_product: isGiCertifiedProduct,
+    gi_certified: isGiCertifiedProduct,
   };
 }
 
 export async function fetchProducts(): Promise<Product[]> {
+  purgeLegacyMockProducts();
   const localUploaded = getUploadedProducts().map(normalizeProduct);
   const removedIds = new Set(getRemovedProductIds());
-
-  let allProducts: Product[] = [];
 
   // 1. Fetch from Supabase published products
   let supabaseProducts: Product[] = [];
@@ -574,21 +351,30 @@ export async function fetchProducts(): Promise<Product[]> {
   }
 
   // 2. Fetch from FastAPI backend
+  let backendProducts: Product[] = [];
   try {
     const res = await fetch(`${API_BASE}/products`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        const normalized = data.map(normalizeProduct);
-        const ids = new Set([...localUploaded, ...supabaseProducts].map(p => p.id));
-        allProducts = [...localUploaded, ...supabaseProducts, ...normalized.filter((p: Product) => !ids.has(p.id))];
+        backendProducts = data.map(normalizeProduct);
       }
     }
   } catch {
-    // Graceful fallback to rich seed catalog if server is not booted
+    // Backend offline or unreachable
   }
 
-  return allProducts.filter((p) => !removedIds.has(p.id));
+  const allProducts: Product[] = [];
+  const seenIds = new Set<string>();
+  for (const p of [...localUploaded, ...supabaseProducts, ...backendProducts]) {
+    if (!p || !p.id || LEGACY_MOCK_IDS.has(p.id) || removedIds.has(p.id)) continue;
+    if (!seenIds.has(p.id)) {
+      seenIds.add(p.id);
+      allProducts.push(p);
+    }
+  }
+
+  return allProducts;
 }
 
 export async function fetchProductById(id: string): Promise<Product | null> {
@@ -663,112 +449,101 @@ export async function fetchClusters(): Promise<CraftCluster[]> {
   return [];
 }
 
-export async function matchB2BRFQ(rfq: B2BRFQRequest): Promise<B2BMatchResponse> {
+export async function matchB2BRFQ(
+  rfq: B2BRFQRequest,
+  token?: string
+): Promise<B2BMatchApiResult> {
   try {
+    const authHeaders = token
+      ? { Authorization: `Bearer ${token}` }
+      : await getSupabaseAuthorizationHeader();
+
+    if (!authHeaders.Authorization) {
+      return {
+        success: false,
+        statusCode: 401,
+        error: "AUTHENTICATION_REQUIRED: Please sign in as a verified buyer to initiate B2B procurement matching.",
+      };
+    }
+
+    const payload = {
+      craft_type: rfq.required_craft_type,
+      quantity: rfq.quantity,
+      unit_budget: rfq.budget_per_unit,
+      deadline_days: rfq.delivery_days_deadline,
+      delivery_state: rfq.delivery_state,
+      buyer_organization: rfq.buyer_company_name,
+      buyer_email: rfq.buyer_contact_email,
+      idempotency_key: rfq.idempotency_key,
+    };
+
     const res = await fetch(`${API_BASE}/b2b/match`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(rfq)
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify(payload),
     });
-    if (res.ok) return await res.json();
-  } catch (err) {
-    console.warn("B2B matching service note:", err);
-  }
 
-  // Return truthful empty matches when matching service is unavailable or finds 0 matches
-  return {
-    required_craft: rfq.required_craft_type,
-    quantity: rfq.quantity,
-    buyer_budget: rfq.budget_per_unit,
-    total_matches_found: 0,
-    cluster_consortium_recommended: false,
-    matched_artisans: []
-  };
+    if (!res.ok) {
+      let errDetail = `HTTP_${res.status}`;
+      try {
+        const errJson = await res.json();
+        errDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+      } catch {
+        errDetail = (await res.text()) || res.statusText;
+      }
+      return {
+        success: false,
+        statusCode: res.status,
+        error: errDetail,
+      };
+    }
+
+    const resData = await res.json();
+    const rawMatches = resData.matches || [];
+    const matched_artisans: B2BMatchRecordItem[] = rawMatches.map((m: any) => ({
+      artisan_id: m.artisan_id,
+      artisan_name: m.artisan_name,
+      cluster_name: m.cluster_name,
+      state: m.location || "India",
+      product_id: m.product_id,
+      overall_match_percentage: m.match_percentage ?? 0,
+      craft_compatibility_score: m.breakdown?.craft_compatibility ?? m.scores?.craft ?? 100,
+      price_compatibility_score: m.breakdown?.price_compatibility ?? m.scores?.price ?? 100,
+      capacity_feasibility_score: m.breakdown?.capacity_feasibility ?? m.scores?.capacity ?? 100,
+      location_proximity_score: m.breakdown?.location_score ?? m.scores?.location ?? 100,
+      solo_capacity_feasible: m.capacity_feasible ?? true,
+      cluster_consortium_feasible: resData.consortium_feasible ?? false,
+      artisan_monthly_capacity: m.monthly_capacity || (m.estimated_production_days ? Math.round((rfq.quantity * 30) / Math.max(1, m.estimated_production_days)) : 30),
+      artisan_wholesale_rate: m.offered_wholesale_price ?? m.quoted_unit_price ?? 0,
+      match_rationale: m.match_explanation || m.explanation || "Capacity and budget verified.",
+    }));
+
+    return {
+      success: true,
+      statusCode: 200,
+      data: {
+        rfq_id: resData.rfq_id,
+        required_craft: resData.rfq_summary?.craft_type || rfq.required_craft_type,
+        quantity: resData.rfq_summary?.required_quantity || rfq.quantity,
+        buyer_budget: resData.rfq_summary?.unit_budget || rfq.budget_per_unit,
+        total_matches_found: resData.total_matches_found ?? matched_artisans.length,
+        cluster_consortium_recommended: resData.consortium_option?.consortium_recommended ?? false,
+        consortium_option: resData.consortium_option,
+        matched_artisans,
+      },
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      statusCode: 500,
+      error: `NETWORK_ERROR: Unable to communicate with matching service: ${err.message || String(err)}`,
+    };
+  }
 }
 
-export const SEED_ARTISAN_EARNINGS: ArtisanEarnings = {
-  artisan_id: "art-varanasi-01",
-  artisan_name: "Radheshyam Ansari",
-  craft_tradition: "Varanasi Pure Katan Silk & Brocade",
-  cluster_name: "Varanasi Silk Cluster",
-  state: "Uttar Pradesh",
-  total_revenue_earned: 248500,
-  middleman_margin_saved: 164200,
-  effective_daily_wage: 1180,
-  statutory_minimum_wage: 650,
-  total_orders_completed: 48,
-  pending_orders_count: 3,
-  total_items_sold: 64,
-  recent_payouts: [
-    {
-      id: "pay-101",
-      order_id: "ORD-2026-9041",
-      order_date: "2026-09-09",
-      craft_title: "Varanasi Pure Katan Silk Brocade Saree",
-      buyer_name: "Aarav Mehra (Direct Retail)",
-      order_type: "D2C Retail",
-      quantity: 1,
-      gross_amount: 12500,
-      artisan_net_payout: 11875,
-      middleman_cut_prevented: 7500,
-      payment_status: "Settled",
-      payout_reference: "UPI/DBT-992014-VNS",
-      disbursed_at: "2026-09-09 16:45 IST"
-    },
-    {
-      id: "pay-102",
-      order_id: "ORD-2026-8832",
-      order_date: "2026-09-06",
-      craft_title: "Kadwa Zari Dupatta Set (Custom Batch)",
-      buyer_name: "Taj Heritage Hotels & Resorts",
-      order_type: "B2B Bulk",
-      quantity: 8,
-      gross_amount: 68000,
-      artisan_net_payout: 65280,
-      middleman_cut_prevented: 40800,
-      payment_status: "Settled",
-      payout_reference: "NEFT/SBIN00291-MOSJE",
-      disbursed_at: "2026-09-07 11:20 IST"
-    },
-    {
-      id: "pay-103",
-      order_id: "ORD-2026-8719",
-      order_date: "2026-09-03",
-      craft_title: "Traditional Floral Kadwa Brocade Fabric",
-      buyer_name: "Sanskriti Couture (Delhi)",
-      order_type: "B2B Bulk",
-      quantity: 4,
-      gross_amount: 34000,
-      artisan_net_payout: 32640,
-      middleman_cut_prevented: 20400,
-      payment_status: "Settled",
-      payout_reference: "RTGS/HDFC9912048-DIR",
-      disbursed_at: "2026-09-04 14:15 IST"
-    },
-    {
-      id: "pay-104",
-      order_id: "ORD-2026-9099",
-      order_date: "2026-09-10",
-      craft_title: "Bridal Banarasi Silk Saree",
-      buyer_name: "Priyanka Deshmukh",
-      order_type: "D2C Retail",
-      quantity: 1,
-      gross_amount: 14500,
-      artisan_net_payout: 13775,
-      middleman_cut_prevented: 8700,
-      payment_status: "Escrow Verified",
-      payout_reference: "ESCROW-HOLD-MOSJE",
-      disbursed_at: "Estimated Dispatch 2026-09-12"
-    }
-  ],
-  monthly_revenue_history: [
-    { month: "May", artisan_net: 34000, conventional_trader_cut: 12000 },
-    { month: "Jun", artisan_net: 42500, conventional_trader_cut: 15500 },
-    { month: "Jul", artisan_net: 51200, conventional_trader_cut: 18000 },
-    { month: "Aug", artisan_net: 58800, conventional_trader_cut: 21000 },
-    { month: "Sep (MTD)", artisan_net: 62000, conventional_trader_cut: 23500 }
-  ]
-};
 
 export async function fetchArtisanEarnings(token?: string): Promise<ArtisanEarnings> {
   try {
@@ -836,56 +611,6 @@ export async function fetchArtisanEarnings(token?: string): Promise<ArtisanEarni
   };
 }
 
-export const STUDIO_PRESETS = [
-  {
-    id: "preset-silk",
-    name: "Katan Silk Brocade Saree",
-    craft_type: "Varanasi Silk",
-    state: "Uttar Pradesh",
-    voice_transcript_hi: "यह शुद्ध कतान सिल्क साड़ी है। इसे बनाने में 14 दिन का समय लगा और असली सोने के ज़री धागों का उपयोग किया गया है। कदवा तकनीक से हाथ से बुनी गई है।",
-    voice_transcript_en: "This is a pure Katan silk saree. It took 14 days to craft using real gold zari threads, handwoven using traditional Kadwa jacquard technique.",
-    audio_duration: "0:24",
-    materials: ["Pure Katan Silk", "Gold Zari Thread"],
-    production_days: 14,
-    dimensions: "5.5m x 1.2m",
-    technique: "Handloom Jacquard Kadwa Weaving",
-    color: "Crimson Red with Antique Gold",
-    material_cost: 3200,
-    icon: "🥻"
-  },
-  {
-    id: "preset-dhokra",
-    name: "Tribal Bell Metal Nandi",
-    craft_type: "Bastar Dhokra",
-    state: "Chhattisgarh",
-    voice_transcript_hi: "बस्तर के जंगल में 4000 साल पुरानी लॉस्ट-वैक्स पद्धति से यह नंदी बनाया है। पीतल और मधुमक्खी के मोम से पांच दिन में तैयार हुआ।",
-    voice_transcript_en: "Crafted in the forests of Bastar using the 4000-year-old lost-wax method. Hand-modeled in brass and natural beeswax over five days.",
-    audio_duration: "0:18",
-    materials: ["Bell Metal", "Brass", "Natural Beeswax"],
-    production_days: 5,
-    dimensions: "18cm x 14cm x 8cm",
-    technique: "Lost-Wax Bell Metal Casting",
-    color: "Antique Brass Patina",
-    material_cost: 580,
-    icon: "🐂"
-  },
-  {
-    id: "preset-toy",
-    name: "Lacquer Wooden Stacking Tower",
-    craft_type: "Channapatna Toys",
-    state: "Karnataka",
-    voice_transcript_hi: "यह बच्चों के लिए सुरक्षित चन्नापटना खिलौना है। हले की लकड़ी और प्राकृतिक सब्जियों के रंगों से दो दिन में खराद पर बना है।",
-    voice_transcript_en: "Child-safe Channapatna toy turned on traditional wood lathes from Wrightia tinctoria wood and polished with natural vegetable lacquer.",
-    audio_duration: "0:15",
-    materials: ["Ivory Wood (Aale Mara)", "Natural Vegetable Dyes", "Shellac Polish"],
-    production_days: 2,
-    dimensions: "22cm Height x 12cm Base",
-    technique: "Traditional Lathe Turning & Friction Lacquering",
-    color: "Multi-color Amber, Scarlet & Forest Green",
-    material_cost: 210,
-    icon: "🪵"
-  }
-];
 
 /**
  * Synthesize Indic speech via Sarvam AI Bulbul (Edge -> Render -> Web Speech fallback).
@@ -1315,23 +1040,10 @@ export async function analyzeCraftImage(
     console.warn('Backend analyze-image call note:', e);
   }
 
-  // 3. Resilient truthful fallback heuristic
-  return {
-    craft_type: 'Handicrafts & Art',
-    product_name_hi: 'पारंपरिक हस्तशिल्प',
-    product_name_en: 'Handcrafted Artisan Craft',
-    materials: ['Natural Materials'],
-    technique: 'Traditional Handcrafting',
-    dominant_colors: ['Natural'],
-    estimated_dimensions: null,
-    estimated_production_days: null,
-    suggested_retail_price: null,
-    description_hi: 'कारीगर द्वारा हाथ से निर्मित पारंपरिक कलाकृति।',
-    description_en: 'Authentic handcrafted heritage item made by skilled Indian artisan.',
-    visual_quality_score: 8.5,
-    model: 'sovereign-vision-curator',
-    provider: 'sovereign-ai'
-  };
+  // 3. Truthful failure: Never invent fake craft attributes when real AI services are unavailable
+  throw new Error(
+    'AI_IMAGE_ANALYSIS_UNAVAILABLE: Real-time craft image analysis service is currently unreachable. Please provide craft details manually or try again.'
+  );
 }
 
 /**
@@ -1353,9 +1065,18 @@ export async function createBackendProduct(payload: {
   technique?: string;
   materials?: string[];
   studio_image_url?: string;
+  idempotency_key?: string;
 }): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    };
+    if (payload.idempotency_key) {
+      headers["X-Idempotency-Key"] = payload.idempotency_key;
+    }
+
     const bodyPayload = {
       title: payload.title,
       craft_type: payload.craft_type,
@@ -1370,13 +1091,11 @@ export async function createBackendProduct(payload: {
       description_hindi: payload.description_hindi || payload.description || '',
       description_english: payload.description_english || payload.description || '',
       studio_image_url: payload.studio_image_url,
+      idempotency_key: payload.idempotency_key,
     };
     const res = await fetch(`${API_BASE}/products`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders,
-      },
+      headers,
       body: JSON.stringify(bodyPayload),
     });
     const data = await res.json();
@@ -1389,5 +1108,645 @@ export async function createBackendProduct(payload: {
   }
 }
 
+export interface StudioMetadata {
+  width: number;
+  height: number;
+  processing_time_ms: number;
+  shadow_luminosity_drop_pct: number;
+  quality_score: number;
+}
 
+export interface StudioResponse {
+  success: boolean;
+  studio_image_url?: string;
+  before_after_preview_url?: string;
+  metadata?: StudioMetadata;
+  error?: string;
+}
+
+/**
+ * AI Product Photo Studio Pipeline.
+ * Sends raw handicraft photo to backend for EXIF scrub, CLAHE, white balance,
+ * GrabCut foreground extraction, and procedural contact/ambient shadow synthesis.
+ * Returns 1:1 isolated studio image URL and side-by-side Before/After preview URL.
+ */
+export async function enhanceStudioImage(
+  fileOrBase64: File | string,
+  canvasSize: number = 1080
+): Promise<StudioResponse> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    const formData = new FormData();
+
+    if (typeof fileOrBase64 === 'string') {
+      const res = await fetch(fileOrBase64);
+      const blob = await res.blob();
+      formData.append('image', blob, 'craft_photo.jpg');
+    } else {
+      formData.append('image', fileOrBase64, fileOrBase64.name || 'craft_photo.jpg');
+    }
+
+    formData.append('canvas_size', String(canvasSize));
+
+    const res = await fetch(`${API_BASE}/products/studio`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      let errDetail = `Studio processing failed with HTTP ${res.status}`;
+      try {
+        const errJson = await res.json();
+        if (errJson.detail) errDetail = errJson.detail;
+      } catch {}
+      return { success: false, error: errDetail };
+    }
+
+    const data = await res.json();
+    return {
+      success: true,
+      studio_image_url: data.studio_image_url,
+      before_after_preview_url: data.before_after_preview_url,
+      metadata: data.metadata,
+    };
+  } catch (err: any) {
+    console.warn('AI Studio enhancement error:', err);
+    return {
+      success: false,
+      error: err?.message || 'Network error executing AI Photo Studio pipeline',
+    };
+  }
+}
+
+/**
+ * Resolves studio image URLs correctly across local static seeds, backend URLs, and data URLs.
+ */
+export function resolveStudioImageUrl(url?: string | null): string {
+  if (!url) return '/static/studio/placeholder_craft.jpg';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+    return url;
+  }
+  const knownStaticSeed = [
+    'varanasi_silk.jpg', 'banarasi_saree_studio.jpg',
+    'bastar_dhokra.jpg', 'bastar_bull_studio.jpg', 'dhokra_musicians_studio.jpg',
+    'khurja_pottery.jpg', 'khurja_pot_studio.jpg',
+    'madhubani_art.jpg', 'madhubani_painting_studio.jpg',
+    'channapatna_toy.jpg', 'channapatna_stacker_studio.jpg'
+  ];
+  const filename = url.split('/').pop() || '';
+  if (knownStaticSeed.includes(filename)) {
+    return url;
+  }
+  const backendBase = (process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1').replace('/api/v1', '');
+  return `${backendBase}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
+export interface DynamicPricingEstimateRequest {
+  craft_type: string;
+  materials_cost?: number;
+  raw_material_cost?: number;
+  labor_hours: number;
+  cluster_id?: string;
+  craft_cluster?: string;
+  product_description?: string;
+  product_image_url?: string;
+  product_image_base64?: string;
+  artisan_stated_price?: number;
+}
+
+export interface DynamicPricingEstimateResponse {
+  status: string;
+  currency: string;
+  pricing_tiers: {
+    floor_price: number;
+    recommended_retail_d2c: number;
+    wholesale_b2b: number;
+  };
+  cost_breakdown: {
+    raw_materials: number;
+    labor_hours: number;
+    hourly_wage_applied: number;
+    total_labor_cost: number;
+    overhead_cost: number;
+    district: string;
+    state: string;
+  };
+  market_benchmark?: {
+    similarity_score: number;
+    matched_benchmark_item?: string;
+    average_market_retail?: number;
+  };
+  dynamic_factors?: {
+    statutory_cost_floor: number;
+    craftsmanship_quality_score: number;
+    craftsmanship_premium: number;
+    heritage_technique_score: number;
+    heritage_narrative_premium: number;
+    market_demand_index: number;
+    market_trend_direction: string;
+    market_seasonal_boost: number;
+    commodity_inflation_rate: number;
+    factors_applied: string[];
+  };
+  rationale_english: string;
+  rationale_hindi: string;
+  floor_price?: number;
+  recommended_retail_price?: number;
+  wholesale_b2b_price?: number;
+  statutory_wage_rate?: number;
+}
+
+export async function estimateDynamicPricing(
+  params: DynamicPricingEstimateRequest
+): Promise<DynamicPricingEstimateResponse> {
+  const res = await fetch(`${API_BASE}/pricing/estimate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    throw new Error(`Pricing estimation failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getMarketTrends(craftType?: string): Promise<any> {
+  const url = craftType 
+    ? `${API_BASE}/pricing/market-trends/${encodeURIComponent(craftType)}`
+    : `${API_BASE}/pricing/market-trends`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch market trends: ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Authoritative transactional multi-item cart checkout.
+ * Enforces authenticated Bearer token and passes Idempotency-Key.
+ */
+export async function checkoutCustomerCart(
+  items: { product_id: string; quantity: number }[],
+  idempotencyKey?: string
+): Promise<CartCheckoutResult> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) {
+      return {
+        success: false,
+        status: 401,
+        error: "AUTHENTICATION_REQUIRED: कृपया ऑर्डर करने के लिए पहले लॉगिन करें। (Please sign in to place your order.)",
+      };
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    };
+
+    if (idempotencyKey) {
+      headers["X-Idempotency-Key"] = idempotencyKey;
+    }
+
+    const res = await fetch(`${API_BASE}/orders/checkout`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ items }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const errorMsg = data.detail || `ऑर्डर प्रक्रिया विफल रही (Order processing failed [${res.status}])`;
+      return {
+        success: false,
+        status: res.status,
+        error: errorMsg,
+      };
+    }
+
+    return {
+      success: true,
+      status: res.status,
+      orders: data.orders || [],
+      totalAmount: data.total_amount,
+      totalItems: data.total_items,
+    };
+  } catch (err: any) {
+    console.error("Cart checkout network error:", err);
+    return {
+      success: false,
+      status: 0,
+      error: err.message || "नेटवर्क त्रुटि: सर्वर से संपर्क नहीं हो सका। कृपया पुनः प्रयास करें।",
+    };
+  }
+}
+
+/**
+ * Fetch authenticated customer's real orders from the PostgreSQL backend.
+ */
+export async function fetchCustomerOrders(): Promise<{
+  success: boolean;
+  status: number;
+  orders: CustomerOrder[];
+  error?: string;
+}> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) {
+      return {
+        success: false,
+        status: 401,
+        orders: [],
+        error: "AUTHENTICATION_REQUIRED: कृपया अपने ऑर्डर देखने के लिए लॉगिन करें।",
+      };
+    }
+
+    const res = await fetch(`${API_BASE}/orders/customer`, {
+      method: "GET",
+      headers: {
+        ...authHeaders,
+      },
+    });
+
+    const data = await res.json().catch(() => []);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        status: res.status,
+        orders: [],
+        error: data.detail || `ऑर्डर लोड करने में त्रुटि (${res.status})`,
+      };
+    }
+
+    return {
+      success: true,
+      status: res.status,
+      orders: Array.isArray(data) ? data : [],
+    };
+  } catch (err: any) {
+    console.error("Fetch customer orders error:", err);
+    return {
+      success: false,
+      status: 0,
+      orders: [],
+      error: err.message || "सर्वर से संपर्क नहीं हो सका।",
+    };
+  }
+}
+
+/**
+ * Cancel an unfulfilled customer order with inventory replenishment.
+ */
+export async function cancelCustomerOrder(orderId: string): Promise<{
+  success: boolean;
+  status: number;
+  error?: string;
+}> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) {
+      return {
+        success: false,
+        status: 401,
+        error: "AUTHENTICATION_REQUIRED: कृपया लॉगिन करें।",
+      };
+    }
+
+    const res = await fetch(`${API_BASE}/orders/${orderId}/status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ status: "cancelled" }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      return {
+        success: false,
+        status: res.status,
+        error: data.detail || `ऑर्डर रद्द नहीं किया जा सका (${res.status})`,
+      };
+    }
+
+    return {
+      success: true,
+      status: res.status,
+    };
+  } catch (err: any) {
+    console.error("Cancel order error:", err);
+    return {
+      success: false,
+      status: 0,
+      error: err.message || "नेटवर्क त्रुटि",
+    };
+  }
+}
+
+/* =========================================================================
+   SUPER ADMIN & APPLICATION WORKFLOW ENDPOINTS
+   ========================================================================= */
+
+export interface ArtisanApplicationItem {
+  id: string;
+  user_id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  craft_category: string;
+  experience_years: number;
+  state?: string | null;
+  district?: string | null;
+  workshop_info?: string | null;
+  craft_description?: string | null;
+  sample_images?: string | null;
+  document_references?: string | null;
+  status: string; // 'pending' | 'approved' | 'rejected'
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  rejection_reason?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AdminUserItem {
+  id: string;
+  email: string | null;
+  role: string;
+  created_at?: string | null;
+  last_sign_in_at?: string | null;
+}
+
+export interface AdminAuditLogItem {
+  id: string;
+  action: string;
+  actor_id: string;
+  actor_email?: string | null;
+  target_user_id?: string | null;
+  details?: string | null;
+  created_at: string;
+}
+
+export interface BootstrapStatusResponse {
+  bootstrapped: boolean;
+  super_admin_email?: string | null;
+}
+
+/**
+ * Submit an artisan upgrade application to the backend API.
+ */
+export async function submitArtisanApplication(data: {
+  craft_category: string;
+  experience_years: number;
+  state?: string;
+  district?: string;
+  full_name?: string;
+  phone?: string;
+  workshop_info?: string;
+  craft_description?: string;
+  sample_images?: string[];
+  document_references?: string[];
+}): Promise<{ success: boolean; data?: ArtisanApplicationItem; error?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) {
+      return { success: false, error: "कृपया पहले साइन इन करें (Please sign in)." };
+    }
+
+    const res = await fetch(`${API_BASE}/artisan/apply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify(data),
+    });
+
+    const resData = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, error: resData.detail || "आवेदन जमा करने में विफल।" };
+    }
+
+    return { success: true, data: resData };
+  } catch (err: any) {
+    return { success: false, error: err.message || "नेटवर्क त्रुटि।" };
+  }
+}
+
+/**
+ * Fetch authenticated user's own applications.
+ */
+export async function fetchMyApplications(): Promise<ArtisanApplicationItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/artisan/application/my`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch all applications for review (Admin only).
+ */
+export async function fetchAdminApplications(): Promise<ArtisanApplicationItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/applications`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Approve an artisan application (Super Admin only).
+ */
+export async function approveAdminApplication(appId: string): Promise<{ success: boolean; data?: ArtisanApplicationItem; error?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, error: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/applications/${appId}/approve`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+
+    const resData = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, error: resData.detail || "अनुमोदन विफल (Approval failed)." };
+    }
+    return { success: true, data: resData };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Network error" };
+  }
+}
+
+/**
+ * Reject an artisan application with mandatory reason (Super Admin only).
+ */
+export async function rejectAdminApplication(appId: string, reason: string): Promise<{ success: boolean; data?: ArtisanApplicationItem; error?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, error: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/applications/${appId}/reject`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ reason: reason || "Administrative rejection" }),
+    });
+
+    const resData = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, error: resData.detail || "अस्वीकृति विफल (Rejection failed)." };
+    }
+    return { success: true, data: resData };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Network error" };
+  }
+}
+
+/**
+ * Fetch public diagnostic status of super admin bootstrap.
+ */
+export async function fetchBootstrapStatus(): Promise<BootstrapStatusResponse> {
+  try {
+    const res = await fetch(`${API_BASE}/admin/bootstrap-status`);
+    if (!res.ok) return { bootstrapped: false };
+    return await res.json();
+  } catch {
+    return { bootstrapped: false };
+  }
+}
+
+/**
+ * Trigger one-time Super Admin bootstrap.
+ */
+export async function bootstrapSuperAdmin(email?: string): Promise<{ success: boolean; message: string; role?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    const res = await fetch(`${API_BASE}/admin/bootstrap-super-admin`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify(email ? { email } : {}),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || `Bootstrap failed (${res.status})` };
+    }
+    return { success: true, message: data.message, role: data.role };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * List all administrative users (Super Admin only).
+ */
+export async function fetchAdminUsers(): Promise<AdminUserItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/admins`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Grant admin role to a target user (Super Admin only).
+ */
+export async function grantAdminRole(userId: string): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/admins/${userId}/grant`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "प्रशासक पद प्रदान करने में विफल।" };
+    }
+    return { success: true, message: data.message || "प्रशासक पद सफलतापूर्वक दिया गया।" };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Revoke admin role from a target user (Super Admin only).
+ */
+export async function revokeAdminRole(userId: string): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/admins/${userId}/revoke`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "प्रशासक पद वापस लेने में विफल।" };
+    }
+    return { success: true, message: data.message || "प्रशासक पद वापस ले लिया गया।" };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Fetch platform audit logs (Admin / Super Admin).
+ */
+export async function fetchAuditLogs(limit: number = 50, offset: number = 0): Promise<AdminAuditLogItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/audit-logs?limit=${limit}&offset=${offset}`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
 

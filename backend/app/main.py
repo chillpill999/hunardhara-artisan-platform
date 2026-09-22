@@ -35,7 +35,10 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
         logger.info("Database schemas verified.")
-        should_auto_seed = settings.OFFLINE_MODE or os.getenv("AUTO_SEED", "false").lower() in ("true", "1")
+        should_auto_seed = (
+            settings.ENVIRONMENT.lower() != "production"
+            and (settings.OFFLINE_MODE or os.getenv("AUTO_SEED", "false").lower() in ("true", "1"))
+        )
         if should_auto_seed:
             try:
                 from app.core.database import SessionLocal
@@ -48,7 +51,7 @@ async def lifespan(app: FastAPI):
             except Exception as seed_err:
                 logger.warning(f"Auto-seed skipped or non-critical error: {seed_err}")
         else:
-            logger.info("Automatic database seeding is disabled for production data integrity.")
+            logger.info("Automatic database seeding is permanently locked out in production for data integrity.")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
         
@@ -118,6 +121,8 @@ app.add_middleware(
 app.add_middleware(RequestIDAndLoggingMiddleware)
 
 
+from app.core.security import redact_sensitive_text
+
 # Global Production Exception Handlers: Safe Error Responses & No Stack Trace Leaks
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -127,7 +132,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         field_name = ".".join(str(loc) for loc in err.get("loc", []) if loc != "body")
         clean_errors.append({
             "field": field_name,
-            "message": err.get("msg", "Validation error"),
+            "message": redact_sensitive_text(str(err.get("msg", "Validation error"))),
             "type": err.get("type", "value_error")
         })
     return JSONResponse(
@@ -148,11 +153,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     headers = {"X-Request-ID": req_id}
     if getattr(exc, "headers", None):
         headers.update(exc.headers)
+    safe_detail = redact_sensitive_text(str(exc.detail)) if isinstance(exc.detail, str) else exc.detail
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": error_code,
-            "detail": exc.detail,
+            "detail": safe_detail,
             "request_id": req_id
         },
         headers=headers
@@ -162,10 +168,11 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     req_id = getattr(request.state, "request_id", "unknown")
-    logger.exception(f"UNHANDLED_EXCEPTION: request_id={req_id} path={request.url.path}: {exc}")
+    safe_exc = redact_sensitive_text(str(exc))
+    logger.exception(f"UNHANDLED_EXCEPTION: request_id={req_id} path={request.url.path}: {safe_exc}")
 
     is_prod = settings.ENVIRONMENT.lower() == "production" or not settings.DEBUG
-    safe_detail = "An internal server error occurred. Please contact support with the request ID." if is_prod else f"{type(exc).__name__}: {str(exc)}"
+    safe_detail = "An internal server error occurred. Please contact support with the request ID." if is_prod else f"{type(exc).__name__}: {safe_exc}"
 
     return JSONResponse(
         status_code=500,

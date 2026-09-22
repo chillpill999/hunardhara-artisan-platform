@@ -6,12 +6,45 @@ from app.core.security import create_access_token
 from app.models.product import Product
 from app.models.earning import ArtisanEarning
 from app.models.order import Order
+from app.models.artisan import Artisan
+from app.models.craft_cluster import CraftCluster
 
 
 @pytest.fixture(autouse=True)
 def init_test_db():
-    """Ensure all database tables are created before running tests."""
+    """Ensure all database tables are created and clusters seeded before running tests."""
     init_db()
+    session = SessionLocal()
+    try:
+        if not session.query(CraftCluster).filter(CraftCluster.id == "cluster-bastar-dhokra-01").first():
+            session.add(CraftCluster(
+                id="cluster-bastar-dhokra-01",
+                name="Bastar Dhokra Cluster",
+                craft_name="Bastar Dhokra",
+                state="Chhattisgarh",
+                district="Bastar",
+                latitude=19.07,
+                longitude=82.03,
+                statutory_hourly_wage=120.0,
+                statutory_daily_wage=960.0,
+                gi_tag_status="Registered (GI-83)"
+            ))
+        if not session.query(CraftCluster).filter(CraftCluster.id == "cluster-khurja-pottery-01").first():
+            session.add(CraftCluster(
+                id="cluster-khurja-pottery-01",
+                name="Khurja Pottery Cluster",
+                craft_name="Khurja Pottery",
+                state="Uttar Pradesh",
+                district="Bulandshahr",
+                latitude=28.25,
+                longitude=77.85,
+                statutory_hourly_wage=110.0,
+                statutory_daily_wage=880.0,
+                gi_tag_status="Registered (GI-177)"
+            ))
+        session.commit()
+    finally:
+        session.close()
 
 
 @pytest.fixture
@@ -29,8 +62,44 @@ def db():
 
 
 @pytest.fixture
-def auth_tokens():
-    """Generates standard tokens for all test roles."""
+def auth_tokens(db):
+    """Generates standard tokens for all test roles and ensures test artisans exist."""
+    cluster = db.query(CraftCluster).first()
+    cluster_id = cluster.id if cluster else "cluster-bastar-dhokra"
+    if not db.query(Artisan).filter(Artisan.id == "art-001").first():
+        db.add(Artisan(
+            id="art-001",
+            full_name="Artisan A Test",
+            phone_number="+919999000001",
+            masked_aadhaar="XXXXXXXX1111",
+            aadhaar_hash="hash-art-rbac-001",
+            social_category="General",
+            cluster_id=cluster_id,
+            state="Chhattisgarh",
+            district="Bastar",
+            latitude=19.07,
+            longitude=82.03,
+            primary_craft="Bastar Dhokra",
+            is_active=True
+        ))
+        db.commit()
+    if not db.query(Artisan).filter(Artisan.id == "art-002").first():
+        db.add(Artisan(
+            id="art-002",
+            full_name="Artisan B Test",
+            phone_number="+919999000002",
+            masked_aadhaar="XXXXXXXX2222",
+            aadhaar_hash="hash-art-rbac-002",
+            social_category="General",
+            cluster_id=cluster_id,
+            state="Chhattisgarh",
+            district="Bastar",
+            latitude=19.07,
+            longitude=82.03,
+            primary_craft="Bastar Dhokra",
+            is_active=True
+        ))
+        db.commit()
     return {
         "customerA": create_access_token("cust-001", extra_claims={"app_metadata": {"role": "customer"}, "email": "customerA@crafts.gov.in"}),
         "customerB": create_access_token("cust-002", extra_claims={"app_metadata": {"role": "customer"}, "email": "customerB@crafts.gov.in"}),

@@ -27,6 +27,7 @@ class B2BRFQ(Base):
     delivery_longitude = Column(Float, nullable=True)
     
     status = Column(String(32), default="OPEN", index=True)  # OPEN, MATCHED, FULFILLED, CLOSED
+    idempotency_key = Column(String(128), nullable=True, unique=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
@@ -39,6 +40,7 @@ class B2BMatchRecord(Base):
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     rfq_id = Column(String(64), ForeignKey("b2b_rfqs.id"), nullable=False, index=True)
     artisan_id = Column(String(64), ForeignKey("artisans.id"), nullable=False, index=True)
+    product_id = Column(String(64), ForeignKey("products.id"), nullable=True, index=True)
     
     match_percentage = Column(Float, nullable=False)      # 0 to 100
     score_craft = Column(Float, nullable=False)          # 0 to 100 (weight 35%)
@@ -58,3 +60,4 @@ class B2BMatchRecord(Base):
     # Relationships
     rfq = relationship("B2BRFQ", back_populates="matches")
     artisan = relationship("Artisan")
+    product = relationship("Product")

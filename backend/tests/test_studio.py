@@ -102,3 +102,43 @@ class TestImageStudioPipeline:
             )
         assert res.status_code == 401
 
+    def test_studio_output_includes_owner_hash(self, sample_dhokra_image_path):
+        """TC-STUDIO-08: Verifies studio_service generates filenames containing owner hash for DPDP tracking."""
+        import hashlib
+        owner_id = "artisan-dpdp-owner-123"
+        expected_hash = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:8]
+
+        with open(sample_dhokra_image_path, "rb") as f:
+            raw_bytes = f.read()
+
+        result = studio_service.process_image_bytes(
+            image_bytes=raw_bytes,
+            original_filename="craft.jpg",
+            owner_id=owner_id
+        )
+        assert expected_hash in result["studio_image_url"]
+        assert expected_hash in result["before_after_preview_url"]
+        # Verify only saved to static/studio, not studio_outputs
+        assert "/static/studio/" in result["studio_image_url"]
+        assert "/static/studio_outputs/" not in result["studio_image_url"]
+
+    def test_studio_upload_endpoint_embeds_owner_hash(self, client, sample_dhokra_image_path):
+        """TC-STUDIO-09: Verifies studio upload endpoint embeds authenticated user's hash into output URLs."""
+        import hashlib
+        user_id = "art-endpoint-user-888"
+        expected_hash = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8]
+        token = create_access_token(user_id, extra_claims={"app_metadata": {"role": "artisan"}})
+
+        with open(sample_dhokra_image_path, "rb") as f:
+            res = client.post(
+                "/api/v1/products/studio",
+                files={"image": ("dhokra.jpg", f, "image/jpeg")},
+                data={"canvas_size": 1080},
+                headers={"Authorization": f"Bearer {token}"}
+            )
+        assert res.status_code == 200
+        data = res.json()
+        assert expected_hash in data["studio_image_url"]
+        assert expected_hash in data["before_after_preview_url"]
+
+

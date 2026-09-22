@@ -3,6 +3,7 @@ import io
 import time
 import uuid
 import logging
+import hashlib
 from typing import Tuple, Dict, Any, Optional
 import cv2
 import numpy as np
@@ -58,10 +59,12 @@ def apply_clahe_and_white_balance(cv_bgr: np.ndarray) -> Tuple[np.ndarray, bool]
 
 def extract_craft_foreground(cv_bgr: np.ndarray) -> np.ndarray:
     """
-    Robust Foreground Extraction Engine.
-    Tries RMBG / rembg if available, otherwise executes adaptive OpenCV GrabCut
-    with white-background shortcut detection.
-    
+    Robust Foreground Extraction Engine (SIH26090 - R1).
+    Multi-tier architecture:
+    1. Neural segmentation via rembg (supporting RMBG / BiRefNet onnx sessions) if installed/configured.
+    2. High-speed white-background shortcut detection via four-corner LAB/RGB variance check.
+    3. Fully offline-capable adaptive OpenCV GrabCut with morphological kernel smoothing.
+
     Returns:
         RGBA numpy array with segmented alpha channel.
     """
@@ -199,28 +202,28 @@ class ImageStudioService:
     Performs:
     1. EXIF and GPS Privacy Scrubbing.
     2. CLAHE Illumination & Gray-World White Balance.
-    3. Foreground Segmentation (rembg with OpenCV GrabCut fallback).
+    3. Foreground Segmentation (Adaptive OpenCV GrabCut / Neural rembg).
     4. Procedural Dual Shadows (Contact Drop + Ambient Soft Shadow).
     5. 1:1 Square Auto-Centering (1080x1080 canvas).
     6. Side-by-side Before vs After comparison preview.
-    7. Disk persistence in /static/studio/ and URL generation.
+    7. Single-location disk persistence in /static/studio/ with owner attribution.
     """
 
     def __init__(self, static_dir: Optional[str] = None):
         self.static_dir = static_dir or settings.STATIC_DIR
         self.studio_dir = os.path.join(self.static_dir, "studio")
-        self.studio_outputs_dir = os.path.join(self.static_dir, "studio_outputs")
         os.makedirs(self.studio_dir, exist_ok=True)
-        os.makedirs(self.studio_outputs_dir, exist_ok=True)
 
     def process_image_bytes(
         self,
         image_bytes: bytes,
+        owner_id: Optional[str] = None,
         original_filename: str = "product.jpg",
         canvas_size: int = 1080
     ) -> Dict[str, Any]:
         """
         Executes the full studio pipeline from raw bytes.
+        Embeds owner hash for DPDP right-to-erasure traceability.
         Guarantees <= 5.0 seconds execution latency SLA.
         """
         t0 = time.perf_counter()
@@ -252,20 +255,31 @@ class ImageStudioService:
             preview_size=canvas_size
         )
 
-        # Step 7: Persist Output Artifacts
-        file_id = f"studio_{uuid.uuid4().hex[:12]}"
+        # Resolve owner attribution hash for DPDP right-to-erasure traceability
+        owner_hash = None
+        if owner_id:
+            owner_hash = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:8]
+        elif original_filename:
+            # Check if original_filename already encodes an 8-char owner hash (e.g. studio_a1b2c3d4_...)
+            base = os.path.splitext(os.path.basename(original_filename))[0]
+            parts = base.split("_")
+            for part in parts:
+                if len(part) == 8 and all(c in "0123456789abcdefABCDEF" for c in part):
+                    owner_hash = part.lower()
+                    break
+        if not owner_hash:
+            owner_hash = hashlib.sha256(original_filename.encode("utf-8")).hexdigest()[:8]
+
+        # Step 7: Persist Output Artifacts (single location with owner attribution)
+        file_id = f"studio_{owner_hash}_{uuid.uuid4().hex[:12]}"
         studio_filename = f"{file_id}.jpg"
         preview_filename = f"{file_id}_preview.jpg"
 
         studio_filepath = os.path.join(self.studio_dir, studio_filename)
         preview_filepath = os.path.join(self.studio_dir, preview_filename)
-        studio_out_filepath = os.path.join(self.studio_outputs_dir, studio_filename)
-        preview_out_filepath = os.path.join(self.studio_outputs_dir, preview_filename)
 
         studio_rgb.save(studio_filepath, format="JPEG", quality=95, optimize=True)
         before_after_preview.save(preview_filepath, format="JPEG", quality=92, optimize=True)
-        studio_rgb.save(studio_out_filepath, format="JPEG", quality=95, optimize=True)
-        before_after_preview.save(preview_out_filepath, format="JPEG", quality=92, optimize=True)
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         logger.info(f"Studio pipeline completed in {elapsed_ms}ms (File: {studio_filename})")

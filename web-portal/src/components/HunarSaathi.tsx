@@ -139,13 +139,13 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
       if (lower.includes('उत्पाद') || lower.includes('जोड़ना') || lower.includes('add') || lower.includes('product')) {
         replyText = 'नया उत्पाद जोड़ना बहुत आसान है! बस अपने शिल्प की एक साफ फोटो लें और 10 सेकंड बोलकर बताएं। हमारी AI अपने आप विवरण और उचित मूल्य तैयार कर देगी।';
       } else if (lower.includes('ऑर्डर') || lower.includes('order')) {
-        replyText = 'आपके पास वर्तमान में 3 सक्रिय ऑर्डर हैं। 2 ऑर्डर तैयार होकर डिलीवरी के लिए प्रस्थान कर चुके हैं, और 1 नया ऑर्डर (कतान सिल्क दुपट्टा) आज प्राप्त हुआ है।';
+        replyText = 'आपके वास्तविक ऑर्डरों और उनकी स्थिति की जानकारी देखने के लिए कृपया डैशबोर्ड के "ऑर्डर" टैब पर जाएं।';
       } else if (lower.includes('कीमत') || lower.includes('मूल्य') || lower.includes('price')) {
         replyText = 'हुनरधारा का नियम है कि आपकी मजदूरी कम से कम ₹650 प्रति दिन मिले। कच्ची सामग्री की लागत + निर्माण दिनों की मजदूरी को जोड़कर हम उचित मूल्य तय करते हैं। आप स्टूडियो में दिन और सामग्री भरें, AI सही कीमत बताएगा।';
       } else if (lower.includes('बिक्री') || lower.includes('कमाई') || lower.includes('sales') || lower.includes('revenue')) {
-        replyText = 'बधाई हो! इस महीने आपके हुनर ने ₹42,500 की सीधी बिक्री की है। बिचौलियों के न होने से आपने ₹14,875 की अतिरिक्त बचत अपने परिवार के लिए की है।';
+        replyText = 'अपनी वास्तविक कुल बिक्री, भुगतान और बिचौलियों से बचाई गई राशि देखने के लिए कृपया "कमाई" टैब पर जाएं।';
       } else {
-        replyText = 'मैं समझ गया। आप निश्चिंत रहें, आपका हुनर अनमोल है। आप चाहें तो ऊपर दिए गए बटन दबाकर उत्पाद जोड़ सकते हैं या अपनी बिक्री की जानकारी ले सकते हैं।';
+        replyText = 'मैं समझ गया। आप निश्चिंत रहें, आपका हुनर अनमोल है। आप चाहें तो ऊपर दिए गए बटन दबाकर उत्पाद जोड़ सकते हैं या अपनी वास्तविक बिक्री की जानकारी ले सकते हैं।';
       }
     }
 
@@ -197,12 +197,8 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
 
       recognition.start();
     } else {
-      // Mock voice input fallback
-      setIsListening(true);
-      setTimeout(() => {
-        setIsListening(false);
-        handleSend('मुझे नया उत्पाद जोड़ना है');
-      }, 2000);
+      // Truthful notification when Speech Recognition is unavailable in browser
+      alert('आपके ब्राउज़र में वॉइस इनपुट समर्थित नहीं है। कृपया नीचे दिए गए इनपुट बॉक्स में लिखकर संदेश भेजें।');
     }
   };
 

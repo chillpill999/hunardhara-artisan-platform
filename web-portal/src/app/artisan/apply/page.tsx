@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AuthGuard from '@/components/AuthGuard';
@@ -18,6 +18,8 @@ import {
   Building2,
   FileCheck
 } from 'lucide-react';
+
+import { submitArtisanApplication, fetchMyApplications, ArtisanApplicationItem } from '@/lib/api';
 
 const CRAFT_OPTIONS = [
   'Varanasi Silk Brocade (वाराणसी रेशम)',
@@ -39,7 +41,7 @@ export default function ArtisanApplyPage() {
 }
 
 function ArtisanApplyContent() {
-  const { user, profile, role } = useAuth();
+  const { user, profile, role, refreshSession } = useAuth();
   const router = useRouter();
 
   const [craftType, setCraftType] = useState(CRAFT_OPTIONS[0]);
@@ -51,6 +53,30 @@ function ArtisanApplyContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [existingApp, setExistingApp] = useState<ArtisanApplicationItem | null>(null);
+  const [isLoadingExisting, setIsLoadingExisting] = useState(true);
+  const [isRefreshingRole, setIsRefreshingRole] = useState(false);
+
+  // Load existing application if any
+  useEffect(() => {
+    async function checkExisting() {
+      try {
+        const apps = await fetchMyApplications();
+        if (apps && apps.length > 0) {
+          setExistingApp(apps[0]);
+        }
+      } catch (e) {
+        console.warn('Could not load existing applications', e);
+      } finally {
+        setIsLoadingExisting(false);
+      }
+    }
+    if (user) {
+      checkExisting();
+    } else {
+      setIsLoadingExisting(false);
+    }
+  }, [user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,36 +85,45 @@ function ArtisanApplyContent() {
     setErrorMessage('');
 
     try {
-      // Direct insertion into artisan_applications table via Supabase client
-      const { error } = await supabase.from('artisan_applications').insert([
-        {
-          user_id: user.id,
-          craft_type: craftType,
-          cluster_location: clusterLocation,
-          craft_experience_years: parseInt(craftExperienceYears, 10) || 1,
-          production_capacity_monthly: parseInt(productionCapacityMonthly, 10) || 10,
-          sample_description: sampleDescription,
-          aadhaar_last_4: maskedAadhaarLast4,
-          status: 'pending'
-        }
-      ]);
+      const res = await submitArtisanApplication({
+        craft_category: craftType,
+        experience_years: parseInt(craftExperienceYears, 10) || 1,
+        state: clusterLocation || 'Uttar Pradesh',
+        district: clusterLocation || 'Varanasi',
+        full_name: profile?.full_name || user?.user_metadata?.full_name || '',
+        phone: profile?.phone || '',
+        workshop_info: `Capacity: ${productionCapacityMonthly} units/month, Location: ${clusterLocation}`,
+        craft_description: sampleDescription,
+      });
 
-      if (error) {
-        console.warn('Supabase application insert note:', error.message);
-        // If table or permissions has subtle variance, fallback gracefully for demo flow
+      if (!res.success) {
+        setErrorMessage(res.error || 'आवेदन सबमिट करने में विफल। कृपया पुनः प्रयास करें।');
+        return;
       }
 
       setIsSubmitted(true);
+      if (res.data) setExistingApp(res.data);
     } catch (err: any) {
       console.error('Artisan application submission error:', err);
-      // Still show success for testing/demo resilience
-      setIsSubmitted(true);
+      setErrorMessage(err.message || 'सर्वर से संपर्क नहीं हो सका। कृपया पुनः प्रयास करें।');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (role === 'artisan') {
+  const handleRefreshAndOpen = async () => {
+    setIsRefreshingRole(true);
+    try {
+      await refreshSession();
+      router.push('/artisan');
+    } catch {
+      router.push('/artisan');
+    } finally {
+      setIsRefreshingRole(false);
+    }
+  };
+
+  if (role === 'artisan' || existingApp?.status === 'approved') {
     return (
       <main className="min-h-screen bg-[#faf7f2] py-12 px-4 flex items-center justify-center">
         <div className="bg-white rounded-3xl border border-[#e6ded3] p-8 max-w-md text-center space-y-4 shadow-2xs">
@@ -96,53 +131,98 @@ function ArtisanApplyContent() {
             <CheckCircle2 className="w-8 h-8" />
           </div>
           <h2 className="text-xl font-extrabold text-[#1c1917]">
-            आप पहले से ही पंजीकृत कारीगर हैं!
+            आप प्रमाणित कारीगर हैं!
           </h2>
           <p className="text-xs text-[#545454]">
-            आपका खाता पहले से ही मास्टर कारीगर के रूप में सक्रिय है। आप सीधे अपने स्टूडियो में नए शिल्प जोड़ सकते हैं।
+            आपका खाता मास्टर कारीगर के रूप में स्वीकृत है। नया टोकन सक्रिय करने और स्टूडियो खोलने के लिए नीचे क्लिक करें।
           </p>
-          <Link
-            href="/artisan"
-            className="inline-flex items-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white text-xs font-bold px-6 py-2.5 rounded-full transition-all"
-          >
-            <span>कारीगर स्टूडियो खोलें</span>
-          </Link>
+          <div className="flex flex-col gap-2 pt-2">
+            <button
+              onClick={handleRefreshAndOpen}
+              disabled={isRefreshingRole}
+              className="inline-flex items-center justify-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white text-xs font-bold px-6 py-3 rounded-full transition-all shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              <span>{isRefreshingRole ? 'सत्र अपडेट हो रहा है...' : 'कारीगर स्टूडियो खोलें (Open Studio)'}</span>
+            </button>
+          </div>
         </div>
       </main>
     );
   }
 
-  if (isSubmitted) {
+  if (existingApp?.status === 'rejected') {
     return (
       <main className="min-h-screen bg-[#faf7f2] py-16 px-4 flex items-center justify-center">
         <div className="bg-white rounded-3xl border border-[#e6ded3] p-8 sm:p-10 max-w-lg text-center space-y-6 shadow-2xs">
-          <div className="w-20 h-20 rounded-full bg-emerald-50 text-[#1b4332] flex items-center justify-center mx-auto border border-emerald-200 shadow-sm">
-            <FileCheck className="w-10 h-10" />
+          <div className="w-20 h-20 rounded-full bg-red-50 text-red-700 flex items-center justify-center mx-auto border border-red-200 shadow-sm">
+            <AlertCircle className="w-10 h-10" />
           </div>
           <div className="space-y-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#1b4332] bg-emerald-50 px-3.5 py-1 rounded-full border border-emerald-200 inline-block">
-              आवेदन प्राप्त हुआ • Application Under Review
+            <span className="text-[11px] font-bold uppercase tracking-wider text-red-800 bg-red-50 px-3.5 py-1 rounded-full border border-red-200 inline-block">
+              आवेदन अस्वीकृत • Application Rejected
             </span>
             <h2 className="text-2xl font-extrabold text-[#1c1917] tracking-tight">
-              धन्यवाद! आपका कारीगर आवेदन दर्ज हो चुका है
+              कारीगर आवेदन अस्वीकृत
             </h2>
             <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-sm mx-auto">
-              हमारे क्षेत्रीय क्लस्टर समन्वयक 24-48 घंटों के भीतर आपके शिल्प विवरण का सत्यापन करेंगे। स्वीकृति मिलते ही आपका खाता स्वचालित रूप से विक्रेता स्टूडियो में अपग्रेड हो जाएगा।
+              प्रशासकीय समीक्षा के अनुसार आपका आवेदन अस्वीकृत कर दिया गया है।
+            </p>
+          </div>
+
+          <div className="bg-[#faf7f2] rounded-2xl p-4 border border-[#e6ded3] text-left space-y-2">
+            <div className="text-xs text-[#6f5f58]">
+              <strong>अस्वीकृति का कारण (Administrative Reason):</strong>
+            </div>
+            <div className="text-xs text-red-800 bg-red-50 p-3 rounded-xl border border-red-200 font-medium">
+              {existingApp.rejection_reason || 'दस्तावेज़ या शिल्प विवरण अपूर्ण था।'}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setExistingApp(null)}
+              className="inline-flex items-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white text-xs font-bold px-6 py-2.5 rounded-full transition-all shadow-xs cursor-pointer"
+            >
+              <span>नया आवेदन जमा करें (Re-apply)</span>
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (isSubmitted || existingApp?.status === 'pending') {
+    return (
+      <main className="min-h-screen bg-[#faf7f2] py-16 px-4 flex items-center justify-center">
+        <div className="bg-white rounded-3xl border border-[#e6ded3] p-8 sm:p-10 max-w-lg text-center space-y-6 shadow-2xs">
+          <div className="w-20 h-20 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto border border-amber-200 shadow-sm">
+            <Clock className="w-10 h-10" />
+          </div>
+          <div className="space-y-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 px-3.5 py-1 rounded-full border border-amber-200 inline-block">
+              आवेदन समीक्षाधीन • Under Review
+            </span>
+            <h2 className="text-2xl font-extrabold text-[#1c1917] tracking-tight">
+              आपका कारीगर आवेदन दर्ज है
+            </h2>
+            <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-sm mx-auto">
+              प्रशासक द्वारा आपके शिल्प विवरण की समीक्षा की जा रही है। स्वीकृति मिलते ही आपका खाता कारीगर स्टूडियो में अपग्रेड कर दिया जाएगा।
             </p>
           </div>
 
           <div className="bg-[#faf7f2] rounded-2xl p-4 border border-[#e6ded3] text-left space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-[#6f5f58]">शिल्प विधा:</span>
-              <span className="font-bold text-[#1c1917]">{craftType}</span>
+              <span className="font-bold text-[#1c1917]">{existingApp?.craft_category || craftType}</span>
             </div>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-[#6f5f58]">स्थान / क्लस्टर:</span>
-              <span className="font-bold text-[#1c1917]">{clusterLocation || 'प्रस्तुत'}</span>
+              <span className="text-[#6f5f58]">स्थान / राज्य:</span>
+              <span className="font-bold text-[#1c1917]">{existingApp?.state || clusterLocation || 'प्रस्तुत'}</span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-[#6f5f58]">समीक्षा स्थिति:</span>
-              <span className="font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">प्रतीक्षारत (Pending)</span>
+              <span className="font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">समीक्षाधीन (Pending Admin Review)</span>
             </div>
           </div>
 

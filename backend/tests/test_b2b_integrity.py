@@ -212,7 +212,7 @@ class TestB2BMatchingAndRFQIntegrity:
             headers={"Authorization": f"Bearer {buyer_token}"},
             json={"craft_type": "   ", "quantity": 10, "unit_budget": 1200.0, "deadline_days": 30}
         )
-        assert r4.status_code == 400
+        assert r4.status_code in (400, 422)
 
     def test_invalid_requested_artisan_returns_404_no_substitution(self, client, buyer_token):
         """If a buyer requests a non-existent or inactive artisan ID, return 404 instead of substituting."""

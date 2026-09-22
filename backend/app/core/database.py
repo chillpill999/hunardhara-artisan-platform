@@ -97,8 +97,28 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     """
     Initializes all database tables defined in the models.
+    For SQLite dev/testing, auto-migrates missing columns if tables pre-exist.
     """
     # Import all models to ensure they are registered with Base.metadata
     import app.models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    if "sqlite" in str(engine.url):
+        from sqlalchemy import inspect, text
+        try:
+            inspector = inspect(engine)
+            with engine.connect() as conn:
+                for table_name, table in Base.metadata.tables.items():
+                    if inspector.has_table(table_name):
+                        existing_cols = {c["name"] for c in inspector.get_columns(table_name)}
+                        for col in table.columns:
+                            if col.name not in existing_cols:
+                                col_type = col.type.compile(engine.dialect)
+                                try:
+                                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}"))
+                                    conn.commit()
+                                    logger.info(f"Auto-migrated missing SQLite column: {table_name}.{col.name}")
+                                except Exception as alt_err:
+                                    logger.warning(f"Could not add column {table_name}.{col.name}: {alt_err}")
+        except Exception as insp_err:
+            logger.warning(f"SQLite schema inspection note: {insp_err}")
     logger.info("Database tables initialized successfully.")

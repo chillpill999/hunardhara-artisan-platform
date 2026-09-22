@@ -31,6 +31,25 @@ def initialize_test_db():
             )
             session.add(cluster)
             session.commit()
+
+        if not session.query(Artisan).filter(Artisan.id == "artisan-bastar-001").first():
+            artisan = Artisan(
+                id="artisan-bastar-001",
+                full_name="Sukhdev Baghel",
+                phone_number="+919999000009",
+                masked_aadhaar="XXXXXXXX9124",
+                aadhaar_hash="test-aadhaar-hash-dpdp-001",
+                social_category="ST",
+                cluster_id="cluster-bastar-dhokra-01",
+                state="Chhattisgarh",
+                district="Bastar",
+                latitude=19.07,
+                longitude=82.03,
+                primary_craft="Bastar Dhokra",
+                is_active=True
+            )
+            session.add(artisan)
+            session.commit()
     finally:
         session.close()
 
@@ -55,7 +74,7 @@ class TestSecurityAndDPDPCompliance:
 
     def test_dpdp_consent_ledger_recording(self, client, db):
         """TC-SEC-01: Verifies explicit consent is recorded with SHA256 cryptographic provenance."""
-        artisan = db.query(Artisan).first()
+        artisan = db.query(Artisan).filter(Artisan.is_active == True).first()
         artisan_id = artisan.id if artisan else "art-varanasi-001"
         token = create_access_token(artisan_id, extra_claims={"app_metadata": {"role": "artisan"}})
         res = client.post(
@@ -91,25 +110,25 @@ class TestSecurityAndDPDPCompliance:
 
     def test_sovereign_data_erasure_success(self, client, db):
         """TC-SEC-03: Confirmed erasure purges PII and creates audit log."""
-        artisan = db.query(Artisan).first()
-        if not artisan:
-            artisan = Artisan(
-                id="art-varanasi-001",
-                full_name="Security Test Artisan",
-                phone_number="9000000001",
-                masked_aadhaar="XXXXXXXX0001",
-                aadhaar_hash="test-aadhaar-hash-0001",
-                cluster_id="cluster-bastar-dhokra-01",
-                state="Chhattisgarh",
-                district="Bastar",
-                latitude=19.07,
-                longitude=82.03,
-                primary_craft="Bastar Dhokra",
-            )
-            db.add(artisan)
-            db.commit()
-            db.refresh(artisan)
-        artisan_id = artisan.id
+        import uuid
+        artisan_id = f"art-erase-spec-{uuid.uuid4().hex[:8]}"
+        artisan = Artisan(
+            id=artisan_id,
+            full_name="Security Test Artisan",
+            phone_number=f"+91{uuid.uuid4().int % 10000000000:010d}",
+            masked_aadhaar="XXXXXXXX0001",
+            aadhaar_hash=f"test-aadhaar-hash-{artisan_id}",
+            cluster_id="cluster-bastar-dhokra-01",
+            state="Chhattisgarh",
+            district="Bastar",
+            latitude=19.07,
+            longitude=82.03,
+            primary_craft="Bastar Dhokra",
+            is_active=True
+        )
+        db.add(artisan)
+        db.commit()
+        db.refresh(artisan)
         token = create_access_token(artisan_id, extra_claims={"app_metadata": {"role": "artisan"}})
 
         res = client.post(
