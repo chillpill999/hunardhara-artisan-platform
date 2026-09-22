@@ -209,6 +209,11 @@ class OfflineMockVoiceEngine:
         Executes deterministic speech transcription, translation, attribute extraction,
         and copywriting for demo/test mode.
         """
+        from app.core.config import settings
+        if settings.is_production:
+            logger.critical("FATAL: OfflineMockVoiceEngine invoked in production environment!")
+            raise RuntimeError("CRITICAL_SECURITY_VIOLATION: Offline mock voice engine cannot be executed in production environment.")
+
         err, warning = self.validate_audio(audio_bytes, filename)
         if err:
             raise ValueError(err)

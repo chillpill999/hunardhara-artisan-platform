@@ -156,8 +156,8 @@ class OpenRouterService:
                 logger.warning(f"Gemma 4 catalog parsing error: {parse_err}. Output was: {raw_output[:200]}")
 
         # Fallback handling:
-        if settings.OFFLINE_MODE:
-            logger.info("Using deterministic offline engine fallback for catalog generation (explicit OFFLINE_MODE)")
+        if settings.OFFLINE_MODE and not settings.is_production:
+            logger.info("Using deterministic offline engine fallback for catalog generation (explicit OFFLINE_MODE in dev/test)")
             return offline_voice_engine.process_audio(
                 audio_bytes=b"\x00" * 100,
                 filename="synthetic_audio.wav",

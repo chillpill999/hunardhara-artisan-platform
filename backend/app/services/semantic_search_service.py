@@ -123,8 +123,13 @@ class SemanticSearchService:
         parsed = self.parse_natural_language_query(query)
         query_vec = embedding_service.embed_text(parsed["clean_semantic_prompt"] or query)
 
-        # If no items provided, use mock marketplace catalog
+        # If no items provided: in production return empty list truthfully; in dev/test use fixture
         if not catalog_items:
+            from app.core.config import settings
+            if settings.is_production:
+                logger.info("Semantic search: No catalog items provided in production. Returning empty list.")
+                return []
+
             catalog_items = [
                 {
                     "id": "item-001",

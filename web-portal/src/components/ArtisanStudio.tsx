@@ -1185,9 +1185,11 @@ export default function ArtisanStudio() {
 
       // 4. Update Client Storage & Event Notification ONLY with Canonical Backend Data
       const normalized = normalizeProduct(canonicalProduct);
-      normalized.artisan_name = user.user_metadata?.full_name || profile?.full_name || normalized.artisan_name || 'प्रमाणित शिल्पकार (Verified Artisan)';
-      normalized.artisan_state = user.user_metadata?.state || profile?.state || normalized.artisan_state || '';
-      saveUploadedProduct(normalized);
+      if (normalized) {
+        normalized.artisan_name = user.user_metadata?.full_name || profile?.full_name || normalized.artisan_name || 'प्रमाणित शिल्पकार (Verified Artisan)';
+        normalized.artisan_state = user.user_metadata?.state || profile?.state || normalized.artisan_state || '';
+        saveUploadedProduct(normalized);
+      }
 
       // 5. AI Learning Loop: Record Artisan Review Outcome (background telemetry)
       try {

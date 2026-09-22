@@ -21,9 +21,10 @@ class AppConstants {
   static const Color amberGold = Color(0xFFD97706);
   static const Color successGreen = Color(0xFF047857);
 
-  // Default Demo Artisan ID for offline/development mode
-  static const String defaultArtisanId = 'artisan-bastar-001';
-  static const String defaultDemoToken = 'demo-artisan-bearer-token';
+  // Development / Offline fallback credentials (strictly empty in production)
+  static const bool isProduction = bool.fromEnvironment('dart.vm.product', defaultValue: false);
+  static const String defaultArtisanId = isProduction ? '' : 'artisan-bastar-001';
+  static const String defaultDemoToken = isProduction ? '' : 'demo-artisan-bearer-token';
 }
 
 class AppColors {

@@ -13,9 +13,9 @@ services:
       - key: DEBUG
         value: "false"
       - key: OFFLINE_MODE
-        value: "true"
+        value: "false"
       - key: MOCK_AI_SERVICES
-        value: "true"
+        value: "false"
       - key: STATIC_DIR
         value: /app/static
       - key: SUPABASE_JWT_SECRET

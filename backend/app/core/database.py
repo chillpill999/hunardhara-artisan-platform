@@ -76,6 +76,9 @@ else:
 try:
     engine = create_engine(db_url, connect_args=connect_args, **engine_kwargs)
 except Exception as e:
+    if settings.is_production:
+        logger.critical(f"FATAL: Production database connection failed for {db_url}: {e}")
+        raise RuntimeError(f"CRITICAL_DATABASE_FAILURE: Failed to create production engine for {db_url}: {e}") from e
     logger.warning(f"Could not create engine for {db_url}: {e}. Falling back to SQLite.")
     sqlite_url = "sqlite:///./artisan_platform.db"
     engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
@@ -98,7 +101,12 @@ def init_db() -> None:
     """
     Initializes all database tables defined in the models.
     For SQLite dev/testing, auto-migrates missing columns if tables pre-exist.
+    In production: strictly forbids SQLite engine.
     """
+    if settings.is_production and "sqlite" in str(engine.url).lower():
+        logger.critical("FATAL: Production database cannot be SQLite. Crashing startup.")
+        raise RuntimeError("CRITICAL_DATABASE_FAILURE: SQLite is forbidden in production environment.")
+
     # Import all models to ensure they are registered with Base.metadata
     import app.models  # noqa: F401
     Base.metadata.create_all(bind=engine)

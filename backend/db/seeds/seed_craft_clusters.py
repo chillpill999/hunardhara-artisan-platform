@@ -55,6 +55,11 @@ def generate_cluster_embedding(cluster_seed: int, item_seed: int, dim: int = 768
 
 
 def seed_database():
+    from app.core.config import settings
+    if settings.is_production:
+        logger.critical("FATAL: seed_database() called in production environment! Refusing to execute.")
+        raise RuntimeError("PRODUCTION_SAFETY_VIOLATION: Database seeding is forbidden in production environments.")
+
     logger.info("Initializing database tables...")
     init_db()
     

@@ -231,8 +231,16 @@ async def speak_to_catalog(
             content={"success": False, "error": err, "warning": warning}
         )
 
-    # 2. Offline mock mode check (test/demo only)
+    # 2. Offline mock mode check (test/demo only - forbidden in production)
     if settings.OFFLINE_MODE:
+        if settings.is_production:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False,
+                    "error": "OFFLINE_MODE_FORBIDDEN: Offline mock mode cannot run in production."
+                }
+            )
         mock_res = offline_voice_engine.process_audio(audio_bytes, filename=filename)
         return {
             "success": True,

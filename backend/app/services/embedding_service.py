@@ -18,17 +18,27 @@ class EmbeddingService:
 
     def __init__(self, seed_data_path: Optional[str] = None):
         self.benchmarks: List[Dict[str, Any]] = []
-        # Attempt to locate benchmark market dataset (prioritize production backend/data/)
-        possible_paths = [
-            seed_data_path,
-            os.path.join(os.path.dirname(__file__), "..", "..", "data", "market_benchmarks.json"),
-            os.path.join(os.getcwd(), "backend", "data", "market_benchmarks.json"),
-            os.path.join(os.getcwd(), "data", "market_benchmarks.json"),
-            os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures", "seed_data", "benchmark_products.json"),
-            os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures", "seeds", "benchmark_products.json"),
-            os.path.join(os.getcwd(), "backend", "tests", "fixtures", "seed_data", "benchmark_products.json"),
-            os.path.join(os.getcwd(), "tests", "fixtures", "seed_data", "benchmark_products.json"),
-        ]
+        from app.core.config import settings
+        if settings.is_production:
+            # Production: search strictly production datasets; never load test fixtures
+            possible_paths = [
+                seed_data_path,
+                os.path.join(os.path.dirname(__file__), "..", "..", "data", "market_benchmarks.json"),
+                os.path.join(os.getcwd(), "backend", "data", "market_benchmarks.json"),
+                os.path.join(os.getcwd(), "data", "market_benchmarks.json"),
+            ]
+        else:
+            # Development/Testing: search local datasets and test fixtures
+            possible_paths = [
+                seed_data_path,
+                os.path.join(os.path.dirname(__file__), "..", "..", "data", "market_benchmarks.json"),
+                os.path.join(os.getcwd(), "backend", "data", "market_benchmarks.json"),
+                os.path.join(os.getcwd(), "data", "market_benchmarks.json"),
+                os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures", "seed_data", "benchmark_products.json"),
+                os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures", "seeds", "benchmark_products.json"),
+                os.path.join(os.getcwd(), "backend", "tests", "fixtures", "seed_data", "benchmark_products.json"),
+                os.path.join(os.getcwd(), "tests", "fixtures", "seed_data", "benchmark_products.json"),
+            ]
         for p in possible_paths:
             if p and os.path.exists(p):
                 try:

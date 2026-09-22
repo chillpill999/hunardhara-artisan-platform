@@ -176,35 +176,14 @@ export function saveUploadedProduct(product: Product): void {
  * Robust normalization function to map both FastAPI backend schemas and local product drafts
  * into the standard frontend Product interface with 100% null-safety.
  */
-export function normalizeProduct(raw: any): Product {
-  if (!raw) {
-    return {
-      id: `prod-${Date.now()}`,
-      artisan_id: '11111111-1111-1111-1111-111111111111',
-      title_en: 'Handcrafted Heritage Item',
-      title_hi: 'पारंपरिक हस्तशिल्प',
-      craft_type: 'Traditional Craft',
-      materials: ['Natural Handcrafted Materials'],
-      dimensions: 'Standard',
-      production_time_days: 5,
-      description_en: 'Authentic handcrafted heritage item.',
-      description_hi: 'प्रामाणिक हस्तशिल्प।',
-      seo_tags: ['Indian Craft'],
-      studio_image_url: '/logo.png',
-      floor_price: 1000,
-      recommended_retail_d2c: 2000,
-      wholesale_b2b: 1400,
-      available_stock: 5,
-      is_published: true,
-      created_at: new Date().toISOString(),
-      artisan_name: 'Master Artisan',
-      artisan_state: 'India',
-      gi_craft_registered: false,
-      gi_artisan_authorization_status: 'NOT_PROVIDED',
-      gi_product_provenance_status: 'UNVERIFIED',
-      is_gi_certified_product: false,
-      gi_certified: false,
-    };
+export function normalizeProduct(raw: any): Product | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const rawId = String(raw.id || '').trim();
+  if (!rawId || LEGACY_MOCK_IDS.has(rawId)) {
+    return null;
   }
 
   // Title handling
@@ -292,7 +271,7 @@ export function normalizeProduct(raw: any): Product {
   );
 
   return {
-    id: String(raw.id || `prod-${Date.now()}`),
+    id: rawId,
     artisan_id: String(raw.artisan_id || ''),
     cluster_id: raw.cluster_id ? String(raw.cluster_id) : undefined,
     title_en: titleEn,
@@ -332,7 +311,7 @@ export function normalizeProduct(raw: any): Product {
 
 export async function fetchProducts(): Promise<Product[]> {
   purgeLegacyMockProducts();
-  const localUploaded = getUploadedProducts().map(normalizeProduct);
+  const localUploaded = getUploadedProducts().map(normalizeProduct).filter((p): p is Product => p !== null);
   const removedIds = new Set(getRemovedProductIds());
 
   // 1. Fetch from Supabase published products
@@ -344,7 +323,7 @@ export async function fetchProducts(): Promise<Product[]> {
       .eq("is_published", true)
       .order("created_at", { ascending: false });
     if (!supaErr && Array.isArray(supaData) && supaData.length > 0) {
-      supabaseProducts = supaData.map(normalizeProduct);
+      supabaseProducts = supaData.map(normalizeProduct).filter((p): p is Product => p !== null);
     }
   } catch (err) {
     console.warn("Supabase fetchProducts note:", err);
@@ -357,7 +336,7 @@ export async function fetchProducts(): Promise<Product[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        backendProducts = data.map(normalizeProduct);
+        backendProducts = data.map(normalizeProduct).filter((p): p is Product => p !== null);
       }
     }
   } catch {
@@ -384,12 +363,18 @@ export async function fetchProductById(id: string): Promise<Product | null> {
   // 1. Check local client storage
   const localUploaded = getUploadedProducts();
   const localFound = localUploaded.find((p) => p.id === id);
-  if (localFound) return normalizeProduct(localFound);
+  if (localFound) {
+    const norm = normalizeProduct(localFound);
+    if (norm) return norm;
+  }
 
   const aliasId = ID_ALIASES[id];
   if (aliasId) {
     const aliasLocal = localUploaded.find((p) => p.id === aliasId);
-    if (aliasLocal) return normalizeProduct(aliasLocal);
+    if (aliasLocal) {
+      const norm = normalizeProduct(aliasLocal);
+      if (norm) return norm;
+    }
   }
 
   // 2. Check Supabase craft_products table
@@ -401,7 +386,8 @@ export async function fetchProductById(id: string): Promise<Product | null> {
       .maybeSingle();
 
     if (!supaErr && supaProduct && !removedIds.has(supaProduct.id)) {
-      return normalizeProduct(supaProduct);
+      const norm = normalizeProduct(supaProduct);
+      if (norm) return norm;
     }
 
     if (aliasId) {
@@ -412,7 +398,8 @@ export async function fetchProductById(id: string): Promise<Product | null> {
         .maybeSingle();
 
       if (!supaAliasErr && supaAliasProduct && !removedIds.has(supaAliasProduct.id)) {
-        return normalizeProduct(supaAliasProduct);
+        const norm = normalizeProduct(supaAliasProduct);
+        if (norm) return norm;
       }
     }
   } catch (err) {
@@ -424,12 +411,18 @@ export async function fetchProductById(id: string): Promise<Product | null> {
     const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
-      if (data && !removedIds.has(data.id)) return normalizeProduct(data);
+      if (data && !removedIds.has(data.id)) {
+        const norm = normalizeProduct(data);
+        if (norm) return norm;
+      }
     } else if (aliasId) {
       const resAlias = await fetch(`${API_BASE}/products/${aliasId}`, { signal: AbortSignal.timeout(3000) });
       if (resAlias.ok) {
         const data = await resAlias.json();
-        if (data && !removedIds.has(data.id)) return normalizeProduct(data);
+        if (data && !removedIds.has(data.id)) {
+          const norm = normalizeProduct(data);
+          if (norm) return norm;
+        }
       }
     }
   } catch {

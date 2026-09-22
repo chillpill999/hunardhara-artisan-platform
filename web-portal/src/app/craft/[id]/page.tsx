@@ -1,20 +1,16 @@
-import { fetchProductById } from "@/lib/api";
+import { fetchProductById, fetchProducts } from "@/lib/api";
 import CraftDetailClient from "@/components/CraftDetailClient";
 
 export async function generateStaticParams() {
-  return [
-    { id: 'prod-001' },
-    { id: 'prod-002' },
-    { id: 'prod-003' },
-    { id: 'prod-004' },
-    { id: 'prod-005' },
-    { id: 'prod-varanasi-001' },
-    { id: 'prod-bastar-001' },
-    { id: 'prod-bastar-002' },
-    { id: 'prod-khurja-001' },
-    { id: 'prod-madhubani-001' },
-    { id: 'prod-channapatna-001' },
-  ];
+  try {
+    const products = await fetchProducts();
+    if (products && products.length > 0) {
+      return products.map((p) => ({ id: p.id }));
+    }
+  } catch {
+    // Build time static export
+  }
+  return [{ id: 'overview' }];
 }
 
 export default async function CraftDetailPage({

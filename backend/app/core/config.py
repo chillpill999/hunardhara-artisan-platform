@@ -78,6 +78,18 @@ class Settings(BaseSettings):
     )
 
     @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def is_test(self) -> bool:
+        return self.ENVIRONMENT.lower() == "test"
+
+    @property
+    def is_development(self) -> bool:
+        return self.ENVIRONMENT.lower() in ("development", "dev", "local")
+
+    @property
     def is_sqlite(self) -> bool:
         return "sqlite" in self.DATABASE_URL.lower()
 
@@ -109,6 +121,10 @@ class Settings(BaseSettings):
         """
         Fails fast if production environment has development fallbacks or insecure defaults.
         """
+        valid_envs = {"development", "dev", "local", "test", "production"}
+        if self.ENVIRONMENT.lower() not in valid_envs:
+            raise ValueError(f"Unknown ENVIRONMENT '{self.ENVIRONMENT}'. Supported environments are: development, test, production.")
+
         if self.ENVIRONMENT.lower() == "production":
             errors = []
             if self.DEBUG:
