@@ -16,7 +16,7 @@ import {
   Building2,
   MapPin,
   CheckCircle2,
-  Sparkles
+  PackageOpen
 } from 'lucide-react';
 
 export default function MarketplacePage() {
@@ -187,7 +187,7 @@ export default function MarketplacePage() {
         {filteredProducts.length === 0 ? (
           <div className="bg-white rounded-3xl border border-[#e6ded3] p-12 text-center space-y-4 max-w-md mx-auto shadow-2xs">
             <div className="w-16 h-16 rounded-full bg-[#faf7f2] flex items-center justify-center mx-auto text-[#6f5f58]">
-              <Sparkles className="w-8 h-8 text-[#c85a32]" />
+              <PackageOpen className="w-8 h-8 text-[#c85a32]" />
             </div>
             <h3 className="text-lg font-bold text-[#1c1917]">कोई शिल्प उपलब्ध नहीं है</h3>
             <p className="text-xs text-[#545454]">

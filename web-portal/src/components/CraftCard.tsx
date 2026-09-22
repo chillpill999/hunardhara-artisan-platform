@@ -78,7 +78,7 @@ export default function CraftCard({ product }: CraftCardProps) {
           <div className="absolute bottom-3 left-3.5">
             <span className="text-[10px] font-extrabold text-white bg-[#1b4332] px-2.5 py-1 rounded-full shadow-md flex items-center gap-1 border border-[#e9a83a]/40">
               <span className="w-1.5 h-1.5 rounded-full bg-[#e9a83a] animate-ping" />
-              <span>✨ Live Upload</span>
+              <span>Live Upload</span>
             </span>
           </div>
         )}

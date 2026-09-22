@@ -40,7 +40,7 @@ import {
   CheckCircle2,
   Eye,
   Package,
-  Sparkles,
+  Upload,
   ExternalLink,
   X,
   MessageSquare,
@@ -656,7 +656,7 @@ export default function AdminDashboardPage() {
               <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#e6ded3] bento-shadow space-y-1">
                 <div className="text-[11px] uppercase tracking-wider text-[#6f5f58] font-bold flex items-center justify-between">
                   <span>कारीगरों द्वारा लाइव अपलोड</span>
-                  <Sparkles className="w-4 h-4 text-[#e9a83a]" />
+                  <Upload className="w-4 h-4 text-[#c85a32]" />
                 </div>
                 <div className="font-sans text-3xl font-extrabold text-[#c85a32]">
                   {products.filter((p) => p.id.startsWith('prod-live-')).length}
@@ -792,8 +792,8 @@ export default function AdminDashboardPage() {
 
                         <td className="py-3 px-4">
                           {p.id.startsWith('prod-live-') ? (
-                            <span className="bg-[#e8f5e9] text-[#1b4332] text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1 w-fit border border-[#2d6a4f]/20">
-                              <Sparkles className="w-3 h-3 text-[#e9a83a]" />
+                            <span className="bg-[#e8f5e9] text-[#1b4332] text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit border border-[#2d6a4f]/20">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#1b4332] animate-ping" />
                               <span>Live Upload</span>
                             </span>
                           ) : (

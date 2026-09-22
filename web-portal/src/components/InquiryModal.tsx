@@ -10,7 +10,6 @@ import {
   Send,
   CheckCircle2,
   MessageSquareQuote,
-  Sparkles,
   Phone,
   Mail,
   User,
@@ -266,7 +265,7 @@ export default function InquiryModal({
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Zero-Middleman Guarantee Pill */}
               <div className="bg-[#e8f5e9] border border-[#c8e6c9] rounded-2xl p-3 text-[11px] text-[#1b4332] flex items-start gap-2">
-                <Sparkles className="w-4 h-4 text-[#2d6a4f] shrink-0 mt-0.5" />
+                <ShieldCheck className="w-4 h-4 text-[#2d6a4f] shrink-0 mt-0.5" />
                 <div>
                   <strong>सीधा संपर्क गारंटी:</strong> यह संदेश किसी दलाल या बिचौलिये के पास नहीं, सीधे कारीगर के कार्यशाला खाते में जाता है।
                 </div>

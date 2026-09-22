@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth, UserRole } from '@/context/AuthContext';
 import {
-  Sparkles,
+  ShieldCheck,
   AlertCircle,
   Phone,
   User as UserIcon,
@@ -119,7 +119,7 @@ export default function OnboardingModal() {
         {/* Header */}
         <div className="text-center space-y-2">
           <div className="inline-flex items-center gap-1.5 bg-[#faf7f2] border border-[#e6ded3] text-[#c85a32] text-[11px] font-bold px-3.5 py-1 rounded-full shadow-2xs">
-            <Sparkles className="w-3.5 h-3.5 text-[#e9a83a]" />
+            <ShieldCheck className="w-3.5 h-3.5 text-[#c85a32]" />
             <span>Google Sign-in • पहला लॉगिन सेटअप</span>
           </div>
 

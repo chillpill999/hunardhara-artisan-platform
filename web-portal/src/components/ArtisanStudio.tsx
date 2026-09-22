@@ -39,7 +39,9 @@ import {
   Edit3,
   Eye,
   Check,
-  Sparkles,
+  Cpu,
+  Loader2,
+  Lightbulb,
   Languages,
   Radio,
   Clock,
@@ -1256,7 +1258,7 @@ export default function ArtisanStudio() {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#e9a83a]/20 border border-[#e9a83a]/40 text-xs font-bold text-[#e9a83a]">
-              <Sparkles className="w-3.5 h-3.5" />
+              <Cpu className="w-3.5 h-3.5" />
               <span>सर्वम एआई (Sarvam AI) द्वारा संचालित</span>
             </div>
             <h2 className="font-sans text-2xl sm:text-3xl font-extrabold text-white">
@@ -1472,12 +1474,12 @@ export default function ArtisanStudio() {
                   </span>
                   {isStudioProcessing ? (
                     <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-                      <Sparkles className="w-3 h-3 text-amber-600" />
+                      <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
                       <span>एआई स्टूडियो संवर्धन जारी...</span>
                     </span>
                   ) : studioImageUrl ? (
                     <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-emerald-600" />
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                       <span>एआई स्टूडियो 1:1 तैयार</span>
                     </span>
                   ) : null}
@@ -1606,7 +1608,7 @@ export default function ArtisanStudio() {
           <div className="space-y-2 pt-1 border-t border-[#e6ded3]/60">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-[#6f5f58] uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-[#e9a83a]" />
+                <Lightbulb className="w-3.5 h-3.5 text-[#e9a83a]" />
                 <span>वैकल्पिक डेमो उदाहरण (Try an Example):</span>
               </span>
               <span className="text-[11px] text-[#2d6a4f] font-semibold">
@@ -1773,15 +1775,15 @@ export default function ArtisanStudio() {
       {step === 3 && isAiProcessing && (
         <div className="bg-white rounded-3xl border border-[#e6ded3] p-8 sm:p-12 text-center space-y-6 bento-shadow">
           <div className="relative w-20 h-20 mx-auto">
-            <div className="w-20 h-20 rounded-full bg-[#1b4332]/10 border-4 border-[#1b4332] border-t-[#e9a83a] animate-spin" />
-            <div className="absolute inset-0 flex items-center justify-center text-xl">
-              ✨
+            <div className="w-20 h-20 rounded-full bg-[#1b4332]/10 border-4 border-[#1b4332] border-t-[#c85a32] animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Cpu className="w-8 h-8 text-[#1b4332]" />
             </div>
           </div>
 
           <div className="space-y-2">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1b4332] bg-[#1b4332]/10 px-3 py-1 rounded-full">
-              <Sparkles className="w-3.5 h-3.5 text-[#e9a83a]" />
+              <Cpu className="w-3.5 h-3.5 text-[#1b4332]" />
               <span>एआई शिल्प विश्लेषक (AI Craft Studio)</span>
             </div>
             <h3 className="font-sans text-xl sm:text-2xl font-bold text-[#231f1e]">
@@ -1929,7 +1931,7 @@ export default function ArtisanStudio() {
                     <span className="text-xs font-bold text-[#6f5f58]">दृश्य विकल्प (Perspective):</span>
                     {isStudioProcessing && (
                       <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-                        <Sparkles className="w-3 h-3 text-amber-600" />
+                        <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
                         <span>एआई स्टूडियो संवर्धन...</span>
                       </span>
                     )}
@@ -1942,7 +1944,7 @@ export default function ArtisanStudio() {
                         !showOriginalPhoto ? 'bg-white text-[#1b4332] shadow-xs' : 'text-[#6f5f58] hover:text-[#1b4332]'
                       }`}
                     >
-                      <Sparkles className="w-3.5 h-3.5 text-[#e9a83a]" />
+                      <Eye className="w-3.5 h-3.5 text-[#1b4332]" />
                       <span>स्टूडियो 1:1</span>
                     </button>
                     <button
@@ -1987,7 +1989,7 @@ export default function ArtisanStudio() {
                     </div>
                     {!showOriginalPhoto && (studioImageUrl || photoUrl.startsWith('/static/studio/')) && (
                       <div className="bg-[#1b4332]/90 backdrop-blur-xs text-[#e9a83a] text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 border border-white/20 shadow-xs">
-                        <Sparkles className="w-3 h-3 text-[#e9a83a]" />
+                        <CheckCircle2 className="w-3 h-3 text-[#e9a83a]" />
                         <span>1:1 Isolated • Procedural Shadows</span>
                       </div>
                     )}
@@ -1998,7 +2000,7 @@ export default function ArtisanStudio() {
                     <div className="bg-white/95 backdrop-blur-xs text-[#231f1e] border border-[#e6ded3] text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs flex items-center gap-1">
                       {!showOriginalPhoto && (studioImageUrl || photoUrl.startsWith('/static/studio/')) ? (
                         <>
-                          <Sparkles className="w-3 h-3 text-[#e9a83a]" />
+                          <Eye className="w-3 h-3 text-[#1b4332]" />
                           <span>स्टूडियो प्रस्तुति (Studio 1:1)</span>
                         </>
                       ) : (
@@ -2010,7 +2012,7 @@ export default function ArtisanStudio() {
                     </div>
                     {visionDetectedCraft && (
                       <div className="bg-[#1b4332]/90 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 border border-white/20 shadow-xs">
-                        <Sparkles className="w-3 h-3 text-[#e9a83a]" />
+                        <Cpu className="w-3 h-3 text-[#e9a83a]" />
                         <span>एआई विज़न: {visionDetectedCraft}</span>
                       </div>
                     )}
