@@ -34,7 +34,7 @@ const CRAFT_OPTIONS = [
 
 export default function ArtisanApplyPage() {
   return (
-    <AuthGuard allowedRoles={['customer', 'artisan', 'admin']}>
+    <AuthGuard allowedRoles={['customer', 'artisan', 'admin', 'super_admin']}>
       <ArtisanApplyContent />
     </AuthGuard>
   );
