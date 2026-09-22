@@ -1,3 +1,4 @@
+from __future__ import annotations
 import re
 import hashlib
 import hmac
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from fastapi import Header, HTTPException, Request, status, Depends
 import jwt
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 
 password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 logger = logging.getLogger("artisan_platform.security")
@@ -227,8 +229,7 @@ def _check_user_active_status(user_id: str, role: str, db: Optional[Any] = None)
             except Exception:
                 pass
 
-    from sqlalchemy.orm import Session as SASession
-    if db is not None and isinstance(db, SASession):
+    if db is not None and isinstance(db, Session):
         _inspect(db)
     else:
         try:
