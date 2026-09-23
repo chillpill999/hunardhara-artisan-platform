@@ -382,17 +382,17 @@ def create_product(
         if not product_in.artisan_id:
             product_in.artisan_id = current_user.id
 
-    # Strictly require an existing, active Artisan record. NEVER fabricate fake caste, phone, or Aadhaar data.
+    # Enforce registered artisan check: must exist in database
     artisan_record = db.query(Artisan).filter(Artisan.id == product_in.artisan_id).first()
     if not artisan_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"ARTISAN_NOT_FOUND: Artisan profile '{product_in.artisan_id}' not found — complete onboarding first before creating craft products."
+            detail=f"ARTISAN_NOT_FOUND: Artisan '{product_in.artisan_id}' is not onboarded in certified database."
         )
     if not artisan_record.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="ACCOUNT_DEACTIVATED: Cannot create products for an inactive or deactivated artisan account."
+            detail="ARTISAN_DEACTIVATED: This artisan account has been deactivated."
         )
 
     # Validate media URLs ownership to prevent cross-user file association or unauthorized deletion
@@ -570,7 +570,13 @@ def get_my_products(
     db: Session = Depends(get_db)
 ):
     """Returns products owned by the authenticated artisan."""
-    return db.query(Product).filter(Product.artisan_id == current_user.id).all()
+    target_ids = {current_user.id}
+    artisan = db.query(Artisan).filter(
+        (Artisan.id == current_user.id) | (getattr(Artisan, "user_id", Artisan.id) == current_user.id)
+    ).first()
+    if artisan:
+        target_ids.add(artisan.id)
+    return db.query(Product).filter(Product.artisan_id.in_(list(target_ids))).order_by(Product.created_at.desc()).all()
 
 
 @router.get("/{product_id}", response_model=ProductResponse, summary="Get Product by ID")
@@ -707,7 +713,14 @@ def delete_product(
     if not prod:
         raise HTTPException(status_code=404, detail=f"Product with ID '{product_id}' not found")
 
-    if not current_user.is_admin and prod.artisan_id != current_user.id:
+    target_ids = {current_user.id}
+    artisan = db.query(Artisan).filter(
+        (Artisan.id == current_user.id) | (getattr(Artisan, "user_id", Artisan.id) == current_user.id)
+    ).first()
+    if artisan:
+        target_ids.add(artisan.id)
+
+    if not current_user.is_admin and prod.artisan_id not in target_ids:
         raise HTTPException(
             status_code=403,
             detail="FORBIDDEN_OWNERSHIP: You are not authorized to delete products belonging to another artisan."

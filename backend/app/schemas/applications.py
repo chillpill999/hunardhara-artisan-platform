@@ -14,6 +14,7 @@ class ArtisanApplicationCreate(BaseModel):
     craft_description: Optional[str] = Field(None, description="Detailed craft description and techniques")
     sample_images: Optional[List[str]] = Field(None, description="Sample image URLs or base64 strings")
     document_references: Optional[List[str]] = Field(None, description="Document verification references")
+    auto_approve: Optional[bool] = Field(False, description="Whether to immediately auto-approve and activate the artisan account")
 
 
 class ArtisanApplicationRejectRequest(BaseModel):

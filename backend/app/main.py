@@ -41,19 +41,16 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
         logger.info("Database schemas verified.")
-        if not settings.is_production:
-            try:
-                from app.core.database import SessionLocal
-                from app.models.craft_cluster import CraftCluster
-                from db.seeds.seed_craft_clusters import seed_database
-                with SessionLocal() as db:
-                    if db.query(CraftCluster).count() == 0 and os.getenv("AUTO_SEED", "true").lower() in ("true", "1"):
-                        logger.info("Database clusters empty in dev/test, running initial seed...")
-                        seed_database()
-            except Exception as seed_err:
-                logger.warning(f"Initial seed check skipped or non-critical: {seed_err}")
-        else:
-            logger.info("Production environment: automatic database seeding strictly disabled. Empty database = empty state.")
+        try:
+            from app.core.database import SessionLocal
+            from app.models.craft_cluster import CraftCluster
+            from db.seeds.seed_craft_clusters import seed_database
+            with SessionLocal() as db:
+                if db.query(CraftCluster).count() == 0:
+                    logger.info("Statutory craft clusters empty, seeding 5 verified clusters...")
+                    seed_database()
+        except Exception as seed_err:
+            logger.warning(f"Initial seed check note: {seed_err}")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
         

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { fetchArtisanEarnings } from '@/lib/api';
 import {
   TrendingUp,
   ShieldCheck,
@@ -38,35 +38,25 @@ export default function ArtisanRevenueLedger() {
   const [dbPayouts, setDbPayouts] = useState<RealPayoutItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch real database records protected by Supabase RLS
+  // Fetch real database records via FastAPI backend single source of truth
   useEffect(() => {
     async function loadRealEarnings() {
-      if (!user?.id) {
-        setDbPayouts([]);
-        setIsLoading(false);
-        return;
-      }
       try {
         setIsLoading(true);
-        const { data, error } = await supabase
-          .from('artisan_earnings')
-          .select('id, order_id, payout_date, product_title, order_type, quantity, gross_amount, artisan_wage_payout, middleman_saved, status')
-          .eq('artisan_id', user.id)
-          .order('payout_date', { ascending: false });
-
-        if (!error && data && data.length > 0) {
-          const mapped: RealPayoutItem[] = data.map((item) => ({
+        const data = await fetchArtisanEarnings();
+        if (data && data.recent_payouts && data.recent_payouts.length > 0) {
+          const mapped: RealPayoutItem[] = data.recent_payouts.map((item) => ({
             id: item.id,
             order_id: item.order_id,
-            order_date: new Date(item.payout_date).toISOString().split('T')[0],
-            craft_title: item.product_title,
-            buyer_name: 'Direct Verified Patron',
+            order_date: item.order_date,
+            craft_title: item.craft_title,
+            buyer_name: item.buyer_name || 'Direct Verified Patron',
             order_type: item.order_type || 'D2C Retail',
             items_count: item.quantity || 1,
             total_order_value: Number(item.gross_amount),
-            artisan_wage_payout: Number(item.artisan_wage_payout),
-            middleman_saved: Number(item.middleman_saved),
-            status: item.status || 'PAID',
+            artisan_wage_payout: Number(item.artisan_net_payout),
+            middleman_saved: Number(item.middleman_cut_prevented),
+            status: item.payment_status || 'PAID',
           }));
           setDbPayouts(mapped);
         } else {

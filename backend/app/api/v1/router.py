@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import health, clusters, products, pricing, compliance, b2b, orders, earnings, applications, voice, ai_assistant, storage, artisans, admin
+from app.api.v1 import health, clusters, products, pricing, compliance, b2b, orders, earnings, applications, voice, ai_assistant, storage, artisans, admin, inquiries
 
 api_router = APIRouter()
 
@@ -23,9 +23,11 @@ api_router.include_router(orders.router)
 api_router.include_router(earnings.router)
 api_router.include_router(applications.router)
 api_router.include_router(admin.router)
+api_router.include_router(inquiries.router)
 
 # Register Hunardhara AI Commerce Assistant (Gateway & Observability)
 api_router.include_router(ai_assistant.router)
+
 
 
 

@@ -101,11 +101,11 @@ function AccountContent() {
               </p>
               <div className="pt-2">
                 <Link
-                  href="/artisan/apply"
+                  href="/artisan"
                   className="inline-flex items-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white font-bold text-xs sm:text-sm px-6 py-3 rounded-full transition-all shadow-xs"
                 >
                   <Palette className="w-4 h-4" />
-                  <span>कारीगर बनने हेतु आवेदन करें (Apply as Artisan)</span>
+                  <span>कारीगर कार्यशाला खोलें (Open Artisan Studio)</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>

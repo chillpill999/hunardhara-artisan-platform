@@ -104,8 +104,7 @@ def init_db() -> None:
     In production: strictly forbids SQLite engine.
     """
     if settings.is_production and "sqlite" in str(engine.url).lower():
-        logger.critical("FATAL: Production database cannot be SQLite. Crashing startup.")
-        raise RuntimeError("CRITICAL_DATABASE_FAILURE: SQLite is forbidden in production environment.")
+        raise RuntimeError("CRITICAL_DATABASE_FAILURE: SQLite is forbidden in production environment")
 
     # Import all models to ensure they are registered with Base.metadata
     import app.models  # noqa: F401

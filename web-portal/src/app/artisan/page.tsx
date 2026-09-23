@@ -7,7 +7,7 @@ import ArtisanRevenueLedger from '@/components/ArtisanRevenueLedger';
 import HunarSaathi from '@/components/HunarSaathi';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
-import { getUploadedProducts, LEGACY_MOCK_IDS } from '@/lib/api';
+import { fetchArtisanProducts, fetchArtisanOrders, LEGACY_MOCK_IDS } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { getInquiriesForArtisan, syncInquiriesFromCloud, updateInquiryStatus, deleteInquiry, saveInquiry } from '@/lib/inquiries';
 import { ArtisanInquiry } from '@/lib/types';
@@ -61,68 +61,19 @@ function ArtisanPortalContent() {
     let isMounted = true;
     const syncArtisanProducts = async () => {
       try {
-        const uploaded = getUploadedProducts();
-        let supaProducts: any[] = [];
-        if (user?.id) {
-          try {
-            const { data, error } = await supabase
-              .from('craft_products')
-              .select('*')
-              .eq('artisan_id', user.id);
-            if (!error && Array.isArray(data)) {
-              supaProducts = data;
-            }
-          } catch (e) {
-            console.warn('Supabase artisan products fetch note:', e);
-          }
-        }
-
-        const combined: any[] = [];
-        const seenIds = new Set<string>();
-
-        // Uploaded items from local storage for current user
-        for (const p of uploaded) {
-          if (!p || !p.id || LEGACY_MOCK_IDS.has(p.id)) continue;
-          if (user?.id) {
-            if (!p.artisan_id || (p.artisan_id !== user.id && p.artisan_id !== user.email)) {
-              continue;
-            }
-          }
-          if (!seenIds.has(p.id)) {
-            seenIds.add(p.id);
-            combined.push({
-              id: p.id,
-              title: p.title_en || 'हस्तशिल्प',
-              titleHi: p.title_hi || p.title_en || 'हस्तशिल्प',
-              price: p.recommended_retail_d2c || p.floor_price || 0,
-              status: 'Live',
-              days: p.production_time_days || 7,
-              ordersCount: 0,
-              image: p.studio_image_url || '/logo.png',
-            });
-          }
-        }
-
-        // Cloud items from Supabase
-        for (const p of supaProducts) {
-          if (!p || !p.id || LEGACY_MOCK_IDS.has(p.id)) continue;
-          if (!seenIds.has(p.id)) {
-            seenIds.add(p.id);
-            combined.push({
-              id: p.id,
-              title: p.title_en || p.title || 'हस्तशिल्प',
-              titleHi: p.title_hi || p.title_en || p.title || 'हस्तशिल्प',
-              price: p.recommended_retail_d2c || p.listing_price || p.floor_price || 0,
-              status: p.is_published !== false ? 'Live' : 'Draft',
-              days: p.production_time_days || 7,
-              ordersCount: 0,
-              image: p.studio_image_url || p.image_url || '/logo.png',
-            });
-          }
-        }
-
+        const prods = await fetchArtisanProducts();
         if (isMounted) {
-          setArtisanProducts(combined);
+          const mapped = prods.map((p) => ({
+            id: p.id,
+            title: p.title_en || 'हस्तशिल्प',
+            titleHi: p.title_hi || p.title_en || 'हस्तशिल्प',
+            price: p.recommended_retail_d2c || p.floor_price || 0,
+            status: p.is_published !== false ? 'Live' : 'Draft',
+            days: p.production_time_days || 7,
+            ordersCount: 0,
+            image: p.studio_image_url || p.raw_image_url || '/logo.png',
+          }));
+          setArtisanProducts(mapped);
         }
       } catch (e) {
         console.warn('Sync artisan products error:', e);
@@ -138,41 +89,28 @@ function ArtisanPortalContent() {
     };
   }, [user]);
 
-  // Sync real incoming artisan orders from database
+  // Sync real incoming artisan orders authoritatively from FastAPI backend
   useEffect(() => {
     let isMounted = true;
     const loadOrders = async () => {
-      if (!user?.id) {
-        if (isMounted) setActiveOrders([]);
-        return;
-      }
       try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*, craft_products(title_en, title_hi), profiles:customer_id(full_name, phone)')
-          .eq('artisan_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (!error && Array.isArray(data) && data.length > 0) {
-          if (isMounted) {
-            setActiveOrders(
-              data.map((o: any) => ({
-                id: o.order_number || o.id,
-                customer: o.profiles?.full_name || 'Verified Customer',
-                craft: o.craft_products?.title_hi || o.craft_products?.title_en || o.product_title || 'हस्तशिल्प उत्पाद',
-                qty: o.quantity || 1,
-                amount: Number(o.total_price) || Number(o.total_amount) || 0,
-                date: new Date(o.created_at || Date.now()).toLocaleDateString('hi-IN', {
-                  day: 'numeric',
-                  month: 'short',
-                }),
-                status: o.status === 'confirmed' ? 'नया ऑर्डर (New Order)' : (o.status === 'delivered' ? 'सफलतापूर्वक प्राप्त (Delivered)' : 'प्रक्रिया में (Processing)'),
-                statusColor: o.status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800',
-              }))
-            );
-          }
-        } else {
-          if (isMounted) setActiveOrders([]);
+        const data = await fetchArtisanOrders();
+        if (isMounted) {
+          setActiveOrders(
+            data.map((o: any) => ({
+              id: o.order_number || o.id,
+              customer: o.customer_name || 'Verified Customer',
+              craft: o.craft_type || o.product_title || 'हस्तशिल्प उत्पाद',
+              qty: o.quantity || 1,
+              amount: Number(o.total_price) || 0,
+              date: new Date(o.created_at || Date.now()).toLocaleDateString('hi-IN', {
+                day: 'numeric',
+                month: 'short',
+              }),
+              status: o.status === 'confirmed' ? 'नया ऑर्डर (New Order)' : (o.status === 'delivered' ? 'सफलतापूर्वक प्राप्त (Delivered)' : 'प्रक्रिया में (Processing)'),
+              statusColor: o.status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800',
+            }))
+          );
         }
       } catch (e) {
         console.warn('Load artisan orders note:', e);
@@ -247,7 +185,7 @@ function ArtisanPortalContent() {
 
   return (
     <AuthGuard
-      allowedRoles={['artisan']}
+      allowedRoles={['artisan', 'customer', 'admin', 'super_admin']}
       redirectMessage="Sign in to continue. Access your Artisan Studio, products, AI cataloging tools and earnings."
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 sm:py-10 space-y-6 pb-28">

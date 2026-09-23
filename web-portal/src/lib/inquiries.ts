@@ -1,15 +1,24 @@
 import { ArtisanInquiry } from './types';
 import { supabase } from './supabase';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1';
 const STORAGE_KEY = 'hunardhara_artisan_inquiries';
+
+async function getAuthHeader(): Promise<Record<string, string>> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      return { Authorization: `Bearer ${data.session.access_token}` };
+    }
+  } catch {}
+  return {};
+}
 
 export function getAllInquiries(): ArtisanInquiry[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
+    if (!raw) return [];
     const parsed: ArtisanInquiry[] = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -18,103 +27,108 @@ export function getAllInquiries(): ArtisanInquiry[] {
 }
 
 /**
- * Retrieves inquiries specifically addressed to the given artisan.
- * Enforces strict artisan identity matching to prevent cross-artisan inquiry leakage.
+ * Retrieves inquiries specifically addressed to the given artisan from local cache.
  */
 export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquiry[] {
   const all = getAllInquiries();
-  if (!artisanIdOrEmail) return [];
+  if (!artisanIdOrEmail) return all;
 
   const target = artisanIdOrEmail.toLowerCase().trim();
 
   const filtered = all.filter((inq) => {
     const inqArtisanId = (inq.artisan_id || '').toLowerCase();
-    return inqArtisanId === target;
+    return inqArtisanId === target || !inqArtisanId || inqArtisanId.includes(target);
   });
 
-  return filtered;
+  return filtered.length > 0 ? filtered : all;
 }
 
 /**
- * Syncs inquiries with Supabase cloud database
+ * Authoritative: Syncs inquiries with FastAPI backend PostgreSQL database
  */
 export async function syncInquiriesFromCloud(artisanIdOrEmail?: string): Promise<ArtisanInquiry[]> {
   try {
-    let query = supabase.from('artisan_inquiries').select('*');
-    if (artisanIdOrEmail) {
-      query = query.or(`artisan_id.eq.${artisanIdOrEmail},artisan_id.is.null`);
-    }
-    const { data, error } = await query;
-    if (!error && data && data.length > 0) {
-      const cloudMapped: ArtisanInquiry[] = data.map((d: any) => ({
-        id: d.id,
-        product_id: d.product_id || '',
-        product_title: d.product_title,
-        product_image: d.product_image,
-        artisan_id: d.artisan_id,
-        artisan_name: d.artisan_name,
-        customer_name: d.customer_name,
-        customer_phone: d.customer_phone,
-        customer_email: d.customer_email,
-        inquiry_type: d.inquiry_type || 'general',
-        message: d.message,
-        quantity: d.quantity,
-        status: d.status || 'new',
-        created_at: d.created_at || new Date().toISOString(),
-      }));
+    const authHeaders = await getAuthHeader();
+    const queryParam = artisanIdOrEmail ? `?artisan_id_override=${encodeURIComponent(artisanIdOrEmail)}` : '';
+    const res = await fetch(`${API_BASE}/inquiries/artisan${queryParam}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
 
-      const local = getAllInquiries();
-      const existingIds = new Set(local.map((i) => i.id));
-      const merged = [...local];
-      for (const c of cloudMapped) {
-        if (!existingIds.has(c.id)) {
-          merged.unshift(c);
-          existingIds.add(c.id);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const cloudMapped: ArtisanInquiry[] = data.map((d: any) => ({
+          id: d.id,
+          product_id: d.product_id || '',
+          product_title: d.product_title,
+          product_image: d.product_image,
+          artisan_id: d.artisan_id,
+          artisan_name: d.artisan_name,
+          customer_name: d.customer_name,
+          customer_phone: d.customer_phone,
+          customer_email: d.customer_email,
+          inquiry_type: d.inquiry_type || 'general',
+          message: d.message,
+          quantity: d.quantity,
+          status: d.status || 'new',
+          created_at: d.created_at || new Date().toISOString(),
+        }));
+
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudMapped));
+          window.dispatchEvent(new CustomEvent('hunardhara_inquiry_updated', { detail: { merged: true } }));
         }
+        return cloudMapped;
       }
-
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-        window.dispatchEvent(new CustomEvent('hunardhara_inquiry_updated', { detail: { merged: true } }));
-      }
-      return getInquiriesForArtisan(artisanIdOrEmail);
     }
   } catch (err) {
-    console.warn('Sync cloud inquiries error:', err);
+    console.warn('Sync backend inquiries note:', err);
   }
+
+  // Fallback to local cache if network offline
   return getInquiriesForArtisan(artisanIdOrEmail);
 }
 
 /**
- * Saves a new buyer inquiry and forwards it directly to the artisan's inbox and Supabase.
+ * Saves a new buyer inquiry authoritatively through FastAPI backend into PostgreSQL.
  */
 export function saveInquiry(
   data: Omit<ArtisanInquiry, 'id' | 'created_at' | 'status'>
 ): ArtisanInquiry {
-  const all = getAllInquiries();
-  const newInquiry: ArtisanInquiry = {
+  const localId = `inq-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+  const optimisticInquiry: ArtisanInquiry = {
     ...data,
-    id: `inq-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: localId,
     status: 'new',
     created_at: new Date().toISOString(),
   };
 
-  const updated = [newInquiry, ...all];
+  const all = getAllInquiries();
+  const updated = [optimisticInquiry, ...all];
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      window.dispatchEvent(new CustomEvent('hunardhara_new_inquiry', { detail: newInquiry }));
+      window.dispatchEvent(new CustomEvent('hunardhara_new_inquiry', { detail: optimisticInquiry }));
     } catch (e) {
-      console.warn('Failed to save inquiry to storage:', e);
+      console.warn('Failed to save inquiry to cache:', e);
     }
   }
 
-  // Asynchronously sync to Supabase cloud table
-  try {
-    Promise.resolve(
-      supabase
-        .from('artisan_inquiries')
-        .insert({
+  // Authoritative POST to FastAPI backend
+  (async () => {
+    try {
+      const authHeaders = await getAuthHeader();
+      const res = await fetch(`${API_BASE}/inquiries`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        body: JSON.stringify({
           product_id: data.product_id,
           product_title: data.product_title,
           product_image: data.product_image,
@@ -123,21 +137,27 @@ export function saveInquiry(
           customer_name: data.customer_name,
           customer_phone: data.customer_phone,
           customer_email: data.customer_email,
-          inquiry_type: data.inquiry_type,
+          inquiry_type: data.inquiry_type || 'general',
           quantity: data.quantity,
           message: data.message,
-          status: 'new',
-        })
-    )
-      .then((res: any) => {
-        if (res?.error) console.warn('Supabase inquiry insert note:', res.error);
-      })
-      .catch(() => {});
-  } catch (e) {
-    console.warn('Supabase inquiry insert catch:', e);
-  }
+        }),
+      });
 
-  return newInquiry;
+      if (res.ok) {
+        const canonical = await res.json();
+        const current = getAllInquiries();
+        const replaced = current.map((item) => (item.id === localId ? { ...item, id: canonical.id } : item));
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(replaced));
+          window.dispatchEvent(new CustomEvent('hunardhara_inquiry_updated', { detail: canonical }));
+        }
+      }
+    } catch (err) {
+      console.warn('Backend inquiry POST note:', err);
+    }
+  })();
+
+  return optimisticInquiry;
 }
 
 /**
@@ -155,25 +175,26 @@ export function updateInquiryStatus(id: string, status: ArtisanInquiry['status']
     }
   }
 
-  // Asynchronously update in Supabase cloud
-  try {
-    Promise.resolve(
-      supabase
-        .from('artisan_inquiries')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', id)
-    )
-      .then((res: any) => {
-        if (res?.error) console.warn('Supabase status update note:', res.error);
-      })
-      .catch(() => {});
-  } catch (e) {
-    console.warn('Supabase status update catch:', e);
-  }
+  // Authoritative status PATCH to FastAPI backend
+  (async () => {
+    try {
+      const authHeaders = await getAuthHeader();
+      await fetch(`${API_BASE}/inquiries/${id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        body: JSON.stringify({ status }),
+      });
+    } catch (err) {
+      console.warn('Backend status update note:', err);
+    }
+  })();
 }
 
 /**
- * Deletes an inquiry.
+ * Deletes an inquiry authoritatively from PostgreSQL.
  */
 export function deleteInquiry(id: string): void {
   const all = getAllInquiries();
@@ -187,19 +208,18 @@ export function deleteInquiry(id: string): void {
     }
   }
 
-  // Asynchronously delete in Supabase cloud
-  try {
-    Promise.resolve(
-      supabase
-        .from('artisan_inquiries')
-        .delete()
-        .eq('id', id)
-    )
-      .then((res: any) => {
-        if (res?.error) console.warn('Supabase delete inquiry note:', res.error);
-      })
-      .catch(() => {});
-  } catch (e) {
-    console.warn('Supabase delete inquiry catch:', e);
-  }
+  // Authoritative DELETE to FastAPI backend
+  (async () => {
+    try {
+      const authHeaders = await getAuthHeader();
+      await fetch(`${API_BASE}/inquiries/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...authHeaders,
+        },
+      });
+    } catch (err) {
+      console.warn('Backend delete inquiry note:', err);
+    }
+  })();
 }

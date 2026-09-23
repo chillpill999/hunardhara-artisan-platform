@@ -176,102 +176,14 @@ export default function AuthGuard({
     );
   }
 
-  // Check Other Roles (e.g. Artisan vs Customer)
-  const isAuthorized = !allowedRoles || (role ? allowedRoles.includes(role) || (allowedRoles.includes('admin') && role === 'super_admin') : false);
+  // Check Other Roles (e.g. Admin vs Customer vs Artisan)
+  // Open Artisan Access: any authenticated user is allowed into artisan portals
+  const isAuthorized = !allowedRoles || (
+    allowedRoles.includes('artisan')
+      ? true
+      : (role ? allowedRoles.includes(role) || (allowedRoles.includes('admin') && role === 'super_admin') : false)
+  );
   if (allowedRoles && role && !isAuthorized) {
-    const isCustomerAccessingArtisan = role === 'customer' && allowedRoles.includes('artisan');
-
-    if (isCustomerAccessingArtisan) {
-      return (
-        <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-md mx-auto">
-          <div className="w-16 h-16 rounded-3xl bg-amber-50 text-[#c85a32] flex items-center justify-center shadow-xs border border-amber-200">
-            <ShoppingBag className="w-8 h-8 text-[#c85a32]" />
-          </div>
-          <div className="space-y-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#c85a32] bg-amber-50 px-3.5 py-1 rounded-full border border-amber-200">
-              कारीगर विक्रय विंडो • Artisan Selling Window
-            </span>
-            <h2 className="text-2xl font-extrabold text-[#1c1917] tracking-tight">
-              Customer Account (ग्राहक खाता)
-            </h2>
-            <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-sm mx-auto">
-              यह विंडो केवल पंजीकृत कारीगरों के लिए है जहां वे हस्तशिल्प फोटो अपलोड और बेच सकते हैं।
-            </p>
-          </div>
-
-          <div className="w-full bg-[#fdf8f6] p-4 rounded-2xl border border-[#c85a32]/30 text-left space-y-2.5">
-            <p className="text-xs font-bold text-[#1c1917]">
-              क्या आप कारीगर / शिल्पकार हैं? (Are you an Artisan?)
-            </p>
-            <p className="text-[11px] text-[#545454] leading-relaxed">
-              कारीगर बनने के लिए सत्यापन आवेदन जमा करें। भूमिका परिवर्तन केवल सर्वर-साइड अनुमोदन के बाद होता है।
-            </p>
-            <Link
-              href="/artisan/apply"
-              className="w-full inline-flex items-center justify-center gap-2 bg-[#c85a32] hover:bg-[#b84e28] text-white font-bold text-xs py-3 px-4 rounded-xl shadow-xs transition-all"
-            >
-              <span>कारीगर सत्यापन के लिए आवेदन करें (Apply for Artisan Verification)</span>
-            </Link>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1 w-full">
-            <Link
-              href="/"
-              className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-full bg-[#1b4332] hover:bg-[#2d6a4f] text-white transition-all shadow-xs"
-            >
-              <ShoppingBag className="w-3.5 h-3.5" />
-              <span>ई-कॉमर्स बाज़ार देखें</span>
-            </Link>
-            <button
-              onClick={() => signOut()}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-full border border-[#e4e4e7] hover:bg-[#f4f4f5] text-[#545454] transition-all cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>साइन आउट</span>
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    const isAdminAccessingArtisan = (role === 'admin' || role === 'super_admin') && allowedRoles.includes('artisan');
-    if (isAdminAccessingArtisan) {
-      return (
-        <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-md mx-auto">
-          <div className="w-16 h-16 rounded-3xl bg-[#1c1917] text-[#F8C146] flex items-center justify-center shadow-xs border border-[#2e2e30]">
-            <ShieldAlert className="w-8 h-8 text-[#F5A941]" />
-          </div>
-          <div className="space-y-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#F8C146] bg-[#1c1917] px-3.5 py-1 rounded-full border border-[#2e2e30]">
-              प्रशासक नियंत्रण • Administrator Role
-            </span>
-            <h2 className="text-2xl font-extrabold text-[#1c1917] tracking-tight">
-              Admin Governance Portal
-            </h2>
-            <p className="text-xs sm:text-sm text-[#545454] leading-relaxed max-w-sm mx-auto">
-              आप प्लेटफ़ॉर्म प्रशासक के रूप में लॉग इन हैं। कारीगर स्टूडियो कारीगरों के हस्तशिल्प और बिक्री के लिए है। सम्पूर्ण प्लेटफ़ॉर्म नियंत्रण, कैटलॉग निष्कासन, और क्लस्टर प्रबंधन के लिए प्रशासन डैशबोर्ड का उपयोग करें।
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2 w-full">
-            <Link
-              href="/admin"
-              className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold px-5 py-3 rounded-full bg-[#1c1917] hover:bg-[#27272a] text-[#F8C146] transition-all shadow-xs border border-[#3e3e42]"
-            >
-              <ShieldAlert className="w-4 h-4" />
-              <span>🛡️ प्रशासन नियंत्रण केंद्र (Admin Dashboard)</span>
-            </Link>
-            <Link
-              href="/"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-4 py-3 rounded-full border border-[#e4e4e7] hover:bg-[#f4f4f5] text-[#545454] transition-all"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>बाज़ार</span>
-            </Link>
-          </div>
-        </div>
-      );
-    }
 
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-5 max-w-md mx-auto">

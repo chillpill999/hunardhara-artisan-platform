@@ -366,7 +366,13 @@ def list_artisan_orders(
     """
     if current_user.is_admin:
         return db.query(Order).order_by(Order.created_at.desc()).all()
-    orders = db.query(Order).filter(Order.artisan_id == current_user.id).order_by(Order.created_at.desc()).all()
+    target_ids = {current_user.id}
+    artisan = db.query(Artisan).filter(
+        (Artisan.id == current_user.id) | (getattr(Artisan, "user_id", Artisan.id) == current_user.id)
+    ).first()
+    if artisan:
+        target_ids.add(artisan.id)
+    orders = db.query(Order).filter(Order.artisan_id.in_(list(target_ids))).order_by(Order.created_at.desc()).all()
     # Data minimization: Artisans fulfill based on payment_status ('paid', 'confirmed'),
     # but must not receive customer's financial payment IDs or gateway tokens.
     sanitized_orders = []

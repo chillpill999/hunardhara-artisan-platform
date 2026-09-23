@@ -333,125 +333,117 @@ export function normalizeProduct(raw: any): Product | null {
 
 export async function fetchProducts(): Promise<Product[]> {
   purgeLegacyMockProducts();
-  const localUploaded = getUploadedProducts().map(normalizeProduct).filter((p): p is Product => p !== null);
-  const removedIds = new Set(getRemovedProductIds());
 
-  // 1. Fetch from Supabase published products
-  let supabaseProducts: Product[] = [];
+  // 1. Authoritative: Fetch from FastAPI backend PostgreSQL database
   try {
-    const { data: supaData, error: supaErr } = await supabase
-      .from("craft_products")
-      .select("*, profiles(full_name, phone, role)")
-      .eq("is_published", true)
-      .order("created_at", { ascending: false });
-    if (!supaErr && Array.isArray(supaData) && supaData.length > 0) {
-      supabaseProducts = supaData.map(normalizeProduct).filter((p): p is Product => p !== null);
-    }
-  } catch (err) {
-    console.warn("Supabase fetchProducts note:", err);
-  }
-
-  // 2. Fetch from FastAPI backend
-  let backendProducts: Product[] = [];
-  try {
-    const res = await fetch(`${API_BASE}/products`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${API_BASE}/products`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        backendProducts = data.map(normalizeProduct).filter((p): p is Product => p !== null);
+      if (Array.isArray(data)) {
+        const products = data
+          .map(normalizeProduct)
+          .filter((p): p is Product => p !== null && !LEGACY_MOCK_IDS.has(p.id));
+        // Cache in localStorage as an offline mirror
+        if (typeof window !== "undefined" && products.length > 0) {
+          try {
+            localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(products));
+          } catch {}
+        }
+        return products;
       }
     }
-  } catch {
-    // Backend offline or unreachable
+  } catch (err) {
+    console.warn("Backend fetchProducts unreachable, checking cache:", err);
   }
 
-  const allProducts: Product[] = [];
-  const seenIds = new Set<string>();
-  for (const p of [...localUploaded, ...supabaseProducts, ...backendProducts]) {
-    if (!p || !p.id || LEGACY_MOCK_IDS.has(p.id) || removedIds.has(p.id)) continue;
-    if (!seenIds.has(p.id)) {
-      seenIds.add(p.id);
-      allProducts.push(p);
-    }
-  }
-
-  return allProducts;
+  // 2. Offline fallback to local client storage cache
+  const localUploaded = getUploadedProducts()
+    .map(normalizeProduct)
+    .filter((p): p is Product => p !== null && !LEGACY_MOCK_IDS.has(p.id));
+  return localUploaded;
 }
 
 export async function fetchProductById(id: string): Promise<Product | null> {
-  const removedIds = new Set(getRemovedProductIds());
-  if (removedIds.has(id)) return null;
-
-  // 1. Check local client storage
-  const localUploaded = getUploadedProducts();
-  const localFound = localUploaded.find((p) => p.id === id);
-  if (localFound) {
-    const norm = normalizeProduct(localFound);
-    if (norm) return norm;
-  }
-
   const aliasId = ID_ALIASES[id];
-  if (aliasId) {
-    const aliasLocal = localUploaded.find((p) => p.id === aliasId);
-    if (aliasLocal) {
-      const norm = normalizeProduct(aliasLocal);
-      if (norm) return norm;
-    }
-  }
 
-  // 2. Check Supabase craft_products table
+  // 1. Authoritative: Fetch from FastAPI backend
   try {
-    const { data: supaProduct, error: supaErr } = await supabase
-      .from("craft_products")
-      .select("*, profiles(full_name, phone, role)")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (!supaErr && supaProduct && !removedIds.has(supaProduct.id)) {
-      const norm = normalizeProduct(supaProduct);
+    const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const data = await res.json();
+      const norm = normalizeProduct(data);
       if (norm) return norm;
-    }
-
-    if (aliasId) {
-      const { data: supaAliasProduct, error: supaAliasErr } = await supabase
-        .from("craft_products")
-        .select("*, profiles(full_name, phone, role)")
-        .eq("id", aliasId)
-        .maybeSingle();
-
-      if (!supaAliasErr && supaAliasProduct && !removedIds.has(supaAliasProduct.id)) {
-        const norm = normalizeProduct(supaAliasProduct);
+    } else if (aliasId) {
+      const resAlias = await fetch(`${API_BASE}/products/${aliasId}`, { signal: AbortSignal.timeout(10000) });
+      if (resAlias.ok) {
+        const data = await resAlias.json();
+        const norm = normalizeProduct(data);
         if (norm) return norm;
       }
     }
   } catch (err) {
-    console.warn("Supabase fetchProductById note:", err);
+    console.warn("Backend fetchProductById unreachable, checking cache:", err);
   }
 
-  // 3. Check FastAPI backend
-  try {
-    const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && !removedIds.has(data.id)) {
-        const norm = normalizeProduct(data);
-        if (norm) return norm;
-      }
-    } else if (aliasId) {
-      const resAlias = await fetch(`${API_BASE}/products/${aliasId}`, { signal: AbortSignal.timeout(3000) });
-      if (resAlias.ok) {
-        const data = await resAlias.json();
-        if (data && !removedIds.has(data.id)) {
-          const norm = normalizeProduct(data);
-          if (norm) return norm;
-        }
-      }
-    }
-  } catch {
-    // Fallback
+  // 2. Offline fallback from local cache
+  const localUploaded = getUploadedProducts();
+  const localFound = localUploaded.find((p) => p.id === id || (aliasId && p.id === aliasId));
+  if (localFound) {
+    return normalizeProduct(localFound);
   }
 
   return null;
+}
+
+/**
+ * Authoritative: Fetches authenticated artisan's products directly from backend PostgreSQL
+ */
+export async function fetchArtisanProducts(): Promise<Product[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+    const res = await fetch(`${API_BASE}/products/artisan/my`, {
+      headers: {
+        ...authHeaders,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data.map(normalizeProduct).filter((p): p is Product => p !== null && !LEGACY_MOCK_IDS.has(p.id));
+      }
+    }
+  } catch (err) {
+    console.warn("fetchArtisanProducts error:", err);
+  }
+  return [];
+}
+
+/**
+ * Authoritative: Fetches authenticated artisan's incoming customer orders from backend PostgreSQL
+ */
+export async function fetchArtisanOrders(): Promise<any[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+    const res = await fetch(`${API_BASE}/orders/artisan`, {
+      headers: {
+        ...authHeaders,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+  } catch (err) {
+    console.warn("fetchArtisanOrders error:", err);
+  }
+  return [];
 }
 
 export async function fetchClusters(): Promise<CraftCluster[]> {
@@ -562,9 +554,11 @@ export async function matchB2BRFQ(
 
 export async function fetchArtisanEarnings(token?: string): Promise<ArtisanEarnings> {
   try {
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${API_BASE}/earnings`, { headers, signal: AbortSignal.timeout(3000) });
+    const authHeaders = token ? { Authorization: `Bearer ${token}` } : await getSupabaseAuthorizationHeader();
+    const headers: Record<string, string> = {
+      ...authHeaders,
+    };
+    const res = await fetch(`${API_BASE}/earnings`, { headers, signal: AbortSignal.timeout(10000) });
     if (res.ok) {
       const records = await res.json();
       if (Array.isArray(records)) {

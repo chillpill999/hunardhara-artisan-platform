@@ -22,4 +22,11 @@ def get_artisan_earnings(
     """
     if current_user.is_admin:
         return db.query(ArtisanEarning).order_by(ArtisanEarning.payout_date.desc()).all()
-    return db.query(ArtisanEarning).filter(ArtisanEarning.artisan_id == current_user.id).order_by(ArtisanEarning.payout_date.desc()).all()
+    from app.models.artisan import Artisan
+    target_ids = {current_user.id}
+    artisan = db.query(Artisan).filter(
+        (Artisan.id == current_user.id) | (getattr(Artisan, "user_id", Artisan.id) == current_user.id)
+    ).first()
+    if artisan:
+        target_ids.add(artisan.id)
+    return db.query(ArtisanEarning).filter(ArtisanEarning.artisan_id.in_(list(target_ids))).order_by(ArtisanEarning.payout_date.desc()).all()

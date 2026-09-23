@@ -31,6 +31,10 @@ class CurrentUser:
     role: str = 'customer'  # 'customer', 'artisan', 'admin', 'super_admin'
 
     @property
+    def user_id(self) -> str:
+        return self.id
+
+    @property
     def is_super_admin(self) -> bool:
         return self.role == "super_admin"
 
@@ -625,14 +629,15 @@ def require_artisan(
     db: Session = Depends(get_db)
 ) -> CurrentUser:
     """
-    FastAPI dependency: Requires authenticated active artisan or verified administrator.
+    FastAPI dependency: Requires authenticated artisan or verified administrator.
+    Rejects customer accounts or unverified roles.
     Rejects deactivated accounts.
     """
     user = get_current_user(authorization, db=db)
     if user.role != "artisan" and not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="FORBIDDEN: Artisan or Administrator role required to access this resource."
+            detail="FORBIDDEN_ROLE: Only registered artisans or administrators can access this feature."
         )
     return user
 

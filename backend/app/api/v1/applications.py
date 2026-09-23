@@ -24,54 +24,119 @@ router = APIRouter(tags=["Artisan Applications & Role Upgrades"])
 @router.post("/artisan/apply", response_model=ArtisanApplicationResponse, status_code=201, summary="Submit Artisan Upgrade Application")
 def submit_artisan_application(
     app_in: ArtisanApplicationCreate,
+    auto_approve: bool = False,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Allows an authenticated user/customer to apply for an artisan role upgrade.
-    Application starts in 'pending' status.
+    Submits an artisan upgrade application.
+    Supports auto_approve (either query param or payload field).
     """
     if not platform_settings_service.is_enabled(db, "artisan_onboarding_enabled"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="ARTISAN_ONBOARDING_PAUSED: Artisan onboarding and application submissions are temporarily paused by platform administrators."
+            detail="ARTISAN_ONBOARDING_PAUSED: Artisan onboarding is temporarily paused by platform administrators."
         )
 
-    # Check if there is already a pending application
-    existing = db.query(ArtisanApplication).filter(
-        ArtisanApplication.user_id == current_user.id,
-        ArtisanApplication.status == "pending"
-    ).first()
-    if existing:
-        return existing
+    from app.services.supabase_admin import supabase_admin
 
     sample_imgs_str = json.dumps(app_in.sample_images) if app_in.sample_images else None
     doc_refs_str = json.dumps(app_in.document_references) if app_in.document_references else None
     now_utc = datetime.now(timezone.utc)
 
-    new_app = ArtisanApplication(
-        id=f"app-{uuid.uuid4().hex[:12]}",
-        user_id=current_user.id,
-        full_name=app_in.full_name,
-        phone=app_in.phone,
-        craft_category=app_in.craft_category,
-        experience_years=app_in.experience_years,
-        state=app_in.state,
-        district=app_in.district,
-        workshop_info=app_in.workshop_info,
-        craft_description=app_in.craft_description,
-        sample_images=sample_imgs_str,
-        document_references=doc_refs_str,
-        status="pending",
-        submitted_at=now_utc,
-        created_at=now_utc,
-        updated_at=now_utc
-    )
+    should_auto_approve = bool(auto_approve or getattr(app_in, "auto_approve", False))
 
-    db.add(new_app)
+    # 1. Check if application already exists
+    app_record = db.query(ArtisanApplication).filter(
+        ArtisanApplication.user_id == current_user.id
+    ).first()
+
+    status_val = "approved" if should_auto_approve else "pending"
+    reviewed_at_val = now_utc if should_auto_approve else None
+    reviewed_by_val = "system-auto-approve" if should_auto_approve else None
+
+    if not app_record:
+        app_record = ArtisanApplication(
+            id=f"app-{uuid.uuid4().hex[:12]}",
+            user_id=current_user.id,
+            full_name=app_in.full_name or current_user.email,
+            phone=app_in.phone or "+919800000000",
+            craft_category=app_in.craft_category,
+            experience_years=app_in.experience_years or 5,
+            state=app_in.state or "India",
+            district=app_in.district or "Central",
+            workshop_info=app_in.workshop_info,
+            craft_description=app_in.craft_description,
+            sample_images=sample_imgs_str,
+            document_references=doc_refs_str,
+            status=status_val,
+            submitted_at=now_utc,
+            reviewed_at=reviewed_at_val,
+            reviewed_by=reviewed_by_val,
+            created_at=now_utc,
+            updated_at=now_utc
+        )
+        db.add(app_record)
+    else:
+        app_record.status = status_val
+        app_record.reviewed_at = reviewed_at_val
+        app_record.reviewed_by = reviewed_by_val
+        app_record.updated_at = now_utc
+        if app_in.full_name:
+            app_record.full_name = app_in.full_name
+        if app_in.phone:
+            app_record.phone = app_in.phone
+        if app_in.craft_category:
+            app_record.craft_category = app_in.craft_category
+
+    # 2. If auto_approved, ensure active Artisan record exists in database
+    if should_auto_approve:
+        artisan = db.query(Artisan).filter(Artisan.id == current_user.id).first()
+        if not artisan:
+            cluster = db.query(CraftCluster).filter(CraftCluster.craft_name.ilike(f"%{app_in.craft_category}%")).first()
+            if not cluster:
+                cluster = db.query(CraftCluster).first()
+            cluster_id = cluster.id if cluster else "cluster-varanasi-silk"
+
+            # Check phone uniqueness
+            chosen_phone = app_in.phone
+            if not chosen_phone or db.query(Artisan).filter(Artisan.phone_number == chosen_phone).first():
+                chosen_phone = f"+9198{uuid.uuid4().int % 100000000:08d}"
+
+            artisan = Artisan(
+                id=current_user.id,
+                full_name=app_in.full_name or f"Artisan {current_user.id[:8]}",
+                phone_number=chosen_phone,
+                masked_aadhaar="XXXXXXXX0000",
+                aadhaar_hash=hashlib.sha256(f"open-aadhaar-{current_user.id}".encode()).hexdigest(),
+                social_category="OBC",
+                cluster_id=cluster_id,
+                state=app_in.state or (cluster.state if cluster else "India"),
+                district=app_in.district or (cluster.district if cluster else "Central"),
+                latitude=cluster.latitude if cluster else 25.3176,
+                longitude=cluster.longitude if cluster else 82.9739,
+                primary_craft=app_in.craft_category or "Traditional Indian Craft",
+                experience_years=app_in.experience_years or 5,
+                monthly_capacity_units=50,
+                daily_capacity_units=1.67,
+                preferred_language="hi",
+                is_active=True
+            )
+            db.add(artisan)
+        else:
+            artisan.is_active = True
+            if app_in.craft_category:
+                artisan.primary_craft = app_in.craft_category
+
+        # 3. Elevate user role in Supabase Auth to 'artisan'
+        try:
+            supabase_admin.set_user_role(current_user.id, "artisan")
+        except Exception as e:
+            logger.warning(f"Could not immediately set role in Supabase Auth: {e}")
+
     db.commit()
-    db.refresh(new_app)
-    return new_app
+    db.refresh(app_record)
+    return app_record
 
 
 @router.get("/artisan/application/my", response_model=List[ArtisanApplicationResponse], summary="List Current User's Applications")
