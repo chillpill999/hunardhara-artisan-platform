@@ -122,6 +122,17 @@ app.add_middleware(RequestIDAndLoggingMiddleware)
 
 from app.core.security import redact_sensitive_text
 
+def _get_cors_headers(request: Request, base_headers: dict = None) -> dict:
+    headers = dict(base_headers) if base_headers else {}
+    origin = request.headers.get("origin")
+    if origin and (origin in settings.cors_origins or "workers.dev" in origin or "localhost" in origin or "127.0.0.1" in origin):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Origin, X-Request-ID, Idempotency-Key, X-Idempotency-Key"
+    return headers
+
+
 # Global Production Exception Handlers: Safe Error Responses & No Stack Trace Leaks
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -141,7 +152,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "detail": clean_errors,
             "request_id": req_id
         },
-        headers={"X-Request-ID": req_id}
+        headers=_get_cors_headers(request, {"X-Request-ID": req_id})
     )
 
 
@@ -160,7 +171,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             "detail": safe_detail,
             "request_id": req_id
         },
-        headers=headers
+        headers=_get_cors_headers(request, headers)
     )
 
 
@@ -180,7 +191,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
             "detail": safe_detail,
             "request_id": req_id
         },
-        headers={"X-Request-ID": req_id}
+        headers=_get_cors_headers(request, {"X-Request-ID": req_id})
     )
 
 
