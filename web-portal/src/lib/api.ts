@@ -112,6 +112,31 @@ export function getRemovedProductIds(): string[] {
 export async function removeProduct(productId: string): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
+    // 1. Authoritative Supabase deletion
+    const { error: sbDeleteError } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', productId);
+
+    if (!sbDeleteError) {
+      const current = getRemovedProductIds();
+      if (!current.includes(productId)) {
+        current.push(productId);
+        localStorage.setItem(REMOVED_PRODUCTS_KEY, JSON.stringify(current));
+      }
+      const uploaded = getUploadedProducts();
+      const filteredUploaded = uploaded.filter((p) => p.id !== productId);
+      localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(filteredUploaded));
+
+      window.dispatchEvent(new CustomEvent("hunardhara_product_removed", { detail: { id: productId } }));
+      window.dispatchEvent(new CustomEvent("hunardhara_product_published", { detail: { id: productId } }));
+      return true;
+    }
+  } catch (e) {
+    console.warn("Supabase removeProduct note:", e);
+  }
+
+  try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) {
       console.error("Authorization required: No authenticated session found.");
@@ -336,7 +361,38 @@ export function normalizeProduct(raw: any): Product | null {
 export async function fetchProducts(): Promise<Product[]> {
   purgeLegacyMockProducts();
 
-  // 1. Authoritative: Fetch from FastAPI backend PostgreSQL database
+  // 1. Authoritative: Fetch directly from Supabase PostgreSQL (Single Source of Truth)
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*, craft_clusters(*)')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const products = data
+        .map((row: any) => {
+          return normalizeProduct({
+            ...row,
+            cluster: row.craft_clusters || row.cluster,
+          });
+        })
+        .filter((p): p is Product => p !== null && !LEGACY_MOCK_IDS.has(p.id));
+
+      if (products.length > 0) {
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem(UPLOADED_PRODUCTS_KEY, JSON.stringify(products));
+          } catch {}
+        }
+        return products;
+      }
+    }
+  } catch (err) {
+    console.warn("Direct Supabase fetchProducts note:", err);
+  }
+
+  // 2. Dual-path Fallback: Fetch from FastAPI backend during phased cutover
   try {
     const res = await fetch(`${API_BASE}/products`, {
       cache: "no-store",
@@ -361,7 +417,7 @@ export async function fetchProducts(): Promise<Product[]> {
     console.warn("Backend fetchProducts unreachable, checking cache:", err);
   }
 
-  // 2. Offline fallback to local client storage cache
+  // 3. Offline fallback to local client storage cache
   const localUploaded = getUploadedProducts()
     .map(normalizeProduct)
     .filter((p): p is Product => p !== null && !LEGACY_MOCK_IDS.has(p.id));
@@ -371,7 +427,26 @@ export async function fetchProducts(): Promise<Product[]> {
 export async function fetchProductById(id: string): Promise<Product | null> {
   const aliasId = ID_ALIASES[id];
 
-  // 1. Authoritative: Fetch from FastAPI backend
+  // 1. Authoritative: Direct Supabase query
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*, craft_clusters(*)')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (!error && data) {
+      const norm = normalizeProduct({
+        ...data,
+        cluster: (data as any).craft_clusters || (data as any).cluster,
+      });
+      if (norm) return norm;
+    }
+  } catch (err) {
+    console.warn("Supabase fetchProductById note:", err);
+  }
+
+  // 2. Dual-path Fallback: Fetch from FastAPI backend
   try {
     const res = await fetch(`${API_BASE}/products/${id}`, { signal: AbortSignal.timeout(10000) });
     if (res.ok) {
@@ -390,7 +465,7 @@ export async function fetchProductById(id: string): Promise<Product | null> {
     console.warn("Backend fetchProductById unreachable, checking cache:", err);
   }
 
-  // 2. Offline fallback from local cache
+  // 3. Offline fallback from local cache
   const localUploaded = getUploadedProducts();
   const localFound = localUploaded.find((p) => p.id === id || (aliasId && p.id === aliasId));
   if (localFound) {
@@ -401,9 +476,28 @@ export async function fetchProductById(id: string): Promise<Product | null> {
 }
 
 /**
- * Authoritative: Fetches authenticated artisan's products directly from backend PostgreSQL
+ * Authoritative: Fetches authenticated artisan's products directly from Supabase / backend
  */
 export async function fetchArtisanProducts(): Promise<Product[]> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.id) {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*, craft_clusters(*)')
+        .eq('artisan_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data
+          .map((row: any) => normalizeProduct({ ...row, cluster: row.craft_clusters || row.cluster }))
+          .filter((p): p is Product => p !== null && !LEGACY_MOCK_IDS.has(p.id));
+      }
+    }
+  } catch (err) {
+    console.warn("Supabase fetchArtisanProducts note:", err);
+  }
+
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
@@ -449,6 +543,31 @@ export async function fetchArtisanOrders(): Promise<any[]> {
 }
 
 export async function fetchClusters(): Promise<CraftCluster[]> {
+  try {
+    const { data, error } = await supabase
+      .from('craft_clusters')
+      .select('*')
+      .order('name');
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data.map((d: any) => ({
+        id: d.id,
+        name: d.name,
+        craft_type: d.craft_name || d.name,
+        state: d.state,
+        district: d.district,
+        latitude: Number(d.latitude) || 0,
+        longitude: Number(d.longitude) || 0,
+        gi_tag_number: d.gi_tag_number || undefined,
+        gi_certified: Boolean(d.gi_tag_status && String(d.gi_tag_status).toLowerCase().includes('registered')),
+        statutory_minimum_daily_wage: Number(d.statutory_daily_wage) || 650,
+        active_artisans_count: 50,
+        description: d.description || '',
+      }));
+    }
+  } catch (e) {
+    console.warn("Supabase fetchClusters note:", e);
+  }
+
   try {
     const res = await fetch(`${API_BASE}/clusters`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) return await res.json();
@@ -1078,6 +1197,60 @@ export async function createBackendProduct(payload: {
   studio_image_url?: string;
   idempotency_key?: string;
 }): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const effectiveArtisanId = user?.id || payload.artisan_id || 'art-anonymous';
+
+    // 1. Authoritative: Insert directly into Supabase PostgreSQL products table
+    const productId = `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const prodRow = {
+      id: productId,
+      title: payload.title,
+      craft_type: payload.craft_type,
+      cluster_id: payload.cluster_id || 'cluster-varanasi-silk',
+      artisan_id: effectiveArtisanId,
+      listing_price: payload.listing_price,
+      cost_materials: payload.cost_materials,
+      labor_hours: payload.labor_hours,
+      stock_quantity: payload.stock_quantity ?? 5,
+      materials: payload.materials || [],
+      technique: payload.technique || 'हस्तशिल्प कारीगरी (Artisanal Craftwork)',
+      description_hindi: payload.description_hindi || payload.description || '',
+      description_english: payload.description_english || payload.description || '',
+      studio_image_url: payload.studio_image_url,
+      floor_price: payload.cost_materials,
+      recommended_retail_price: payload.listing_price,
+      wholesale_b2b_price: Math.round(payload.listing_price * 0.7),
+      is_active: true,
+      idempotency_key: payload.idempotency_key || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: inserted, error: sbError } = await supabase
+      .from('products')
+      .insert(prodRow as any)
+      .select()
+      .single();
+
+    if (!sbError && inserted) {
+      if (typeof window !== 'undefined') {
+        const norm = normalizeProduct(inserted);
+        if (norm) {
+          saveUploadedProduct(norm);
+        }
+      }
+      return { success: true, data: inserted };
+    }
+
+    if (sbError) {
+      console.warn("Direct Supabase product insert note, falling back to backend:", sbError);
+    }
+  } catch (err: any) {
+    console.warn("Supabase create product caught exception:", err);
+  }
+
+  // 2. Dual-path fallback: FastAPI backend
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     const headers: Record<string, string> = {
