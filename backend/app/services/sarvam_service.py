@@ -124,10 +124,10 @@ class SarvamService:
         audio_bytes: bytes,
         filename: str = "artisan_audio.wav",
         language_code: str = "hi-IN",
-        model: str = "saarika:v2.5"
+        model: str = "saaras:v4"
     ) -> Dict[str, Any]:
         """
-        Transcribes artisan Indic speech to text using Sarvam Saarika ASR.
+        Transcribes artisan Indic speech to text using Sarvam Saaras v4 ASR.
         Detects actual audio format from magic bytes without misrepresenting MIME type.
         """
         api_key = settings.SARVAM_API_KEY
@@ -158,18 +158,20 @@ class SarvamService:
         boundary = "SarvamASRBoundary789456123"
         lines = [
             f"--{boundary}".encode("utf-8"),
-            b'Content-Disposition: form-data; name="model"\r\n',
+            b'Content-Disposition: form-data; name="model"\r\n\r\n',
             model.encode("utf-8"),
-            f"--{boundary}".encode("utf-8"),
-            b'Content-Disposition: form-data; name="language_code"\r\n',
+            f"\r\n--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="mode"\r\n\r\ntranscribe',
+            f"\r\n--{boundary}".encode("utf-8"),
+            b'Content-Disposition: form-data; name="language_code"\r\n\r\n',
             language_code.encode("utf-8"),
-            f"--{boundary}".encode("utf-8"),
-            f'Content-Disposition: form-data; name="file"; filename="{upload_filename}"'.encode("utf-8"),
-            f"Content-Type: {content_type}\r\n".encode("utf-8"),
+            f"\r\n--{boundary}".encode("utf-8"),
+            f'Content-Disposition: form-data; name="file"; filename="{upload_filename}"\r\n'.encode("utf-8"),
+            f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
             audio_bytes,
-            f"--{boundary}--\r\n".encode("utf-8")
+            f"\r\n--{boundary}--\r\n".encode("utf-8")
         ]
-        body = b"\r\n".join(lines)
+        body = b"".join(lines)
 
         req = urllib.request.Request(
             "https://api.sarvam.ai/speech-to-text",
@@ -187,7 +189,7 @@ class SarvamService:
                     "success": True,
                     "transcript": data.get("transcript", ""),
                     "language_code": data.get("language_code", language_code),
-                    "source": "sarvam_saarika"
+                    "source": "sarvam_saaras_v4"
                 }
         except Exception as e:
             logger.error(f"Sarvam ASR error: {e}")

@@ -768,7 +768,7 @@ export default function ArtisanStudio() {
 
     setIsAiProcessing(true);
     setStep(3);
-    setAiProcessingStage('आवाज़ का विश्लेषण एवं शिल्प पहचान (Sarvam Saarika ASR)...');
+    setAiProcessingStage('आवाज़ का विश्लेषण एवं शिल्प पहचान (Sarvam Saaras v4 ASR)...');
 
     try {
       // ONE Canonical Speak-to-Catalog Pipeline: 16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review

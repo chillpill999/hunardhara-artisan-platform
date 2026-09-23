@@ -1006,6 +1006,9 @@ export async function chatWithHunarSaathi(
   };
 }
 
+// Production flag: Do NOT route voice requests to legacy FastAPI backend
+const ENABLE_LEGACY_VOICE_BACKEND = false;
+
 export interface SpeakCatalogResponse {
   success: boolean;
   transcript?: string;
@@ -1016,12 +1019,15 @@ export interface SpeakCatalogResponse {
   confirmation_audio_base64?: string | null;
   source?: string;
   error?: string;
+  code?: string;
+  request_id?: string;
+  status?: number;
 }
 
 /**
- * ONE Canonical End-to-End Speak-to-Catalog Pipeline:
- * 16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review.
- * Connects directly to backend /voice/speak-catalog without production fallback chains.
+ * Authoritative Speak-to-Catalog Pipeline:
+ * 16kHz mono audio -> Supabase Edge Function voice-catalog (Sarvam Saaras v4 STT) -> craft extraction -> frontend review.
+ * Supabase is the sole production backend. Legacy FastAPI endpoints are strictly bypassed.
  */
 export async function speakToCatalog(
   audioBlob: Blob,
@@ -1031,107 +1037,211 @@ export async function speakToCatalog(
   const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
 
   const formData = new FormData();
+  formData.append("file", audioBlob, fileName);
   formData.append("audio", audioBlob, fileName);
   formData.append("language_code", languageCode);
   formData.append("action", "speak-catalog");
 
-  // 1. First priority: Supabase Sovereign Edge Function voice-catalog
+  // 1. Authoritative Production Path: Supabase Sovereign Edge Function voice-catalog
   try {
     const { data, error } = await supabase.functions.invoke("voice-catalog", {
       body: formData,
     });
+
     if (!error && data?.success) {
       return data;
     }
+
     if (data && data.requires_clarification) {
       return data;
     }
-  } catch (supabaseErr) {
-    console.warn("Supabase voice-catalog speak-catalog failed, falling back to backend:", supabaseErr);
-  }
 
-  // 2. Dual-path fallback: backend /voice/speak-catalog
-  try {
-    const authHeaders = await getSupabaseAuthorizationHeader();
-    const res = await fetch(`${API_BASE}/voice/speak-catalog`, {
-      method: "POST",
-      headers: {
-        ...authHeaders,
-      },
-      body: formData,
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
+    if (data && !data.success) {
       return {
         success: false,
-        error: data.error || data.detail || `Voice service error (HTTP ${res.status})`,
+        error: data.error || "Speech-to-catalog processing failed",
+        code: data.code || "VOICE_SERVICE_ERROR",
+        request_id: data.request_id,
+        status: data.status || 500,
       };
     }
 
-    return data;
-  } catch (err: any) {
-    return {
-      success: false,
-      error: err?.message || "Network error connecting to voice service",
-    };
+    if (error) {
+      let errorMsg = error.message || "Failed to invoke Supabase voice-catalog";
+      let status = (error as any)?.context?.status || (error as any)?.status || 500;
+      let code = "SUPABASE_FUNCTION_ERROR";
+      let requestId = "req_unknown";
+
+      try {
+        const errorJson = (error as any)?.context ? await (error as any).context.json() : null;
+        if (errorJson) {
+          errorMsg = errorJson.error || errorMsg;
+          code = errorJson.code || code;
+          requestId = errorJson.request_id || requestId;
+          status = errorJson.status || status;
+        }
+      } catch {}
+
+      if (!ENABLE_LEGACY_VOICE_BACKEND) {
+        return {
+          success: false,
+          error: errorMsg,
+          code,
+          request_id: requestId,
+          status,
+        };
+      }
+    }
+  } catch (supabaseErr: any) {
+    console.error("Supabase voice-catalog speak-catalog failed:", supabaseErr);
+    if (!ENABLE_LEGACY_VOICE_BACKEND) {
+      return {
+        success: false,
+        error: supabaseErr?.message || "Speech service connection failed",
+        code: "CONNECTION_FAILED",
+      };
+    }
   }
+
+  // 2. Legacy fallback strictly disabled in production
+  if (ENABLE_LEGACY_VOICE_BACKEND) {
+    try {
+      const authHeaders = await getSupabaseAuthorizationHeader();
+      const res = await fetch(`${API_BASE}/voice/speak-catalog`, {
+        method: "POST",
+        headers: { ...authHeaders },
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          error: data.error || data.detail || `Voice service error (HTTP ${res.status})`,
+        };
+      }
+      return data;
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || "Legacy voice fallback failed",
+      };
+    }
+  }
+
+  return {
+    success: false,
+    error: "Voice service unavailable",
+    code: "VOICE_UNAVAILABLE",
+  };
 }
 
 /**
- * Canonical audio transcription via Supabase Edge Function (Sarvam Saarika ASR),
- * with dual-path fallback to backend /voice/transcribe.
+ * Authoritative audio transcription via Supabase Edge Function (Sarvam Saaras v4 ASR).
+ * Supabase is the sole production backend. Legacy fallback disabled.
  */
 export async function transcribeAudio(
   audioBlob: Blob,
   languageCode: string = "hi-IN"
-): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string; error?: string }> {
+): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string; error?: string; code?: string; request_id?: string }> {
   const isWebm = audioBlob.type?.includes("webm");
   const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
 
   const formData = new FormData();
+  formData.append("file", audioBlob, fileName);
   formData.append("audio", audioBlob, fileName);
   formData.append("language_code", languageCode);
   formData.append("action", "transcribe");
 
-  // 1. First priority: Supabase Edge Function voice-catalog
+  // 1. Authoritative Production Path: Supabase Edge Function voice-catalog
   try {
     const { data, error } = await supabase.functions.invoke("voice-catalog", {
       body: formData,
     });
+
     if (!error && data?.success) {
       return data;
     }
-  } catch (supabaseErr) {
-    console.warn("Supabase voice-catalog transcribe failed, falling back to backend:", supabaseErr);
-  }
 
-  // 2. Dual-path fallback: backend /voice/transcribe
-  try {
-    const authHeaders = await getSupabaseAuthorizationHeader();
-    const res = await fetch(`${API_BASE}/voice/transcribe`, {
-      method: "POST",
-      headers: {
-        ...authHeaders,
-      },
-      body: formData,
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
+    if (data && !data.success) {
       return {
         success: false,
         transcript: "",
-        error: data.detail || data.error || `HTTP ${res.status}`,
+        error: data.error || "Speech transcription failed",
+        code: data.code || "ASR_ERROR",
+        request_id: data.request_id,
       };
     }
-    return data;
-  } catch (err: any) {
-    return {
-      success: false,
-      transcript: "",
-      error: err?.message || "Network error",
-    };
+
+    if (error) {
+      let errorMsg = error.message || "Failed to invoke Supabase voice-catalog";
+      let code = "SUPABASE_FUNCTION_ERROR";
+      let requestId = "req_unknown";
+
+      try {
+        const errorJson = (error as any)?.context ? await (error as any).context.json() : null;
+        if (errorJson) {
+          errorMsg = errorJson.error || errorMsg;
+          code = errorJson.code || code;
+          requestId = errorJson.request_id || requestId;
+        }
+      } catch {}
+
+      if (!ENABLE_LEGACY_VOICE_BACKEND) {
+        return {
+          success: false,
+          transcript: "",
+          error: errorMsg,
+          code,
+          request_id: requestId,
+        };
+      }
+    }
+  } catch (supabaseErr: any) {
+    console.error("Supabase voice-catalog transcribe failed:", supabaseErr);
+    if (!ENABLE_LEGACY_VOICE_BACKEND) {
+      return {
+        success: false,
+        transcript: "",
+        error: supabaseErr?.message || "Speech service connection failed",
+        code: "CONNECTION_FAILED",
+      };
+    }
   }
+
+  // 2. Legacy fallback strictly disabled in production
+  if (ENABLE_LEGACY_VOICE_BACKEND) {
+    try {
+      const authHeaders = await getSupabaseAuthorizationHeader();
+      const res = await fetch(`${API_BASE}/voice/transcribe`, {
+        method: "POST",
+        headers: { ...authHeaders },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          transcript: "",
+          error: data.detail || data.error || `HTTP ${res.status}`,
+        };
+      }
+      return data;
+    } catch (err: any) {
+      return {
+        success: false,
+        transcript: "",
+        error: err?.message || "Legacy voice fallback failed",
+      };
+    }
+  }
+
+  return {
+    success: false,
+    transcript: "",
+    error: "Speech transcription service unavailable",
+    code: "VOICE_UNAVAILABLE",
+  };
 }
 
 export interface ExtractedVoiceCraft {

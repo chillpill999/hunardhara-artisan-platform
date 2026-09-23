@@ -1,21 +1,56 @@
 // Supabase Edge Function: voice-catalog
-// Sovereign Indic Voice Processing (Sarvam Saarika ASR + Sarvam Bulbul TTS + End-to-End Speak-to-Catalog)
+// Sovereign Indic Voice Processing (Sarvam Saaras v4 ASR + Sarvam Bulbul TTS + End-to-End Speak-to-Catalog)
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SARVAM_API_KEY = Deno.env.get("SARVAM_API_KEY") || "";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-};
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get("origin") || "";
+  const allowedOrigins = [
+    "https://hunardhara.technogamerzthenextlevel.workers.dev",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
+  ];
+  const allowOrigin = allowedOrigins.includes(origin)
+    ? origin
+    : (origin.endsWith(".workers.dev") ? origin : "*");
 
-interface TranscribeResponse {
-  success: boolean;
-  transcript: string;
-  language_code?: string;
-  source?: string;
-  error?: string;
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-request-id",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Expose-Headers": "x-request-id",
+  };
 }
+
+function generateRequestId(): string {
+  return `req_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+interface StructuredVoiceError {
+  success: false;
+  error: string;
+  code: string;
+  status: number;
+  provider?: string;
+  provider_status?: number;
+  request_id: string;
+}
+
+interface TranscribeSuccess {
+  success: true;
+  transcript: string;
+  language_code: string;
+  source: string;
+  request_id: string;
+  provider_request_id?: string;
+}
+
+type TranscribeResult = TranscribeSuccess | StructuredVoiceError;
 
 interface TTSResponse {
   success: boolean;
@@ -26,12 +61,82 @@ interface TTSResponse {
   language_code?: string;
   message: string;
   error?: string;
+  code?: string;
+  request_id: string;
+}
+
+async function verifyAuth(req: Request, requestId: string, corsHeaders: Record<string, string>): Promise<{ authorized: boolean; errorResponse?: Response; user?: any }> {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return {
+      authorized: false,
+      errorResponse: new Response(
+        JSON.stringify({
+          success: false,
+          error: "Authentication required. Bearer token missing in Authorization header.",
+          code: "AUTH_REQUIRED",
+          status: 401,
+          request_id: requestId,
+        }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+      )
+    };
+  }
+
+  try {
+    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } }
+    });
+    const { data: { user }, error } = await supabaseClient.auth.getUser();
+
+    if (error || !user) {
+      return {
+        authorized: false,
+        errorResponse: new Response(
+          JSON.stringify({
+            success: false,
+            error: `Invalid or expired session token: ${error?.message || "User not found"}`,
+            code: "AUTH_INVALID_TOKEN",
+            status: 401,
+            request_id: requestId,
+          }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        )
+      };
+    }
+
+    const userRole = user.app_metadata?.role || user.user_metadata?.role || "artisan";
+    return { authorized: true, user: { ...user, role: userRole } };
+  } catch (err: any) {
+    return {
+      authorized: false,
+      errorResponse: new Response(
+        JSON.stringify({
+          success: false,
+          error: `Authentication verification error: ${err.message}`,
+          code: "AUTH_VERIFICATION_ERROR",
+          status: 401,
+          request_id: requestId,
+        }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+      )
+    };
+  }
 }
 
 Deno.serve(async (req: Request) => {
+  const requestId = req.headers.get("x-request-id") || generateRequestId();
+  const corsHeaders = getCorsHeaders(req);
+
   // 1. Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  // 2. Validate Production Authentication / Authorization
+  const auth = await verifyAuth(req, requestId, corsHeaders);
+  if (!auth.authorized) {
+    return auth.errorResponse!;
   }
 
   const url = new URL(req.url);
@@ -44,50 +149,102 @@ Deno.serve(async (req: Request) => {
     // -------------------------------------------------------------
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
-      const audioFile = (formData.get("audio") || formData.get("file")) as File | null;
+      const audioFile = (formData.get("file") || formData.get("audio")) as File | null;
       const languageCode = (formData.get("language_code") as string) || "hi-IN";
       const action = (formData.get("action") as string) || actionParam || "transcribe";
 
+      // Validation 1: File existence
       if (!audioFile) {
         return new Response(
-          JSON.stringify({ success: false, error: "No audio file provided in form-data" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({
+            success: false,
+            error: "No audio file provided in form-data ('file' or 'audio' field required)",
+            code: "AUDIO_FILE_MISSING",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
         );
       }
 
+      // Validation 2: Byte length
       const audioBytes = new Uint8Array(await audioFile.arrayBuffer());
       if (audioBytes.length === 0) {
         return new Response(
-          JSON.stringify({ success: false, error: "AUDIO_EMPTY_OR_ZERO_LENGTH" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({
+            success: false,
+            error: "Audio file is empty or zero length",
+            code: "AUDIO_EMPTY_OR_ZERO_LENGTH",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
         );
       }
 
-      // Transcribe via Sarvam Saarika / Saaras
-      const asrResult = await transcribeWithSarvam(audioBytes, audioFile.name || "audio.wav", languageCode);
+      // Validation 3: Maximum size limit (25 MB)
+      if (audioBytes.length > 26214400) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Audio file exceeds maximum allowed size of 25MB for REST transcription",
+            code: "AUDIO_FILE_TOO_LARGE",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
+      // Validation 4: Supported formats
+      const filename = audioFile.name || "recording.wav";
+      const validExtensions = [".wav", ".webm", ".ogg", ".opus", ".mp3", ".m4a", ".flac", ".aac"];
+      const hasValidExt = validExtensions.some(ext => filename.toLowerCase().endsWith(ext));
+      const isAudioMime = !audioFile.type || audioFile.type.startsWith("audio/") || audioFile.type.includes("webm") || audioFile.type === "application/octet-stream";
+      if (!hasValidExt && !isAudioMime) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Unsupported audio format for '${filename}'. Supported formats: WAV, WebM, OGG, Opus, MP3, M4A, FLAC, AAC.`,
+            code: "INVALID_AUDIO_FORMAT",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
+      // Call Sarvam Saaras v4 STT
+      const asrResult = await transcribeWithSarvam(audioBytes, filename, languageCode, requestId);
       if (!asrResult.success) {
         return new Response(
           JSON.stringify(asrResult),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { status: asrResult.status || 502, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
         );
       }
 
       const transcript = (asrResult.transcript || "").trim();
 
-      // If action is only transcribe, return transcript
+      // Action: Simple Transcribe
       if (action === "transcribe") {
         return new Response(
           JSON.stringify(asrResult),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
         );
       }
 
-      // If action is speak-to-catalog, run end-to-end extraction
+      // Action: End-to-End Speak-to-Catalog
       if (action === "speak-catalog" || action === "speak_catalog") {
         if (!transcript) {
           return new Response(
-            JSON.stringify({ success: false, error: "AUDIO_SILENT_OR_INCOMPREHENSIBLE" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            JSON.stringify({
+              success: false,
+              error: "Audio did not contain recognizable speech. Please speak clearly into the microphone.",
+              code: "AUDIO_SILENT_OR_INCOMPREHENSIBLE",
+              status: 400,
+              request_id: requestId,
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
           );
         }
 
@@ -97,7 +254,7 @@ Deno.serve(async (req: Request) => {
         if (extractResult.success && !extractResult.requires_clarification && extractResult.attributes) {
           try {
             const script = extractResult.attributes.voice_script_hi || `आपका उत्पाद ${extractResult.attributes.product_name_hi || "शिल्प"} तैयार है।`;
-            const ttsRes = await synthesizeWithSarvam(script, languageCode, "shubh", "bulbul:v3");
+            const ttsRes = await synthesizeWithSarvam(script, languageCode, "shubh", "bulbul:v3", requestId);
             if (ttsRes.success && ttsRes.audio_base64) {
               confirmationAudioBase64 = ttsRes.audio_base64;
             }
@@ -115,9 +272,10 @@ Deno.serve(async (req: Request) => {
             message_hi: extractResult.message_hi,
             message_en: extractResult.message_en,
             confirmation_audio_base64: confirmationAudioBase64,
-            source: "sarvam_ai_suite"
+            source: "sarvam_saaras_v4",
+            request_id: requestId,
           }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
         );
       }
     }
@@ -129,36 +287,29 @@ Deno.serve(async (req: Request) => {
     const action = body.action || actionParam;
 
     // Sub-route: TTS
-    if (action === "tts" || body.text) {
+    if (action === "tts" || action === "text-to-speech" || body.text) {
       const text = body.text || "";
-      const languageCode = body.language_code || "hi-IN";
+      const languageCode = body.language_code || body.target_language_code || "hi-IN";
       const speaker = body.speaker || "shubh";
       const model = body.model || "bulbul:v3";
 
       if (!text.trim()) {
         return new Response(
-          JSON.stringify({ success: false, error: "Text is required for TTS synthesis" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({
+            success: false,
+            error: "Text is required for TTS synthesis",
+            code: "TEXT_REQUIRED",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
         );
       }
 
-      const ttsResult = await synthesizeWithSarvam(text, languageCode, speaker, model);
+      const ttsResult = await synthesizeWithSarvam(text, languageCode, speaker, model, requestId);
       return new Response(
         JSON.stringify(ttsResult),
-        { status: ttsResult.success ? 200 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Sub-route: Chat (Hunar Saathi)
-    if (action === "chat" || body.message) {
-      const message = body.message || "";
-      const context = body.context || "";
-      const systemPrompt = body.system_prompt || "You are Hunar Saathi, a warm, culturally respectful AI companion helping rural Indian artisans. Reply primarily in clear, simple Hindi.";
-
-      const chatResult = await chatWithSarvam(message, systemPrompt, context);
-      return new Response(
-        JSON.stringify(chatResult),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: ttsResult.success ? 200 : (ttsResult.code === "MISSING_PROVIDER_SECRET" ? 500 : 502), headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
       );
     }
 
@@ -172,10 +323,23 @@ Deno.serve(async (req: Request) => {
       const filename = body.filename || "recording.wav";
       const languageCode = body.language_code || "hi-IN";
 
-      const asrResult = await transcribeWithSarvam(bytes, filename, languageCode);
+      const asrResult = await transcribeWithSarvam(bytes, filename, languageCode, requestId);
       return new Response(
         JSON.stringify(asrResult),
-        { status: asrResult.success ? 200 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: asrResult.success ? 200 : (asrResult.status || 502), headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+      );
+    }
+
+    // Sub-route: Chat (Hunar Saathi)
+    if (action === "chat" || body.message) {
+      const message = body.message || "";
+      const context = body.context || "";
+      const systemPrompt = body.system_prompt || "You are Hunar Saathi, a warm, culturally respectful AI companion helping rural Indian artisans. Reply primarily in clear, simple Hindi.";
+
+      const chatResult = await chatWithSarvam(message, systemPrompt, context);
+      return new Response(
+        JSON.stringify({ ...chatResult, request_id: requestId }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
       );
     }
 
@@ -183,54 +347,78 @@ Deno.serve(async (req: Request) => {
     if (action === "speakers") {
       return new Response(
         JSON.stringify({
+          success: true,
           recommended_hindi: [
             { id: "shubh", name: "Shubh (शुभ)", tone: "Friendly, warm male guide", gender: "male" },
             { id: "sanchita_hi_assistant", name: "Sanchita (संचिता)", tone: "Compassionate female assistant", gender: "female" },
             { id: "roopa_hi_conversational", name: "Roopa (रूपा)", tone: "Artisan conversational elder", gender: "female" },
             { id: "aditya_hi_conversational", name: "Aditya (आदित्य)", tone: "Youthful advisor", gender: "male" }
           ],
-          default: "shubh"
+          default: "shubh",
+          request_id: requestId,
         }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
       );
     }
 
     return new Response(
-      JSON.stringify({ error: "Invalid action or payload. Specify action='transcribe', 'tts', 'chat', or 'speak-catalog'." }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: "Invalid action or payload. Specify action='transcribe', 'tts', 'chat', or 'speak-catalog'.",
+        code: "INVALID_ACTION",
+        status: 400,
+        request_id: requestId,
+      }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
     );
   } catch (err: any) {
     console.error("voice-catalog edge function error:", err);
     return new Response(
-      JSON.stringify({ success: false, error: err.message || "Internal voice service error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: err.message || "Internal voice service error",
+        code: "INTERNAL_ERROR",
+        status: 500,
+        request_id: requestId,
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
     );
   }
 });
 
-// Helper: Transcribe audio using Sarvam ASR
+// Helper: Transcribe audio using Sarvam Saaras v4 STT API
 async function transcribeWithSarvam(
   audioBytes: Uint8Array,
   filename: string,
-  languageCode: string
-): Promise<TranscribeResponse> {
+  languageCode: string,
+  requestId: string
+): Promise<TranscribeResult> {
   if (!SARVAM_API_KEY) {
-    return { success: false, transcript: "", error: "SARVAM_API_KEY missing in environment" };
+    return {
+      success: false,
+      error: "SARVAM_API_KEY is not configured in Supabase Edge Function environment",
+      code: "MISSING_PROVIDER_SECRET",
+      status: 500,
+      provider: "sarvam",
+      request_id: requestId,
+    };
   }
 
-  const boundary = "----SarvamDenoBoundary" + Math.random().toString(36).substring(2);
   const ext = filename.split(".").pop()?.toLowerCase() || "wav";
   let mimeType = "audio/wav";
   if (ext === "webm") mimeType = "audio/webm";
   else if (ext === "ogg" || ext === "opus") mimeType = "audio/ogg";
   else if (ext === "mp3") mimeType = "audio/mpeg";
   else if (ext === "m4a") mimeType = "audio/m4a";
+  else if (ext === "flac") mimeType = "audio/flac";
+  else if (ext === "aac") mimeType = "audio/aac";
 
   const fileBlob = new Blob([audioBytes], { type: mimeType });
   const fd = new FormData();
-  fd.append("model", "saarika:v2.5");
-  fd.append("language_code", languageCode.startsWith("hi") ? "hi-IN" : languageCode);
   fd.append("file", fileBlob, filename);
+  fd.append("model", "saaras:v4");
+  fd.append("mode", "transcribe");
+  fd.append("language_code", languageCode || "hi-IN");
 
   try {
     const res = await fetch("https://api.sarvam.ai/speech-to-text", {
@@ -239,22 +427,64 @@ async function transcribeWithSarvam(
         "api-subscription-key": SARVAM_API_KEY,
       },
       body: fd,
+      signal: AbortSignal.timeout(25000), // 25s timeout
     });
 
     if (!res.ok) {
       const errText = await res.text();
-      return { success: false, transcript: "", error: `Sarvam ASR HTTP ${res.status}: ${errText}` };
+      let code = "SARVAM_UPSTREAM_ERROR";
+      let status = 502;
+
+      if (res.status === 401 || res.status === 403) {
+        code = "SARVAM_AUTH_ERROR";
+        status = 403;
+      } else if (res.status === 429) {
+        code = "SARVAM_RATE_LIMIT";
+        status = 429;
+      } else if (res.status === 400 || res.status === 422) {
+        code = "SARVAM_VALIDATION_ERROR";
+        status = 400;
+      }
+
+      return {
+        success: false,
+        error: `Sarvam ASR HTTP ${res.status}: ${errText}`,
+        code,
+        status,
+        provider: "sarvam",
+        provider_status: res.status,
+        request_id: requestId,
+      };
     }
 
     const data = await res.json();
     return {
       success: true,
-      transcript: data.transcript || "",
+      transcript: (data.transcript || "").trim(),
       language_code: data.language_code || languageCode,
-      source: "sarvam_saarika",
+      source: "sarvam_saaras_v4",
+      provider_request_id: data.request_id,
+      request_id: requestId,
     };
   } catch (e: any) {
-    return { success: false, transcript: "", error: e.message || "ASR request failed" };
+    if (e.name === "TimeoutError" || e.name === "AbortError") {
+      return {
+        success: false,
+        error: "Sarvam speech recognition timed out after 25 seconds",
+        code: "GATEWAY_TIMEOUT",
+        status: 504,
+        provider: "sarvam",
+        request_id: requestId,
+      };
+    }
+    return {
+      success: false,
+      error: e.message || "ASR request failed",
+      code: "NETWORK_ERROR",
+      status: 502,
+      provider: "sarvam",
+      request_id: requestId,
+    };
   }
 }
 
@@ -263,10 +493,19 @@ async function synthesizeWithSarvam(
   text: string,
   languageCode: string,
   speaker: string,
-  model: string
+  model: string,
+  requestId: string
 ): Promise<TTSResponse> {
   if (!SARVAM_API_KEY) {
-    return { success: false, format: "wav", source: "sarvam_bulbul", message: "SARVAM_API_KEY missing", error: "Missing API key" };
+    return {
+      success: false,
+      format: "wav",
+      source: "sarvam_bulbul",
+      message: "SARVAM_API_KEY missing in environment",
+      error: "Missing API key",
+      code: "MISSING_PROVIDER_SECRET",
+      request_id: requestId,
+    };
   }
 
   try {
@@ -282,6 +521,7 @@ async function synthesizeWithSarvam(
         speaker: speaker || "shubh",
         model: model || "bulbul:v3",
       }),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (!res.ok) {
@@ -292,6 +532,8 @@ async function synthesizeWithSarvam(
         source: "sarvam_bulbul",
         message: `Sarvam TTS HTTP ${res.status}: ${errText}`,
         error: errText,
+        code: res.status === 401 || res.status === 403 ? "SARVAM_AUTH_ERROR" : "SARVAM_TTS_ERROR",
+        request_id: requestId,
       };
     }
 
@@ -306,6 +548,7 @@ async function synthesizeWithSarvam(
         speaker,
         language_code: languageCode,
         message: "Speech synthesized successfully",
+        request_id: requestId,
       };
     }
 
@@ -314,6 +557,8 @@ async function synthesizeWithSarvam(
       format: "wav",
       source: "sarvam_bulbul",
       message: "No audio returned from Sarvam Bulbul",
+      code: "SARVAM_EMPTY_AUDIO",
+      request_id: requestId,
     };
   } catch (e: any) {
     return {
@@ -322,6 +567,8 @@ async function synthesizeWithSarvam(
       source: "sarvam_bulbul",
       message: e.message || "TTS error",
       error: e.message,
+      code: "TTS_REQUEST_FAILED",
+      request_id: requestId,
     };
   }
 }
@@ -352,6 +599,7 @@ async function chatWithSarvam(message: string, systemPrompt: string, context?: s
         model: "sarvam-105b-conversations",
         messages,
       }),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (res.ok) {
@@ -371,6 +619,7 @@ async function chatWithSarvam(message: string, systemPrompt: string, context?: s
 }
 
 // Helper: Extract craft attributes via Sarvam LLM
+// Truthfulness Rule: Missing/unknown fields remain null/empty - NO fake values
 async function extractCraftAttributes(transcript: string, languageCode: string): Promise<any> {
   const clean = transcript.trim();
   const lower = clean.toLowerCase();
@@ -395,10 +644,10 @@ Extract structured craft attributes from this artisan description:
 
 Respond with ONLY valid JSON without markdown formatting:
 {
-  "product_name_hi": "उत्पाद का नाम हिंदी में",
-  "product_name_en": "Product Name in English",
-  "craft_type": "Specific Craft (e.g. Varanasi Silk, Bastar Dhokra, Khurja Pottery, Madhubani Painting, Channapatna Toys)",
-  "materials": ["material 1", "material 2"],
+  "product_name_hi": "उत्पाद का नाम हिंदी में या null",
+  "product_name_en": "Product Name in English or null",
+  "craft_type": "Specific Craft (e.g. Varanasi Silk, Bastar Dhokra, Khurja Pottery, Madhubani Painting, Channapatna Toys) or null",
+  "materials": ["material 1"],
   "dimensions": null or "string dimensions",
   "color": null or "color name",
   "production_days": null or integer number of days,
@@ -408,56 +657,58 @@ Respond with ONLY valid JSON without markdown formatting:
   "voice_script_hi": "पुष्टि ऑडियो स्क्रिप्ट"
 }`;
 
-  try {
-    const res = await fetch("https://api.sarvam.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "api-subscription-key": SARVAM_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "sarvam-105b-conversations",
-        messages: [
-          { role: "system", content: "You are a strict JSON-only API. Never output preamble, explanation, or markdown fences." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
+  if (SARVAM_API_KEY) {
+    try {
+      const res = await fetch("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "api-subscription-key": SARVAM_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "sarvam-105b-conversations",
+          messages: [
+            { role: "system", content: "You are a strict JSON-only API. Never output preamble, explanation, or markdown fences." },
+            { role: "user", content: prompt },
+          ],
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      const rawText = data.choices?.[0]?.message?.content || "";
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) {
-        const parsed = JSON.parse(match[0]);
-        normalizeCraft(parsed, clean);
-        return { success: true, requires_clarification: false, attributes: parsed };
+      if (res.ok) {
+        const data = await res.json();
+        const rawText = data.choices?.[0]?.message?.content || "";
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          normalizeCraft(parsed, clean);
+          return { success: true, requires_clarification: false, attributes: parsed };
+        }
       }
+    } catch (e) {
+      console.warn("Sarvam extraction error in voice-catalog:", e);
     }
-  } catch (e) {
-    console.warn("Sarvam extraction error in voice-catalog:", e);
   }
 
-  // Fallback extraction heuristic
-  const fallbackAttrs: any = {
-    product_name_hi: "पारंपरिक हस्तशिल्प",
-    product_name_en: "Traditional Handcrafted Art",
-    craft_type: "Indian Handicraft",
-    materials: ["प्राकृतिक सामग्री"],
+  // Truthful extraction heuristic: DO NOT invent prices, materials, or days
+  const truthfulAttrs: any = {
+    product_name_hi: null,
+    product_name_en: null,
+    craft_type: null,
+    materials: [],
     dimensions: null,
     color: null,
-    production_days: 3,
-    material_cost: 500,
+    production_days: null,
+    material_cost: null,
     description_hi: clean,
-    description_en: "Handcrafted authentic Indian artisan product.",
-    voice_script_hi: "बधाई हो! आपका उत्पाद विवरण तैयार है।",
+    description_en: null,
+    voice_script_hi: null,
   };
-  normalizeCraft(fallbackAttrs, clean);
-  return { success: true, requires_clarification: false, attributes: fallbackAttrs };
+  normalizeCraft(truthfulAttrs, clean);
+  return { success: true, requires_clarification: false, attributes: truthfulAttrs };
 }
 
 function normalizeCraft(parsed: any, clean: string) {
-  const ctLower = (parsed.craft_type || "").toLowerCase();
   const textLower = clean.toLowerCase();
 
   if (textLower.includes("वाराणसी") || textLower.includes("बनारस") || textLower.includes("varanasi") || textLower.includes("banarasi") || textLower.includes("कतान")) {
@@ -474,7 +725,7 @@ function normalizeCraft(parsed: any, clean: string) {
 
   const days = parsed.production_days != null ? Number(parsed.production_days) : null;
   const cost = parsed.material_cost != null ? Number(parsed.material_cost) : null;
-  if (days != null && cost != null && !isNaN(days) && !isNaN(cost)) {
+  if (days != null && cost != null && !isNaN(days) && !isNaN(cost) && days > 0 && cost > 0) {
     const floor = Math.round((cost + days * 650) / 10) * 10;
     parsed.wage_floor = floor;
     parsed.recommended_price = Math.round((floor * 1.25) / 10) * 10;

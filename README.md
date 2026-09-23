@@ -98,7 +98,7 @@ Rural and tribal Indian artisans possess extraordinary ancestral craft heritage,
 | **Supabase Edge Functions** | `/functions/v1/voice-catalog`, `/functions/v1/ai-catalog` | Serverless Sarvam ASR/TTS and Gemma AI extraction engines |
 | **Artisan Atelier & Studio** | `/artisan` | Artisan dashboard: Overview, Speak Snap Sell, My Products, Orders, Query Box, Earnings |
 | **B2B Matchmaker** | `/b2b` | Bulk buyer RFQ procurement & multi-factor AI scoring portal |
-| **Connectivity Diagnostic** | `npm run test:connectivity` (web-portal) | 24-point authoritative automated diagnostic suite (100% pass) |
+| **Connectivity Diagnostic** | `npm run test:connectivity` (web-portal) | 26-point authoritative automated diagnostic suite (100% pass) |
 | **Interactive API Docs (Swagger)** | `http://localhost:8000/docs` | Live interactive FastAPI OpenAPI documentation (legacy dual-path) |
 | **Alternative API Docs (ReDoc)** | `http://localhost:8000/redoc` | Complete ReDoc specification |
 
@@ -124,9 +124,11 @@ Rural and tribal Indian artisans possess extraordinary ancestral craft heritage,
 * **Canvas Normalization**: Automatically centers the isolated craft on a standardized 1:1 square canvas (1080x1080px) adhering to national e-commerce guidelines.
 * **Before / After Comparison**: Generates side-by-side verification previews for instant artisan review.
 
-### 2. Indic Voice-to-Catalog Engine
-* **Speech-to-Text**: Integrates **Sarvam AI Saaras** and **Bhashini ASR** for high-accuracy Indic speech recognition supporting Hindi, Bhojpuri, Maithili, Awadhi, Bengali, Kannada, Tamil, Telugu, and code-mixed vernacular dialects.
-* **Neural Machine Translation**: Converts colloquial spoken craft descriptions into standardized English and literary Hindi.
+### 2. Indic Voice-to-Catalog Engine (Production SSOT)
+* **Sovereign Cloud Edge Architecture**: Production voice processing routes exclusively from the client (Web / Flutter) to the **Supabase Edge Function (`voice-catalog`)**, providing authenticated serverless processing without exposing third-party API keys to the browser.
+* **Speech-to-Text (Sarvam Saaras v4)**: Utilizes Sarvam AI's flagship `saaras:v4` model (`mode="transcribe"` via `POST https://api.sarvam.ai/speech-to-text` multipart file upload) for benchmark-grade Indic speech recognition supporting Hindi, Bhojpuri, Maithili, Awadhi, Bengali, Kannada, Tamil, Telugu, and code-mixed vernacular dialects.
+* **Indic Text-to-Speech (Sarvam Bulbul v3)**: Provides vernacular voice playback (`bulbul:v3`) for low-literacy artisans to hear back catalog confirmations and queries in their native tongue.
+* **Deterministic Fallback & Strict Validation**: Validates audio payloads (format, 0-byte check, 25MB ceiling), enforces JWT authentication with correlation request IDs (`request_id`), and provides deterministic offline simulation for isolated development. Legacy FastAPI voice endpoints are decoupled and guarded.
 * **Zero-Typing UI**: Mobile and web interfaces feature single-tap audio recording with real-time waveform visualization, eliminating all typing requirements.
 
 ### 3. Gemma 4 31B IT Catalog Generation

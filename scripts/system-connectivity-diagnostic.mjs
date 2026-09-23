@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { createClient } from '../web-portal/node_modules/@supabase/supabase-js/dist/index.mjs';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://gqtcpbllllaewzwqcyun.supabase.co';
@@ -165,14 +167,33 @@ async function runDiagnostic() {
     record(false, 'RPC get_admin_platform_users', err.message);
   }
 
-  // 6. Supabase Edge Functions
+  // 6. Supabase Edge Functions (Auth, TTS & Real STT)
   console.log('\n🚀 6. SUPABASE EDGE FUNCTIONS VERIFICATION');
+
+  // Authenticate test artisan session
+  let authToken = SUPABASE_ANON_KEY;
+  try {
+    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+      email: 'artisan@hunardhara.gov.in',
+      password: 'Artisan@2026',
+    });
+    if (!authErr && authData?.session?.access_token) {
+      authToken = authData.session.access_token;
+      record(true, 'Artisan Session Authorization', `JWT verified for ${authData.user.email}`);
+    } else {
+      record(false, 'Artisan Session Authorization', authErr?.message || 'Login failed');
+    }
+  } catch (authEx) {
+    record(false, 'Artisan Session Authorization', authEx.message);
+  }
+
+  // 6.A TTS Check (Bulbul v3)
   try {
     const ttsRes = await fetch(`${SUPABASE_URL}/functions/v1/voice-catalog`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
         action: 'text-to-speech',
@@ -182,20 +203,58 @@ async function runDiagnostic() {
     });
     const ttsData = await ttsRes.json().catch(() => ({}));
     if (ttsRes.ok && ttsData.audio_base64) {
-      record(true, 'Edge Function: voice-catalog (TTS)', `Base64 audio size: ${ttsData.audio_base64.length} chars`);
+      record(true, 'Edge Function: voice-catalog (TTS bulbul:v3)', `Base64 audio size: ${ttsData.audio_base64.length} chars, Ref: ${ttsData.request_id || 'ok'}`);
     } else {
-      record(ttsRes.status < 500, 'Edge Function: voice-catalog', `Status: ${ttsRes.status}`);
+      record(false, 'Edge Function: voice-catalog (TTS bulbul:v3)', `HTTP ${ttsRes.status} | Code: ${ttsData.code} | Error: ${ttsData.error}`);
     }
   } catch (err) {
-    record(false, 'Edge Function: voice-catalog', err.message);
+    record(false, 'Edge Function: voice-catalog (TTS)', err.message);
   }
 
+  // 6.B REAL STT Check (Saaras v4 with real audio file upload)
+  try {
+    const fixtureCandidates = [
+      path.resolve('tests/fixtures/hindi-test.wav'),
+      path.resolve('../tests/fixtures/hindi-test.wav'),
+    ];
+    let fixturePath = fixtureCandidates.find(p => fs.existsSync(p));
+
+    if (fixturePath) {
+      const audioBuffer = fs.readFileSync(fixturePath);
+      const blob = new Blob([audioBuffer], { type: 'audio/wav' });
+      const fd = new FormData();
+      fd.append('file', blob, 'hindi-test.wav');
+      fd.append('action', 'transcribe');
+      fd.append('language_code', 'hi-IN');
+
+      const sttRes = await fetch(`${SUPABASE_URL}/functions/v1/voice-catalog`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: fd,
+      });
+
+      const sttData = await sttRes.json().catch(() => ({}));
+      if (sttRes.ok && sttData.success && sttData.transcript && sttData.transcript.trim().length > 0) {
+        record(true, 'Edge Function: voice-catalog (STT saaras:v4)', `Transcript: "${sttData.transcript.slice(0, 42)}...", Model: ${sttData.source}, Ref: ${sttData.request_id}`);
+      } else {
+        record(false, 'Edge Function: voice-catalog (STT saaras:v4)', `HTTP ${sttRes.status} | Code: ${sttData.code} | Error: ${sttData.error || 'Empty transcript'} | Ref: ${sttData.request_id}`);
+      }
+    } else {
+      record(false, 'Edge Function: voice-catalog (STT saaras:v4)', 'Test fixture hindi-test.wav not found on disk');
+    }
+  } catch (err) {
+    record(false, 'Edge Function: voice-catalog (STT saaras:v4)', err.message);
+  }
+
+  // 6.C AI Catalog Extraction (Gemma/Sarvam Indic LLM)
   try {
     const aiRes = await fetch(`${SUPABASE_URL}/functions/v1/ai-catalog`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
         action: 'extract_attributes',
@@ -218,6 +277,12 @@ async function runDiagnostic() {
   console.log(`📊 DIAGNOSTIC COMPLETED: ${passedChecks} / ${totalChecks} CHECKS PASSED (${Math.round((passedChecks / totalChecks) * 100)}%)`);
   if (passedChecks === totalChecks) {
     console.log('🏆 STATUS: FULL SOVEREIGN SUPABASE SSOT COMPLIANCE ACHIEVED');
+    console.log('   ✅ Supabase STT (Sarvam Saaras v4)');
+    console.log('   ✅ Supabase TTS (Sarvam Bulbul v3)');
+    console.log('   ✅ Supabase Database (100% RLS Protected)');
+    console.log('   ✅ Supabase Storage (Public & Private Buckets)');
+    console.log('   ✅ Supabase Realtime (Publication Verified)');
+    console.log('   ✅ Supabase RPC & Edge Functions (Operational)');
   } else {
     console.log('⚠️ STATUS: COMPLIANCE ACHIEVED WITH MINOR ADVISORIES');
   }

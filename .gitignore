@@ -61,3 +61,4 @@ backend/static/studio_outputs/
 static/studio/
 static/studio_outputs/
 storage/
+supabase/.temp/
