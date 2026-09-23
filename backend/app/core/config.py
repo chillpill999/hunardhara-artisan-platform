@@ -24,10 +24,11 @@ class Settings(BaseSettings):
     AADHAAR_PEPPER_KEY: Optional[str] = None
 
     # Database Configuration
-    # Defaults to SQLite for immediate local testing if Postgres is not configured
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "sqlite:///./artisan_platform.db"
+        "postgresql://artisan_backend.gqtcpbllllaewzwqcyun:HunardharaProdDb2026_SecureKey@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require"
+        if os.getenv("ENVIRONMENT") == "production"
+        else "sqlite:///./artisan_platform.db"
     )
     SYNC_DATABASE_URL: Optional[str] = os.getenv(
         "SYNC_DATABASE_URL",
@@ -100,6 +101,8 @@ class Settings(BaseSettings):
     def sync_db_url(self) -> str:
         if self.SYNC_DATABASE_URL:
             return self.SYNC_DATABASE_URL
+        if self.is_production and (not self.DATABASE_URL or self.is_sqlite):
+            return "postgresql://artisan_backend.gqtcpbllllaewzwqcyun:HunardharaProdDb2026_SecureKey@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require"
         if self.is_sqlite:
             # Strip aiosqlite if present
             return self.DATABASE_URL.replace("+aiosqlite", "")
