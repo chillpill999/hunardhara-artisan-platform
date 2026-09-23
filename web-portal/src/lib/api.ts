@@ -750,7 +750,30 @@ export async function synthesizeSpeech(
   languageCode: string = "hi-IN",
   speaker: string = "shubh"
 ): Promise<{ success: boolean; audio_base64?: string; format?: string; source?: string }> {
-  // 1. First priority: Fast Edge Sarvam Bulbul TTS
+  // 1. First priority: Supabase Edge Function voice-catalog (Sarvam Bulbul TTS)
+  try {
+    const { data, error } = await supabase.functions.invoke("voice-catalog", {
+      body: {
+        action: "tts",
+        text,
+        language_code: languageCode,
+        speaker,
+        model: "bulbul:v3",
+      },
+    });
+    if (!error && data?.success && data?.audio_base64) {
+      return {
+        success: true,
+        audio_base64: data.audio_base64,
+        format: data.format || "wav",
+        source: data.source || "supabase_edge_sarvam",
+      };
+    }
+  } catch (supabaseErr) {
+    console.warn("Supabase voice-catalog TTS invocation failed:", supabaseErr);
+  }
+
+  // 2. Second priority: Fast Edge Sarvam Bulbul TTS
   try {
     const authorization = await getSupabaseAuthorizationHeader();
     const edgeRes = await fetch("/api/edge/sarvam-tts", {
@@ -773,7 +796,7 @@ export async function synthesizeSpeech(
     // Edge failed, try Render backend
   }
 
-  // 2. Second priority: Render Backend Sarvam Bulbul TTS
+  // 3. Third priority: Render Backend Sarvam Bulbul TTS
   try {
     const res = await fetch(`${API_BASE}/voice/tts`, {
       method: "POST",
@@ -792,7 +815,7 @@ export async function synthesizeSpeech(
     console.warn("Server TTS synthesis failed, falling back to client-side speech:", e);
   }
 
-  // 3. Fallback to Web Speech API
+  // 4. Fallback to Web Speech API
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     try {
       const utterance = new SpeechSynthesisUtterance(text);
@@ -806,14 +829,35 @@ export async function synthesizeSpeech(
 }
 
 /**
- * Chat with Hunar Saathi using free Cloudflare Workers AI (Llama 3.2),
- * with fallback to Sarvam 105B and offline rule engine.
+ * Chat with Hunar Saathi using Supabase Edge Function (Sarvam 105B Indic LLM),
+ * with fallback to Cloudflare Workers AI and Render backend.
  */
 export async function chatWithHunarSaathi(
   message: string,
   context?: string
 ): Promise<{ success: boolean; reply: string; model?: string; provider?: string }> {
-  // 1. First priority: Free Edge Cloudflare Workers AI
+  // 1. First priority: Supabase Sovereign Edge Function AI Chat (Sarvam 105B)
+  try {
+    const { data, error } = await supabase.functions.invoke("ai-catalog", {
+      body: {
+        action: "chat",
+        message,
+        context,
+      },
+    });
+    if (!error && data?.success && data?.reply) {
+      return {
+        success: true,
+        reply: data.reply,
+        model: data.model || "sarvam-105b",
+        provider: "supabase_edge_sarvam",
+      };
+    }
+  } catch (supabaseErr) {
+    console.warn("Supabase ai-catalog chat invocation failed:", supabaseErr);
+  }
+
+  // 2. Second priority: Free Edge Cloudflare Workers AI
   try {
     const authorization = await getSupabaseAuthorizationHeader();
     const edgeRes = await fetch("/api/edge/chat", {
@@ -836,7 +880,7 @@ export async function chatWithHunarSaathi(
     // Edge unavailable, try Render backend
   }
 
-  // 2. Second priority: Sarvam 105B LLM on Render backend
+  // 3. Third priority: Sarvam 105B LLM on Render backend
   try {
     const res = await fetch(`${API_BASE}/voice/chat`, {
       method: "POST",
@@ -894,7 +938,24 @@ export async function speakToCatalog(
   const formData = new FormData();
   formData.append("audio", audioBlob, fileName);
   formData.append("language_code", languageCode);
+  formData.append("action", "speak-catalog");
 
+  // 1. First priority: Supabase Sovereign Edge Function voice-catalog
+  try {
+    const { data, error } = await supabase.functions.invoke("voice-catalog", {
+      body: formData,
+    });
+    if (!error && data?.success) {
+      return data;
+    }
+    if (data && data.requires_clarification) {
+      return data;
+    }
+  } catch (supabaseErr) {
+    console.warn("Supabase voice-catalog speak-catalog failed, falling back to backend:", supabaseErr);
+  }
+
+  // 2. Dual-path fallback: backend /voice/speak-catalog
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     const res = await fetch(`${API_BASE}/voice/speak-catalog`, {
@@ -923,7 +984,8 @@ export async function speakToCatalog(
 }
 
 /**
- * Canonical audio transcription via backend Sarvam Saarika ASR.
+ * Canonical audio transcription via Supabase Edge Function (Sarvam Saarika ASR),
+ * with dual-path fallback to backend /voice/transcribe.
  */
 export async function transcribeAudio(
   audioBlob: Blob,
@@ -935,7 +997,21 @@ export async function transcribeAudio(
   const formData = new FormData();
   formData.append("audio", audioBlob, fileName);
   formData.append("language_code", languageCode);
+  formData.append("action", "transcribe");
 
+  // 1. First priority: Supabase Edge Function voice-catalog
+  try {
+    const { data, error } = await supabase.functions.invoke("voice-catalog", {
+      body: formData,
+    });
+    if (!error && data?.success) {
+      return data;
+    }
+  } catch (supabaseErr) {
+    console.warn("Supabase voice-catalog transcribe failed, falling back to backend:", supabaseErr);
+  }
+
+  // 2. Dual-path fallback: backend /voice/transcribe
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     const res = await fetch(`${API_BASE}/voice/transcribe`, {
@@ -993,7 +1069,8 @@ export interface ExtractedVoiceCraft {
 }
 
 /**
- * Canonical craft extraction from voice transcript via backend /voice/extract-catalog.
+ * Canonical craft extraction from voice transcript via Supabase Edge Function ai-catalog
+ * (Sarvam 105B Indic LLM), with dual-path fallback to backend /voice/extract-catalog.
  * Does NOT run frontend regex fallbacks or fabricate canned products.
  */
 export async function extractCraftFromVoice(
@@ -1021,6 +1098,45 @@ export async function extractCraftFromVoice(
     };
   }
 
+  // 1. First priority: Supabase Sovereign Edge Function ai-catalog
+  try {
+    const { data, error } = await supabase.functions.invoke("ai-catalog", {
+      body: {
+        action: "extract-craft",
+        transcript: cleanTranscript,
+        language_code: languageCode,
+      },
+    });
+
+    if (!error && data) {
+      if (data.requires_clarification) {
+        return {
+          product_name_hi: "",
+          product_name_en: "",
+          craft_type: "",
+          materials: [],
+          color: null,
+          dimensions: null,
+          production_days: null,
+          material_cost: null,
+          recommended_price: null,
+          wage_floor: null,
+          description_hi: "",
+          description_en: "",
+          requires_clarification: true,
+          message_hi: data.message_hi,
+          message_en: data.message_en,
+        };
+      }
+      if (data.success && data.attributes) {
+        return data.attributes;
+      }
+    }
+  } catch (supabaseErr) {
+    console.warn("Supabase ai-catalog extraction failed, falling back to backend:", supabaseErr);
+  }
+
+  // 2. Dual-path fallback: backend /voice/extract-catalog
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
