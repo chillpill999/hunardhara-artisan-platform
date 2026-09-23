@@ -35,6 +35,10 @@ async function getSupabaseAuthorizationHeader(): Promise<Record<string, string>>
     : {};
 }
 
+export function isSupabaseConfigured(): boolean {
+  return true;
+}
+
 // Legacy ID mapping (cleared of mock products)
 export const ID_ALIASES: Record<string, string> = {};
 
@@ -610,6 +614,79 @@ export async function matchB2BRFQ(
         statusCode: 401,
         error: "AUTHENTICATION_REQUIRED: Please sign in as a verified buyer to initiate B2B procurement matching.",
       };
+    }
+
+    // Direct Supabase RPC matching (Single Source of Truth)
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: userRes } = await supabase.auth.getUser();
+        const buyerId = userRes?.user?.id || null;
+        const buyerEmail = rfq.buyer_contact_email || userRes?.user?.email || null;
+        const buyerName = rfq.buyer_company_name || userRes?.user?.user_metadata?.full_name || "Procurement Buyer";
+
+        const { data: rpcData, error: rpcError } = await (supabase.rpc as any)("execute_b2b_rfq_matching", {
+          p_craft_type: rfq.required_craft_type,
+          p_quantity: rfq.quantity,
+          p_unit_budget: rfq.budget_per_unit,
+          p_deadline_days: rfq.delivery_days_deadline,
+          p_delivery_state: rfq.delivery_state || null,
+          p_buyer_organization: rfq.buyer_company_name || null,
+          p_buyer_email: buyerEmail,
+          p_buyer_name: buyerName,
+          p_idempotency_key: rfq.idempotency_key || null,
+          p_buyer_id: buyerId,
+        });
+
+        if (!rpcError && rpcData) {
+          const resData: any = rpcData;
+          const rawMatches = resData.matches || [];
+          const matched_artisans: B2BMatchRecordItem[] = rawMatches.map((m: any) => ({
+            artisan_id: m.artisan_id,
+            artisan_name: m.artisan_name,
+            cluster_name: m.cluster_name,
+            state: m.location || "India",
+            product_id: m.product_id,
+            overall_match_percentage: m.match_percentage ?? 0,
+            craft_compatibility_score: m.breakdown?.craft_compatibility ?? m.scores?.craft ?? 100,
+            price_compatibility_score: m.breakdown?.price_compatibility ?? m.scores?.price ?? 100,
+            capacity_feasibility_score: m.breakdown?.capacity_feasibility ?? m.scores?.capacity ?? 100,
+            location_proximity_score: m.breakdown?.location_score ?? m.scores?.location ?? 100,
+            solo_capacity_feasible: m.capacity_feasible ?? true,
+            cluster_consortium_feasible: resData.consortium_feasible ?? false,
+            artisan_monthly_capacity: m.monthly_capacity || (m.estimated_production_days ? Math.round((rfq.quantity * 30) / Math.max(1, m.estimated_production_days)) : 30),
+            artisan_wholesale_rate: m.offered_wholesale_price ?? m.quoted_unit_price ?? 0,
+            match_rationale: m.match_explanation || m.explanation || "Capacity and budget verified.",
+          }));
+
+          const combinedCapacity = matched_artisans.reduce((acc, a) => acc + (a.artisan_monthly_capacity || 0), 0);
+
+          return {
+            success: true,
+            statusCode: 200,
+            data: {
+              rfq_id: resData.rfq_id,
+              required_craft: resData.summary?.craft_type || rfq.required_craft_type,
+              quantity: resData.summary?.quantity || rfq.quantity,
+              buyer_budget: resData.summary?.unit_budget || rfq.budget_per_unit,
+              total_matches_found: resData.total_candidates_evaluated ?? matched_artisans.length,
+              cluster_consortium_recommended: resData.consortium_feasible ?? false,
+              consortium_option: {
+                consortium_recommended: resData.consortium_feasible ?? false,
+                cluster_name: matched_artisans[0]?.cluster_name || "Regional Artisan Cluster",
+                participating_artisans: matched_artisans.map(a => a.artisan_name),
+                artisan_count: matched_artisans.length,
+                combined_monthly_capacity: combinedCapacity,
+                deliverable_in_deadline: Math.round(combinedCapacity * (rfq.delivery_days_deadline / 30.0)),
+                consortium_feasible: resData.consortium_feasible ?? false,
+                explanation: "Aggregated production capacity ensures timely order fulfillment.",
+              },
+              matched_artisans,
+            },
+          };
+        }
+      } catch (sbErr) {
+        console.warn("Direct Supabase B2B matching fallback:", sbErr);
+      }
     }
 
     const payload = {
@@ -2480,6 +2557,34 @@ export async function updateAdminOrderStatus(
  */
 export async function fetchAdminB2BRFQs(): Promise<AdminB2BRFQItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("admin_b2b_rfqs_view")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          return data.map((item: any) => ({
+            id: item.id,
+            buyer_name: item.buyer_name || "Procurement Buyer",
+            buyer_organization: item.buyer_organization || undefined,
+            buyer_email: item.buyer_email || "buyer@crafts.in",
+            craft_type: item.craft_type || "Handicrafts",
+            required_quantity: item.required_quantity || 1,
+            unit_budget: Number(item.unit_budget || 0),
+            total_budget: Number(item.total_budget || 0),
+            deadline_days: item.deadline_days || 30,
+            delivery_state: item.delivery_state || undefined,
+            status: item.status || "open",
+            matches_count: item.matches_count || 0,
+            created_at: item.created_at || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase admin_b2b_rfqs_view query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2503,6 +2608,21 @@ export async function updateAdminB2BStatus(
   note?: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase
+          .from("b2b_rfqs")
+          .update({ status })
+          .eq("id", rfqId);
+
+        if (!error) {
+          return { success: true, message: `B2B status updated to ${status}.` };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase B2B status update fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 

@@ -2132,6 +2132,24 @@ export type Database = {
       }
     }
     Views: {
+      admin_b2b_rfqs_view: {
+        Row: {
+          buyer_email: string | null
+          buyer_name: string | null
+          buyer_organization: string | null
+          craft_type: string | null
+          created_at: string | null
+          deadline_days: number | null
+          delivery_state: string | null
+          id: string | null
+          matches_count: number | null
+          required_quantity: number | null
+          status: string | null
+          total_budget: number | null
+          unit_budget: number | null
+        }
+        Relationships: []
+      }
       public_artisan_profiles: {
         Row: {
           avatar_url: string | null
@@ -2199,7 +2217,28 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      execute_b2b_rfq_matching: {
+        Args: {
+          p_buyer_email?: string
+          p_buyer_id?: string
+          p_buyer_name?: string
+          p_buyer_organization?: string
+          p_craft_type: string
+          p_deadline_days: number
+          p_delivery_state?: string
+          p_idempotency_key?: string
+          p_quantity: number
+          p_unit_budget: number
+        }
+        Returns: Json
+      }
+      get_artisan_orders: { Args: { p_artisan_id?: string }; Returns: Json }
+      get_customer_orders: { Args: { p_customer_id?: string }; Returns: Json }
       is_admin: { Args: never; Returns: boolean }
+      process_cart_checkout: {
+        Args: { p_customer_id?: string; p_items: Json }
+        Returns: Json
+      }
     }
     Enums: {
       AnnouncementCategory:
