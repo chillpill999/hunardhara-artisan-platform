@@ -18,11 +18,15 @@ services:
         value: "false"
       - key: STATIC_DIR
         value: /app/static
-      - key: SUPABASE_JWT_SECRET
-        sync: false
+      - key: SUPABASE_URL
+        value: https://gqtcpbllllaewzwqcyun.supabase.co
+      - key: SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdGNwYmxsbGxhZXd6d3FjeXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5OTQ2ODgsImV4cCI6MjEwMzU3MDY4OH0.Nc0LgeD1IX8M5lmqF4d2rCHNx5rNLR3Q-FJokxyeYLo
       - key: SUPABASE_JWT_ISSUER
-        sync: false
+        value: https://gqtcpbllllaewzwqcyun.supabase.co/auth/v1
       - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
+      - key: SUPABASE_JWT_SECRET
         sync: false
       - key: ADMIN_USER_IDS
         sync: false

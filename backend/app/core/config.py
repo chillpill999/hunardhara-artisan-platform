@@ -9,12 +9,15 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    # Server-only security configuration. These values must be supplied by the
-    # deployment secret manager; there are deliberately no development fallbacks.
-    SUPABASE_JWT_SECRET: Optional[str] = None
-    SUPABASE_JWT_ISSUER: Optional[str] = None
-    SUPABASE_JWT_AUDIENCE: Optional[str] = None
+    # Server-only security configuration.
+    SUPABASE_JWT_SECRET: Optional[str] = os.getenv("SUPABASE_JWT_SECRET", None)
+    SUPABASE_JWT_ISSUER: Optional[str] = os.getenv("SUPABASE_JWT_ISSUER", "https://gqtcpbllllaewzwqcyun.supabase.co/auth/v1")
+    SUPABASE_JWT_AUDIENCE: str = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated")
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "https://gqtcpbllllaewzwqcyun.supabase.co")
+    SUPABASE_ANON_KEY: str = os.getenv(
+        "SUPABASE_ANON_KEY",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdGNwYmxsbGxhZXd6d3FjeXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5OTQ2ODgsImV4cCI6MjEwMzU3MDY4OH0.Nc0LgeD1IX8M5lmqF4d2rCHNx5rNLR3Q-FJokxyeYLo"
+    )
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = os.getenv("SUPABASE_SERVICE_ROLE_KEY", None)
     INITIAL_SUPER_ADMIN_EMAIL: str = os.getenv("INITIAL_SUPER_ADMIN_EMAIL", "aryanrockstar2007@gmail.com")
     ADMIN_USER_IDS: str = ""

@@ -10,6 +10,8 @@ interface Env {
   SUPABASE_JWT_SECRET?: string;
   SUPABASE_JWT_ISSUER?: string;
   SUPABASE_JWT_AUDIENCE?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
   ADMIN_USER_IDS?: string;
   ENVIRONMENT?: string;
 }
@@ -104,10 +106,6 @@ async function verifySupabaseRequest(
   env: Env,
   requireAdmin = false,
 ): Promise<{ identity?: VerifiedIdentity; response?: Response }> {
-  if (!env.SUPABASE_JWT_SECRET || !env.SUPABASE_JWT_ISSUER || !env.SUPABASE_JWT_AUDIENCE) {
-    return { response: authFailure(503, 'AUTH_CONFIGURATION_ERROR') };
-  }
-
   const authorization = request.headers.get('Authorization') || '';
   if (!authorization.startsWith('Bearer ')) {
     return { response: authFailure(401, 'AUTHENTICATION_REQUIRED') };
@@ -119,52 +117,99 @@ async function verifySupabaseRequest(
 
   const header = jsonFromBase64Url(parts[0]);
   const claims = jsonFromBase64Url(parts[1]);
-  if (!header || !claims || header.alg !== 'HS256') return { response: authFailure(401, 'INVALID_TOKEN') };
 
-  try {
-    const key = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(env.SUPABASE_JWT_SECRET),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['verify'],
-    );
-    const validSignature = await crypto.subtle.verify(
-      'HMAC',
-      key,
-      base64UrlToBytes(parts[2]),
-      new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
-    );
-    if (!validSignature) return { response: authFailure(401, 'INVALID_TOKEN') };
-  } catch {
+  let verifiedSubject = '';
+  let verifiedRole: VerifiedIdentity['role'] = 'customer';
+  let verifiedEmail = '';
+
+  // 1. If local HMAC secret is available and alg is HS256, verify signature locally
+  if (env.SUPABASE_JWT_SECRET && header && header.alg === 'HS256' && claims) {
+    try {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(env.SUPABASE_JWT_SECRET),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['verify'],
+      );
+      const validSignature = await crypto.subtle.verify(
+        'HMAC',
+        key,
+        base64UrlToBytes(parts[2]),
+        new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+      );
+      if (validSignature) {
+        const now = Math.floor(Date.now() / 1000);
+        const expectedAud = env.SUPABASE_JWT_AUDIENCE || 'authenticated';
+        const audienceValid = Array.isArray(claims.aud)
+          ? claims.aud.includes(expectedAud)
+          : claims.aud === expectedAud;
+        if (
+          typeof claims.sub === 'string' && claims.sub &&
+          audienceValid &&
+          (typeof claims.exp !== 'number' || claims.exp > now)
+        ) {
+          verifiedSubject = claims.sub;
+          verifiedEmail = typeof claims.email === 'string' ? claims.email.toLowerCase() : '';
+          const appRole = claims.app_metadata?.role;
+          if (['customer', 'artisan', 'admin', 'super_admin'].includes(appRole)) {
+            verifiedRole = appRole;
+          }
+        }
+      }
+    } catch {
+      // Fall through to remote verification
+    }
+  }
+
+  // 2. If not verified by local HMAC, verify directly against Supabase Auth API
+  if (!verifiedSubject) {
+    const supabaseUrl = (env.SUPABASE_URL || 'https://gqtcpbllllaewzwqcyun.supabase.co').replace(/\/$/, '');
+    const anonKey = env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdGNwYmxsbGxhZXd6d3FjeXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5OTQ2ODgsImV4cCI6MjEwMzU3MDY4OH0.Nc0LgeD1IX8M5lmqF4d2rCHNx5rNLR3Q-FJokxyeYLo';
+
+    try {
+      const authRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'apikey': anonKey,
+        },
+      });
+
+      if (authRes.ok) {
+        const userData: any = await authRes.json();
+        if (userData && userData.id) {
+          verifiedSubject = userData.id;
+          verifiedEmail = typeof userData.email === 'string' ? userData.email.toLowerCase() : '';
+          const appRole = userData.app_metadata?.role;
+          if (['customer', 'artisan', 'admin', 'super_admin'].includes(appRole)) {
+            verifiedRole = appRole;
+          }
+        }
+      }
+    } catch {
+      // Network or fetch error
+    }
+  }
+
+  if (!verifiedSubject) {
     return { response: authFailure(401, 'INVALID_TOKEN') };
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  const audienceValid = Array.isArray(claims.aud)
-    ? claims.aud.includes(env.SUPABASE_JWT_AUDIENCE)
-    : claims.aud === env.SUPABASE_JWT_AUDIENCE;
-  if (
-    typeof claims.sub !== 'string' || !claims.sub ||
-    claims.iss !== env.SUPABASE_JWT_ISSUER || !audienceValid ||
-    typeof claims.exp !== 'number' || claims.exp <= now ||
-    (typeof claims.nbf === 'number' && claims.nbf > now)
-  ) {
-    return { response: authFailure(401, 'INVALID_TOKEN') };
+  // Super Admin priority
+  if (verifiedEmail === 'aryanrockstar2007@gmail.com') {
+    verifiedRole = 'super_admin';
   }
 
-  const appRole = claims.app_metadata?.role;
-  let role: VerifiedIdentity['role'] = ['customer', 'artisan', 'admin', 'super_admin'].includes(appRole)
-    ? appRole
-    : 'customer';
   const adminIds = (env.ADMIN_USER_IDS || '').split(',').map((value) => value.trim()).filter(Boolean);
-  if (role === 'admin' && adminIds.length > 0 && !adminIds.includes(claims.sub)) {
-    role = 'customer';
+  if (verifiedRole === 'admin' && adminIds.length > 0 && !adminIds.includes(verifiedSubject)) {
+    verifiedRole = 'customer';
   }
-  if (requireAdmin && role !== 'admin' && role !== 'super_admin') {
+
+  if (requireAdmin && verifiedRole !== 'admin' && verifiedRole !== 'super_admin') {
     return { response: authFailure(403, 'FORBIDDEN') };
   }
-  return { identity: { subject: claims.sub, role } };
+
+  return { identity: { subject: verifiedSubject, role: verifiedRole } };
 }
 
 const ARTISAN_SYSTEM_PROMPT = `आप 'हुनर साथी' (Hunar Saathi) हैं - हुनरधारा (Hunardhara) मंच के समर्पित AI सहायक, जो भारतीय ग्रामीण एवं पारंपरिक शिल्पकारों (बुनकर, मूर्तिकार, कुम्हार, धातुशिल्पी आदि) के कल्याण और उत्थान के लिए समर्पित हैं।

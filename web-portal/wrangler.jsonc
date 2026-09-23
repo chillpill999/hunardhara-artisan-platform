@@ -13,6 +13,10 @@
     "run_worker_first": true
   },
   "vars": {
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "SUPABASE_URL": "https://gqtcpbllllaewzwqcyun.supabase.co",
+    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdGNwYmxsbGxhZXd6d3FjeXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5OTQ2ODgsImV4cCI6MjEwMzU3MDY4OH0.Nc0LgeD1IX8M5lmqF4d2rCHNx5rNLR3Q-FJokxyeYLo",
+    "SUPABASE_JWT_ISSUER": "https://gqtcpbllllaewzwqcyun.supabase.co/auth/v1",
+    "SUPABASE_JWT_AUDIENCE": "authenticated"
   }
 }

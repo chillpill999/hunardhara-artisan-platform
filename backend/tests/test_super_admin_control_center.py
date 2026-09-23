@@ -46,25 +46,28 @@ def clean_environment():
             db.commit()
 
         # Seed test artisan
-        artisan = db.query(Artisan).filter(Artisan.id == "art-ctrl-01").first()
-        if not artisan:
-            db.add(Artisan(
-                id="art-ctrl-01",
-                full_name="Govind Master",
-                phone_number="+919876543210",
-                masked_aadhaar="XXXXXXXX3210",
-                aadhaar_hash="ctrl-aadhaar-hash-01",
-                social_category="OBC",
-                cluster_id="cluster-control-01",
-                state="Karnataka",
-                district="Mysuru",
-                latitude=12.29,
-                longitude=76.63,
-                primary_craft="Wood Carving",
-                experience_years=12,
-                is_active=True
-            ))
-            db.commit()
+        db.query(Artisan).filter(
+            (Artisan.id == "art-ctrl-01") | (Artisan.phone_number == "+919876500999")
+        ).delete(synchronize_session=False)
+        db.commit()
+
+        db.add(Artisan(
+            id="art-ctrl-01",
+            full_name="Govind Master",
+            phone_number="+919876500999",
+            masked_aadhaar="XXXXXXXX3210",
+            aadhaar_hash="ctrl-aadhaar-hash-01",
+            social_category="OBC",
+            cluster_id="cluster-control-01",
+            state="Karnataka",
+            district="Mysuru",
+            latitude=12.29,
+            longitude=76.63,
+            primary_craft="Wood Carving",
+            experience_years=12,
+            is_active=True
+        ))
+        db.commit()
 
         # Seed test product
         product = db.query(Product).filter(Product.id == "prod-ctrl-01").first()
