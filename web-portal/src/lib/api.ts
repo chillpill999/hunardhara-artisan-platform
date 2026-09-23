@@ -2166,6 +2166,29 @@ export async function revokeAdminRole(userId: string): Promise<{ success: boolea
  */
 export async function fetchAuditLogs(limit: number = 50, offset: number = 0): Promise<AdminAuditLogItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("admin_audit_logs")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limit - 1);
+
+        if (!error && data) {
+          return data.map((log: any) => ({
+            id: log.id,
+            action: log.action,
+            actor_id: log.actor_id,
+            actor_email: log.actor_email || null,
+            target_user_id: log.target_user_id || null,
+            details: log.details || null,
+            created_at: log.created_at || new Date().toISOString(),
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase admin_audit_logs query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2197,6 +2220,30 @@ export async function fetchPlatformSettings(): Promise<PlatformSettings> {
   };
 
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("system_settings").select("key, value");
+        if (!error && data && data.length > 0) {
+          const settingsObj = { ...fallback };
+          for (const row of data) {
+            const k = row.key as keyof PlatformSettings;
+            let val = row.value;
+            if (typeof val === "string") {
+              try {
+                val = JSON.parse(val);
+              } catch {}
+            }
+            if (k in settingsObj) {
+              (settingsObj as any)[k] = val;
+            }
+          }
+          return settingsObj;
+        }
+      } catch (err) {
+        console.warn("Direct Supabase system_settings query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return fallback;
 
@@ -2218,6 +2265,31 @@ export async function updatePlatformSettings(
   updates: Partial<PlatformSettings>
 ): Promise<{ success: boolean; settings?: PlatformSettings; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        for (const [key, val] of Object.entries(updates)) {
+          await (supabase.from as any)("system_settings").upsert({
+            key,
+            value: typeof val === "boolean" ? JSON.stringify(val) : JSON.stringify(val),
+            updated_at: new Date().toISOString(),
+          });
+        }
+        const { data: userRes } = await supabase.auth.getUser();
+        await (supabase.from as any)("admin_audit_logs").insert({
+          id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          action: "UPDATE_PLATFORM_SETTINGS",
+          actor_id: userRes?.user?.id || "admin",
+          actor_email: userRes?.user?.email || "admin@hunardhara.gov.in",
+          details: JSON.stringify(updates),
+          created_at: new Date().toISOString(),
+        });
+        const current = await fetchPlatformSettings();
+        return { success: true, settings: current, message: "Platform switches updated successfully." };
+      } catch (err) {
+        console.warn("Direct Supabase updatePlatformSettings fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2245,6 +2317,32 @@ export async function updatePlatformSettings(
  */
 export async function fetchAdminOverviewMetrics(): Promise<PlatformOverviewMetrics | null> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: rpcMetrics, error } = await (supabase.rpc as any)("get_admin_overview_metrics");
+        if (!error && rpcMetrics) {
+          const switches = await fetchPlatformSettings();
+          return {
+            active_users: rpcMetrics.active_users ?? 0,
+            active_artisans: rpcMetrics.active_artisans ?? 0,
+            total_artisans: rpcMetrics.total_artisans ?? 0,
+            pending_applications: rpcMetrics.pending_applications ?? 0,
+            active_products: rpcMetrics.active_products ?? 0,
+            total_products: rpcMetrics.total_products ?? 0,
+            total_orders: rpcMetrics.total_orders ?? 0,
+            total_revenue: rpcMetrics.total_revenue ?? 0,
+            open_rfqs: rpcMetrics.open_rfqs ?? 0,
+            suspended_accounts: rpcMetrics.suspended_accounts ?? 0,
+            system_health: switches.maintenance_mode ? 'maintenance' : 'operational',
+            switches,
+            security_warnings: [],
+          };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase get_admin_overview_metrics RPC fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return null;
 
@@ -2264,6 +2362,33 @@ export async function fetchAdminOverviewMetrics(): Promise<PlatformOverviewMetri
  */
 export async function fetchAdminArtisans(): Promise<AdminArtisanItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("admin_artisans_view")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          return data.map((item: any) => ({
+            id: item.id,
+            full_name: item.full_name || "Verified Artisan",
+            phone_number: item.phone_number || "XXXXXXXXXX",
+            state: item.state || "India",
+            district: item.district || "",
+            primary_craft: item.primary_craft || "Handicrafts",
+            cluster_id: item.cluster_id || undefined,
+            cluster_name: item.cluster_name || undefined,
+            is_active: item.is_active ?? true,
+            products_count: item.products_count ?? 0,
+            gi_verified: item.gi_verified ?? true,
+            created_at: item.created_at || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase admin_artisans_view query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2288,6 +2413,32 @@ export async function verifyArtisanGI(
   giReference?: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase
+          .from("artisans")
+          .update({
+            is_verified: verified,
+          })
+          .eq("id", artisanId);
+
+        if (!error) {
+          const { data: userRes } = await supabase.auth.getUser();
+          await (supabase.from as any)("admin_audit_logs").insert({
+            id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            action: "VERIFY_ARTISAN_GI",
+            actor_id: userRes?.user?.id || "admin",
+            target_user_id: artisanId,
+            details: `GI verified: ${verified}, Name: ${giRegistrationName || 'N/A'}, Ref: ${giReference || 'N/A'}`,
+            created_at: new Date().toISOString(),
+          });
+          return { success: true, message: `GI verification ${verified ? "granted" : "revoked"} successfully.` };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase verifyArtisanGI fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2322,6 +2473,30 @@ export async function suspendArtisan(
   reason: string = "Suspended by Super Administrator"
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase
+          .from("artisans")
+          .update({ is_active: false })
+          .eq("id", artisanId);
+
+        if (!error) {
+          const { data: userRes } = await supabase.auth.getUser();
+          await (supabase.from as any)("admin_audit_logs").insert({
+            id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            action: "SUSPEND_ARTISAN",
+            actor_id: userRes?.user?.id || "admin",
+            target_user_id: artisanId,
+            details: reason,
+            created_at: new Date().toISOString(),
+          });
+          return { success: true, message: "Artisan account suspended." };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase suspendArtisan fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2351,6 +2526,30 @@ export async function reactivateArtisan(
   artisanId: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase
+          .from("artisans")
+          .update({ is_active: true })
+          .eq("id", artisanId);
+
+        if (!error) {
+          const { data: userRes } = await supabase.auth.getUser();
+          await (supabase.from as any)("admin_audit_logs").insert({
+            id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            action: "REACTIVATE_ARTISAN",
+            actor_id: userRes?.user?.id || "admin",
+            target_user_id: artisanId,
+            details: "Reactivated by Super Administrator",
+            created_at: new Date().toISOString(),
+          });
+          return { success: true, message: "Artisan account reactivated." };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase reactivateArtisan fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2374,6 +2573,33 @@ export async function reactivateArtisan(
  */
 export async function fetchAdminProducts(limit: number = 100, offset: number = 0): Promise<AdminProductItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("admin_products_view")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limit - 1);
+
+        if (!error && data) {
+          return data.map((item: any) => ({
+            id: item.id,
+            title: item.title,
+            artisan_id: item.artisan_id,
+            artisan_name: item.artisan_name,
+            craft_type: item.craft_type,
+            listing_price: Number(item.listing_price || 0),
+            floor_price: Number(item.floor_price || 0),
+            stock_quantity: Number(item.stock_quantity || 1),
+            is_active: item.is_active ?? true,
+            studio_image_url: item.studio_image_url || undefined,
+            created_at: item.created_at || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase admin_products_view query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2397,6 +2623,30 @@ export async function moderateAdminProduct(
   reason: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const isActive = action === "publish";
+        const { error } = await supabase
+          .from("products")
+          .update({ is_active: isActive })
+          .eq("id", productId);
+
+        if (!error) {
+          const { data: userRes } = await supabase.auth.getUser();
+          await (supabase.from as any)("admin_audit_logs").insert({
+            id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            action: `MODERATE_PRODUCT_${action.toUpperCase()}`,
+            actor_id: userRes?.user?.id || "admin",
+            details: `Product: ${productId}, Reason: ${reason}`,
+            created_at: new Date().toISOString(),
+          });
+          return { success: true, message: `Product ${action} action applied.` };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase moderateAdminProduct fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2426,6 +2676,21 @@ export async function restoreAdminProduct(
   productId: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase
+          .from("products")
+          .update({ is_active: true })
+          .eq("id", productId);
+
+        if (!error) {
+          return { success: true, message: "Product restored to active marketplace." };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase restoreAdminProduct fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2449,6 +2714,32 @@ export async function restoreAdminProduct(
  */
 export async function fetchAdminClusters(): Promise<AdminClusterItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("admin_clusters_view")
+          .select("*")
+          .order("name", { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          return data.map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            craft_name: item.craft_name,
+            state: item.state,
+            district: item.district,
+            statutory_daily_wage: Number(item.statutory_daily_wage || 0),
+            statutory_hourly_wage: Number(item.statutory_hourly_wage || 0),
+            gi_tag_status: item.gi_tag_status || undefined,
+            gi_tag_number: item.gi_tag_number || undefined,
+            artisans_count: item.artisans_count || 0,
+            updated_at: item.updated_at || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase admin_clusters_view query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2472,6 +2763,34 @@ export async function updateClusterWage(
   statutoryHourlyWage?: number
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const hourly = statutoryHourlyWage || Math.round((statutoryDailyWage / 8.0) * 100) / 100;
+        const { error } = await supabase
+          .from("craft_clusters")
+          .update({
+            statutory_daily_wage: statutoryDailyWage,
+            statutory_hourly_wage: hourly,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", clusterId);
+
+        if (!error) {
+          const { data: userRes } = await supabase.auth.getUser();
+          await (supabase.from as any)("admin_audit_logs").insert({
+            id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            action: "UPDATE_CLUSTER_WAGE",
+            actor_id: userRes?.user?.id || "admin",
+            details: `Cluster: ${clusterId}, Daily: ₹${statutoryDailyWage}, Hourly: ₹${hourly}`,
+            created_at: new Date().toISOString(),
+          });
+          return { success: true, message: "Statutory wage updated." };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase updateClusterWage fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2502,6 +2821,33 @@ export async function updateClusterWage(
  */
 export async function fetchAdminOrders(limit: number = 100, offset: number = 0): Promise<AdminOrderItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.from as any)("admin_orders_view")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limit - 1);
+
+        if (!error && data) {
+          return data.map((item: any) => ({
+            id: item.id,
+            order_number: item.order_number,
+            customer_id: item.customer_id,
+            artisan_id: item.artisan_id,
+            product_id: item.product_id,
+            product_title: item.product_title,
+            quantity: item.quantity,
+            total_price: Number(item.total_price || 0),
+            status: item.status || "CONFIRMED",
+            payment_status: item.payment_status || "PAID",
+            created_at: item.created_at || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase admin_orders_view query fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2526,6 +2872,25 @@ export async function updateAdminOrderStatus(
   note?: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const updates: any = {};
+        if (status) updates.status = status;
+        if (paymentStatus) updates.payment_status = paymentStatus;
+
+        const { error } = await supabase
+          .from("orders")
+          .update(updates)
+          .eq("id", orderId);
+
+        if (!error) {
+          return { success: true, message: "Order status updated." };
+        }
+      } catch (err) {
+        console.warn("Direct Supabase updateAdminOrderStatus fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2650,6 +3015,24 @@ export async function updateAdminB2BStatus(
  */
 export async function fetchPlatformUsers(): Promise<AdminPlatformUserItem[]> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await (supabase.rpc as any)("get_admin_platform_users");
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data.map((u: any) => ({
+            id: u.id,
+            email: u.email,
+            role: u.role || "artisan",
+            is_suspended: u.is_suspended ?? false,
+            created_at: u.created_at || undefined,
+            last_sign_in_at: u.last_sign_in_at || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn("Direct Supabase get_admin_platform_users fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
 
@@ -2672,6 +3055,28 @@ export async function suspendPlatformUser(
   reason: string = "Suspended by Super Administrator"
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        await (supabase.from as any)("deactivated_users").upsert({
+          id: userId,
+          reason,
+          deactivated_at: new Date().toISOString(),
+        });
+        const { data: userRes } = await supabase.auth.getUser();
+        await (supabase.from as any)("admin_audit_logs").insert({
+          id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          action: "SUSPEND_USER",
+          actor_id: userRes?.user?.id || "admin",
+          target_user_id: userId,
+          details: reason,
+          created_at: new Date().toISOString(),
+        });
+        return { success: true, message: "User account suspended." };
+      } catch (err) {
+        console.warn("Direct Supabase suspendPlatformUser fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2701,6 +3106,24 @@ export async function reactivatePlatformUser(
   userId: string
 ): Promise<{ success: boolean; message?: string }> {
   try {
+    if (isSupabaseConfigured()) {
+      try {
+        await (supabase.from as any)("deactivated_users").delete().eq("id", userId);
+        const { data: userRes } = await supabase.auth.getUser();
+        await (supabase.from as any)("admin_audit_logs").insert({
+          id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          action: "REACTIVATE_USER",
+          actor_id: userRes?.user?.id || "admin",
+          target_user_id: userId,
+          details: "Reactivated by Super Administrator",
+          created_at: new Date().toISOString(),
+        });
+        return { success: true, message: "User account reactivated." };
+      } catch (err) {
+        console.warn("Direct Supabase reactivatePlatformUser fallback:", err);
+      }
+    }
+
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
 
@@ -2718,5 +3141,6 @@ export async function reactivatePlatformUser(
     return { success: false, message: err.message || "Network error" };
   }
 }
+
 
 
