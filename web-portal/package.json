@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "check:ui-markers": "node ../scripts/check-ui-star-markers.mjs"
+    "check:ui-markers": "node ../scripts/check-ui-star-markers.mjs",
+    "test:connectivity": "node ../scripts/system-connectivity-diagnostic.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

@@ -94,11 +94,13 @@ Rural and tribal Indian artisans possess extraordinary ancestral craft heritage,
 | Component | URL / Location | Description |
 |---|---|---|
 | **Live Web Portal** | [hunardhara.technogamerzthenextlevel.workers.dev](https://hunardhara.technogamerzthenextlevel.workers.dev/) | Production marketplace running on Cloudflare Workers edge network |
+| **Sovereign Supabase Backend** | `https://gqtcpbllllaewzwqcyun.supabase.co` | Single-Source-of-Truth Postgres 16, pgvector, Auth, Storage, and Realtime (ap-south-1) |
+| **Supabase Edge Functions** | `/functions/v1/voice-catalog`, `/functions/v1/ai-catalog` | Serverless Sarvam ASR/TTS and Gemma AI extraction engines |
 | **Artisan Atelier & Studio** | `/artisan` | Artisan dashboard: Overview, Speak Snap Sell, My Products, Orders, Query Box, Earnings |
 | **B2B Matchmaker** | `/b2b` | Bulk buyer RFQ procurement & multi-factor AI scoring portal |
-| **Interactive API Docs (Swagger)** | `http://localhost:8000/docs` | Live interactive FastAPI OpenAPI documentation |
+| **Connectivity Diagnostic** | `npm run test:connectivity` (web-portal) | 24-point authoritative automated diagnostic suite (100% pass) |
+| **Interactive API Docs (Swagger)** | `http://localhost:8000/docs` | Live interactive FastAPI OpenAPI documentation (legacy dual-path) |
 | **Alternative API Docs (ReDoc)** | `http://localhost:8000/redoc` | Complete ReDoc specification |
-| **OpenAPI Raw Schema** | `http://localhost:8000/openapi.json` | Machine-readable API schema |
 
 ### Pre-Configured Test Accounts
 
