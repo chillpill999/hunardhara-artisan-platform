@@ -526,6 +526,24 @@ export async function fetchArtisanOrders(): Promise<any[]> {
   try {
     const authHeaders = await getSupabaseAuthorizationHeader();
     if (!authHeaders.Authorization) return [];
+
+    // 1. Primary path: Supabase RPC get_artisan_orders
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const artisanId = user?.id || "";
+
+      const { data, error } = await (supabase.rpc as any)("get_artisan_orders", {
+        p_artisan_id: artisanId,
+      });
+
+      if (!error && Array.isArray(data)) {
+        return data;
+      }
+    } catch (rpcErr) {
+      console.warn("Supabase get_artisan_orders RPC failed, falling back to backend:", rpcErr);
+    }
+
+    // 2. Dual-path fallback: backend /orders/artisan
     const res = await fetch(`${API_BASE}/orders/artisan`, {
       headers: {
         ...authHeaders,
@@ -1602,6 +1620,40 @@ export async function checkoutCustomerCart(
       };
     }
 
+    // 1. Primary path: PostgreSQL atomic checkout procedure via Supabase RPC
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const customerId = user?.id || "";
+
+      const { data, error } = await (supabase.rpc as any)("process_cart_checkout", {
+        p_items: items,
+        p_customer_id: customerId,
+      });
+
+      if (!error && data?.success) {
+        return {
+          success: true,
+          status: 201,
+          orders: data.orders || [],
+          totalAmount: data.total_amount,
+          totalItems: data.total_items,
+        };
+      }
+      if (error) {
+        console.warn("Supabase checkout error, checking details:", error);
+        if (error.message?.includes("INSUFFICIENT_STOCK") || error.message?.includes("PRODUCT_UNAVAILABLE") || error.message?.includes("EMPTY_CART")) {
+          return {
+            success: false,
+            status: 409,
+            error: error.message,
+          };
+        }
+      }
+    } catch (rpcErr) {
+      console.warn("Supabase process_cart_checkout RPC call failed, trying backend fallback:", rpcErr);
+    }
+
+    // 2. Dual-path fallback: backend /orders/checkout
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...authHeaders,
@@ -1646,7 +1698,7 @@ export async function checkoutCustomerCart(
 }
 
 /**
- * Fetch authenticated customer's real orders from the PostgreSQL backend.
+ * Fetch authenticated customer's real orders from Supabase PostgreSQL backend.
  */
 export async function fetchCustomerOrders(): Promise<{
   success: boolean;
@@ -1665,6 +1717,27 @@ export async function fetchCustomerOrders(): Promise<{
       };
     }
 
+    // 1. Primary path: Supabase RPC get_customer_orders
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const customerId = user?.id || "";
+
+      const { data, error } = await (supabase.rpc as any)("get_customer_orders", {
+        p_customer_id: customerId,
+      });
+
+      if (!error && Array.isArray(data)) {
+        return {
+          success: true,
+          status: 200,
+          orders: data as CustomerOrder[],
+        };
+      }
+    } catch (rpcErr) {
+      console.warn("Supabase get_customer_orders RPC failed, falling back to backend:", rpcErr);
+    }
+
+    // 2. Dual-path fallback: backend /orders/customer
     const res = await fetch(`${API_BASE}/orders/customer`, {
       method: "GET",
       headers: {
@@ -1717,6 +1790,24 @@ export async function cancelCustomerOrder(orderId: string): Promise<{
       };
     }
 
+    // 1. Primary path: Supabase update status to cancelled
+    try {
+      const { error } = await (supabase.from("orders") as any)
+        .update({ status: "cancelled" })
+        .eq("id", orderId)
+        .eq("status", "pending");
+
+      if (!error) {
+        return {
+          success: true,
+          status: 200,
+        };
+      }
+    } catch (supErr) {
+      console.warn("Supabase order cancel failed, falling back:", supErr);
+    }
+
+    // 2. Dual-path fallback: backend /orders/{orderId}/status
     const res = await fetch(`${API_BASE}/orders/${orderId}/status`, {
       method: "PUT",
       headers: {
