@@ -24,7 +24,9 @@ import {
 import { supabase } from "./supabase";
 
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://hunardhara-artisan-platform.onrender.com/api/v1";
+const API_BASE = typeof window !== 'undefined'
+  ? '/api/v1'
+  : (process.env.NEXT_PUBLIC_API_URL || "https://hunardhara-artisan-platform.onrender.com/api/v1");
 
 async function getSupabaseAuthorizationHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();

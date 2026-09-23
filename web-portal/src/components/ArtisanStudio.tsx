@@ -1222,7 +1222,9 @@ export default function ArtisanStudio() {
 
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.access_token) {
-          const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1';
+          const apiBase = typeof window !== 'undefined'
+            ? '/api/v1'
+            : (process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1');
           fetch(`${apiBase}/ai/assistant/review-outcome`, {
             method: 'POST',
             headers: {

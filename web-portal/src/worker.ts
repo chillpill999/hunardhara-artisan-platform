@@ -230,6 +230,43 @@ export default {
     }
 
     // =========================================================================
+    // AUTHORITATIVE BACKEND REVERSE PROXY (/api/v1/*)
+    // Seamless reverse proxy from Edge Worker to FastAPI Render Backend.
+    // Solves browser CORS cleanly while maintaining edge performance.
+    // =========================================================================
+    if (pathname.startsWith('/api/v1/')) {
+      const backendUrl = new URL(pathname + url.search, 'https://hunardhara-artisan-platform.onrender.com');
+      const forwardHeaders = new Headers(request.headers);
+      forwardHeaders.set('X-Forwarded-Host', url.host);
+      forwardHeaders.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
+
+      const proxyReq = new Request(backendUrl.toString(), {
+        method: request.method,
+        headers: forwardHeaders,
+        body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+        redirect: 'follow',
+      });
+
+      try {
+        const backendRes = await fetch(proxyReq);
+        const resHeaders = new Headers(backendRes.headers);
+        resHeaders.set('Access-Control-Allow-Origin', '*');
+        resHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+        resHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Idempotency-Key, X-Idempotency-Key');
+        return new Response(backendRes.body, {
+          status: backendRes.status,
+          statusText: backendRes.statusText,
+          headers: resHeaders,
+        });
+      } catch (err: any) {
+        return withSecurityHeaders(new Response(
+          JSON.stringify({ error: 'BACKEND_GATEWAY_ERROR', detail: err.message || 'Render backend is unreachable' }),
+          { status: 502, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+        ));
+      }
+    }
+
+    // =========================================================================
     // CLOUDFLARE WORKERS AI EDGE ENDPOINTS (Free 10K neurons/day with Rate Limiting)
     // =========================================================================
     if (pathname.startsWith('/api/edge/')) {
@@ -610,4 +647,5 @@ Inspect this craft photo and return a strict JSON object with these exact keys:
     const assetRes = await env.ASSETS.fetch(request);
     return withSecurityHeaders(assetRes);
   },
-};
+};
+

@@ -1,7 +1,9 @@
 import { ArtisanInquiry } from './types';
 import { supabase } from './supabase';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1';
+const API_BASE = typeof window !== 'undefined'
+  ? '/api/v1'
+  : (process.env.NEXT_PUBLIC_API_URL || 'https://hunardhara-artisan-platform.onrender.com/api/v1');
 const STORAGE_KEY = 'hunardhara_artisan_inquiries';
 
 async function getAuthHeader(): Promise<Record<string, string>> {
