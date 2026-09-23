@@ -18,7 +18,7 @@ import {
 
 export default function Navbar() {
   const pathname = usePathname();
-  const { user, role, profile, signOut } = useAuth();
+  const { user, role, profile, signOut, isAdmin, isSuperAdmin } = useAuth();
 
   return (
     <header className="sticky top-0 z-40 bg-[#faf7f2]/95 backdrop-blur-md border-b border-[#e6ded3] transition-all">
@@ -105,15 +105,15 @@ export default function Navbar() {
             थोक मांग (B2B)
           </Link>
 
-          {role === 'admin' && (
+          {isAdmin && (
             <Link
               href="/admin"
               className={`transition-colors hover:text-[#1b4332] flex items-center gap-1.5 ${
                 pathname.startsWith('/admin') ? 'text-[#1b4332] font-bold' : ''
               }`}
             >
-              <ShieldCheck className="w-4 h-4 text-[#c85a32]" />
-              <span>प्रशासन नियंत्रण</span>
+              <ShieldCheck className={`w-4 h-4 ${isSuperAdmin ? 'text-amber-500' : 'text-[#c85a32]'}`} />
+              <span>{isSuperAdmin ? 'सुपर एडमिन नियंत्रण' : 'प्रशासन नियंत्रण'}</span>
             </Link>
           )}
         </nav>
@@ -130,19 +130,23 @@ export default function Navbar() {
             <div className="flex items-center gap-2 sm:gap-3">
               {/* User Badge linking to role dashboard/account */}
               <Link
-                href={role === 'customer' ? '/account' : role === 'admin' ? '/admin' : role === 'artisan' ? '/artisan' : '#'}
+                href={isAdmin ? '/admin' : role === 'customer' ? '/account' : role === 'artisan' ? '/artisan' : '/'}
                 className="flex items-center gap-2 bg-white border border-[#e6ded3] hover:border-[#1b4332] px-3 py-1.5 rounded-full shadow-2xs transition-colors"
                 title="खाता विवरण देखें"
               >
-                <div className="w-6 h-6 rounded-full bg-[#1b4332] text-white flex items-center justify-center text-xs font-bold shrink-0">
-                  {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : (role === 'admin' ? 'A' : role === 'artisan' ? 'K' : 'U')}
+                <div className={`w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 ${
+                  isSuperAdmin ? 'bg-amber-600' : isAdmin ? 'bg-[#1c1917]' : 'bg-[#1b4332]'
+                }`}>
+                  {isSuperAdmin ? '👑' : profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : (isAdmin ? 'A' : role === 'artisan' ? 'K' : 'U')}
                 </div>
                 <div className="text-left hidden sm:block">
                   <span className="text-xs font-bold text-[#231f1e] truncate max-w-[140px] block">
-                    {profile?.full_name || (role === 'admin' ? 'Administrator' : role === 'artisan' ? 'Master Artisan' : 'Valued Patron')}
+                    {profile?.full_name || (isSuperAdmin ? 'Super Admin' : isAdmin ? 'Administrator' : role === 'artisan' ? 'Master Artisan' : 'Valued Patron')}
                   </span>
-                  <span className="text-[10px] uppercase font-bold text-[#c85a32] block -mt-0.5">
-                    {role || 'Setup Required'}
+                  <span className={`text-[10px] uppercase font-bold block -mt-0.5 ${
+                    isSuperAdmin ? 'text-amber-600' : 'text-[#c85a32]'
+                  }`}>
+                    {isSuperAdmin ? '👑 सुपर एडमिन' : isAdmin ? 'प्रशासक (Admin)' : role === 'artisan' ? 'कारीगर (Artisan)' : 'ग्राहक (Customer)'}
                   </span>
                 </div>
               </Link>
@@ -167,7 +171,15 @@ export default function Navbar() {
                 </Link>
               )}
 
-              {role === 'admin' && (
+              {isSuperAdmin ? (
+                <Link
+                  href="/admin"
+                  className="bg-[#2a1705] hover:bg-[#1a0f03] text-amber-300 border border-amber-500/50 font-bold text-xs px-4 py-2 rounded-full transition-all shadow-xs hidden sm:flex items-center gap-1.5"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>सुपर एडमिन कंसोल</span>
+                </Link>
+              ) : isAdmin ? (
                 <Link
                   href="/admin"
                   className="bg-[#1c1917] hover:bg-[#27272a] text-white font-bold text-xs px-4 py-2 rounded-full transition-all shadow-xs hidden sm:flex items-center gap-1.5"
@@ -175,7 +187,7 @@ export default function Navbar() {
                   <ShieldCheck className="w-3.5 h-3.5 text-[#F5A941]" />
                   <span>प्रशासन</span>
                 </Link>
-              )}
+              ) : null}
 
               <button
                 onClick={() => signOut()}

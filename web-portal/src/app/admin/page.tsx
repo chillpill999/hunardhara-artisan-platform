@@ -3,11 +3,25 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import {
-  fetchClusters,
-  fetchProducts,
-  removeProduct,
-  restoreAllProducts,
-  getRemovedProductIds,
+  fetchPlatformSettings,
+  updatePlatformSettings,
+  fetchAdminOverviewMetrics,
+  fetchAdminArtisans,
+  verifyArtisanGI,
+  suspendArtisan,
+  reactivateArtisan,
+  fetchAdminProducts,
+  moderateAdminProduct,
+  restoreAdminProduct,
+  fetchAdminClusters,
+  updateClusterWage,
+  fetchAdminOrders,
+  updateAdminOrderStatus,
+  fetchAdminB2BRFQs,
+  updateAdminB2BStatus,
+  fetchPlatformUsers,
+  suspendPlatformUser,
+  reactivatePlatformUser,
   fetchAdminApplications,
   approveAdminApplication,
   rejectAdminApplication,
@@ -15,15 +29,22 @@ import {
   grantAdminRole,
   revokeAdminRole,
   fetchAuditLogs,
+} from '@/lib/api';
+import {
+  PlatformSettings,
+  PlatformOverviewMetrics,
+  AdminArtisanItem,
+  AdminProductItem,
+  AdminClusterItem,
+  AdminOrderItem,
+  AdminB2BRFQItem,
+  AdminPlatformUserItem,
+  AdminAuditLogItem,
   ArtisanApplicationItem,
   AdminUserItem,
-  AdminAuditLogItem
-} from '@/lib/api';
-import { getAllInquiries, updateInquiryStatus, deleteInquiry } from '@/lib/inquiries';
-import { CraftCluster, Product, ArtisanInquiry } from '@/lib/types';
+} from '@/lib/types';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/lib/supabase';
 import {
   ShieldCheck,
   Building2,
@@ -60,1719 +81,1964 @@ import {
   UserX,
   History,
   KeyRound,
-  Shield
+  Shield,
+  Power,
+  AlertCircle,
+  Ban,
+  RefreshCw,
+  DollarSign,
+  ShoppingCart,
+  ChevronRight,
 } from 'lucide-react';
-
-interface AdminB2BRFQ {
-  id: string;
-  buyer_name: string;
-  company_name: string;
-  buyer_phone: string;
-  craft_type: string;
-  quantity: number;
-  budget_per_unit: number;
-  delivery_state: string;
-  deadline_days: number;
-  match_score: number;
-  status: 'review' | 'matched' | 'approved';
-  created_at: string;
-}
-
-interface MasterArtisanItem {
-  id: string;
-  name: string;
-  cluster: string;
-  state: string;
-  craft_type: string;
-  phone: string;
-  products_count: number;
-  gi_verified: boolean;
-  joined_date: string;
-}
 
 export default function AdminDashboardPage() {
   const { user, role, isAdmin, isSuperAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState<'products' | 'clusters' | 'b2b' | 'inquiries' | 'artisans' | 'security' | 'applications' | 'admin_management' | 'audit_logs'>('products');
-  const [clusters, setClusters] = useState<CraftCluster[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [removedCount, setRemovedCount] = useState<number>(0);
-  const [searchQuery, setSearchQuery] = useState('');
 
-  // B2B RFQs State
-  const [b2bRFQs, setB2bRFQs] = useState<AdminB2BRFQ[]>([]);
+  type TabKey =
+    | 'overview'
+    | 'switches'
+    | 'applications'
+    | 'artisans'
+    | 'products'
+    | 'clusters'
+    | 'orders'
+    | 'b2b'
+    | 'admin_management'
+    | 'audit_logs';
 
-  // Inquiries State
-  const [inquiries, setInquiries] = useState<ArtisanInquiry[]>([]);
-  const [inquiryFilter, setInquiryFilter] = useState<'all' | 'new' | 'replied'>('all');
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
-  // Master Artisans State
-  const [artisans, setArtisans] = useState<MasterArtisanItem[]>([]);
-
-  // Artisan Applications State
+  // Authoritative State from Backend
+  const [overview, setOverview] = useState<PlatformOverviewMetrics | null>(null);
+  const [switches, setSwitches] = useState<PlatformSettings>({
+    marketplace_enabled: true,
+    artisan_onboarding_enabled: true,
+    product_publishing_enabled: true,
+    b2b_enabled: true,
+    orders_enabled: true,
+    ai_catalog_enabled: true,
+    voice_catalog_enabled: true,
+    maintenance_mode: false,
+    maintenance_message: 'Platform maintenance in progress.',
+  });
   const [applications, setApplications] = useState<ArtisanApplicationItem[]>([]);
-
-  // Admins State (Super Admin Only)
+  const [artisans, setArtisans] = useState<AdminArtisanItem[]>([]);
+  const [products, setProducts] = useState<AdminProductItem[]>([]);
+  const [clusters, setClusters] = useState<AdminClusterItem[]>([]);
+  const [orders, setOrders] = useState<AdminOrderItem[]>([]);
+  const [b2bRFQs, setB2bRFQs] = useState<AdminB2BRFQItem[]>([]);
+  const [platformUsers, setPlatformUsers] = useState<AdminPlatformUserItem[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUserItem[]>([]);
-  const [newAdminUserId, setNewAdminUserId] = useState('');
-
-  // Audit Logs State
   const [auditLogs, setAuditLogs] = useState<AdminAuditLogItem[]>([]);
 
-  // Async Action in Progress
+  // Local UI State
+  const [isLoadingData, setIsLoadingData] = useState(false);
   const [isActionPending, setIsActionPending] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Maintenance Message Editor
+  const [editingMaintMsg, setEditingMaintMsg] = useState(false);
+  const [maintMsgDraft, setMaintMsgDraft] = useState('');
 
   // Editable Wage Baseline
   const [editingWageClusterId, setEditingWageClusterId] = useState<string | null>(null);
-  const [tempWageValue, setTempWageValue] = useState<number>(650);
+  const [tempDailyWage, setTempDailyWage] = useState<number>(650);
+  const [tempHourlyWage, setTempHourlyWage] = useState<number>(81.25);
 
-  // Deletion Confirmation Modal State
-  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // User Role Appointment
+  const [newAdminUserId, setNewAdminUserId] = useState('');
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
 
   const loadData = async () => {
-    if (!isAdmin) {
-      return;
-    }
+    setIsLoadingData(true);
     try {
-      const [clusterData, productData, appList, logList] = await Promise.all([
-        fetchClusters(),
-        fetchProducts(),
+      const [
+        metricsData,
+        settingsData,
+        appList,
+        artList,
+        prodList,
+        clusterList,
+        orderList,
+        rfqList,
+        logList,
+      ] = await Promise.all([
+        fetchAdminOverviewMetrics(),
+        fetchPlatformSettings(),
         fetchAdminApplications(),
-        fetchAuditLogs(50)
+        fetchAdminArtisans(),
+        fetchAdminProducts(100),
+        fetchAdminClusters(),
+        fetchAdminOrders(100),
+        fetchAdminB2BRFQs(),
+        fetchAuditLogs(50),
       ]);
-      setClusters(clusterData);
-      setProducts(productData);
-      setApplications(appList);
-      setAuditLogs(logList);
+
+      if (metricsData) setOverview(metricsData);
+      setSwitches(settingsData);
+      setMaintMsgDraft(settingsData.maintenance_message);
+      setApplications(appList || []);
+      setArtisans(artList || []);
+      setProducts(prodList || []);
+      setClusters(clusterList || []);
+      setOrders(orderList || []);
+      setB2bRFQs(rfqList || []);
+      setAuditLogs(logList || []);
 
       if (isSuperAdmin) {
-        const users = await fetchAdminUsers();
-        setAdminUsers(users);
-      }
-      setRemovedCount(getRemovedProductIds().length);
-      setInquiries(getAllInquiries());
-
-      try {
-        const { data: artisanProfiles } = await supabase
-          .from('profiles')
-          .select('id, full_name, cluster, state, craft_type, phone, gi_verified, created_at')
-          .eq('role', 'artisan');
-
-        if (artisanProfiles && artisanProfiles.length > 0) {
-          setArtisans(artisanProfiles.map((a: any) => ({
-            id: a.id,
-            name: a.full_name || 'शिल्पकार (Artisan)',
-            cluster: a.cluster || 'Craft Cluster',
-            state: a.state || 'India',
-            craft_type: a.craft_type || 'Handicraft',
-            phone: a.phone || 'N/A',
-            products_count: productData.filter((p) => p.artisan_id === a.id).length,
-            gi_verified: !!a.gi_verified,
-            joined_date: new Date(a.created_at || Date.now()).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
-          })));
-        } else {
-          setArtisans([]);
-        }
-      } catch {
-        setArtisans([]);
-      }
-
-      try {
-        const { data: rfqList } = await supabase
-          .from('b2b_rfqs')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (rfqList && rfqList.length > 0) {
-          setB2bRFQs(rfqList.map((r: any) => ({
-            id: r.id,
-            buyer_name: r.buyer_name || 'Verified Buyer',
-            company_name: r.company_name || 'B2B Enterprise',
-            buyer_phone: r.buyer_phone || 'N/A',
-            craft_type: r.craft_type,
-            quantity: Number(r.quantity),
-            budget_per_unit: Number(r.budget_per_unit),
-            delivery_state: r.delivery_state || 'India',
-            deadline_days: Number(r.deadline_days || 30),
-            match_score: Number(r.match_score || 95),
-            status: r.status || 'review',
-            created_at: new Date(r.created_at || Date.now()).toLocaleDateString('en-IN')
-          })));
-        } else {
-          setB2bRFQs([]);
-        }
-      } catch {
-        setB2bRFQs([]);
+        const [users, pUsers] = await Promise.all([
+          fetchAdminUsers(),
+          fetchPlatformUsers(),
+        ]);
+        setAdminUsers(users || []);
+        setPlatformUsers(pUsers || []);
       }
     } catch (err) {
-      console.warn('Admin load data error:', err);
+      console.warn('Super Admin load data error:', err);
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
   useEffect(() => {
-    if (role === 'admin') {
-      loadData();
-    }
-
-    const handleUpdate = () => {
-      if (role === 'admin') loadData();
-    };
-    window.addEventListener('hunardhara_product_published', handleUpdate);
-    window.addEventListener('hunardhara_product_removed', handleUpdate);
-    window.addEventListener('hunardhara_inquiry_added', handleUpdate);
-    return () => {
-      window.removeEventListener('hunardhara_product_published', handleUpdate);
-      window.removeEventListener('hunardhara_product_removed', handleUpdate);
-      window.removeEventListener('hunardhara_inquiry_added', handleUpdate);
-    };
-  }, [role]);
-
-  // Filtered Products
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      if (!p) return false;
-      const q = (searchQuery || '').toLowerCase().trim();
-      const titleEn = (p.title_en || (p as any).title || '').toLowerCase();
-      const titleHi = (p.title_hi || (p as any).description_hindi || '').toLowerCase();
-      const craftType = (p.craft_type || '').toLowerCase();
-      const artisanName = (p.artisan_name || '').toLowerCase();
-      return (
-        !q ||
-        titleEn.includes(q) ||
-        titleHi.includes(q) ||
-        craftType.includes(q) ||
-        artisanName.includes(q)
-      );
-    });
-  }, [products, searchQuery]);
-
-  // Handle Product Deletion
-  const confirmDelete = async () => {
-    if (!productToDelete) return;
-    setIsDeleting(true);
-    try {
-      const success = await removeProduct(productToDelete.id);
-      if (success) {
-        setToastMessage(`उत्पाद "${productToDelete.title_hi || productToDelete.title_en}" सफलतापूर्वक हटा दिया गया है।`);
-        setTimeout(() => setToastMessage(null), 4000);
-        await loadData();
-      }
-    } catch (e) {
-      console.warn('Failed to remove product:', e);
-    } finally {
-      setIsDeleting(false);
-      setProductToDelete(null);
-    }
-  };
-
-  // Handle Restore
-  const handleRestore = () => {
-    restoreAllProducts();
-    setToastMessage('सभी मूल उत्पाद कैटलॉग में वापस रीसेट कर दिए गए हैं।');
-    setTimeout(() => setToastMessage(null), 4000);
     loadData();
+  }, [isAdmin, isSuperAdmin]);
+
+  // -------------------------------------------------------------------------
+  // Handlers: Platform Switches
+  // -------------------------------------------------------------------------
+  const handleToggleSwitch = async (key: keyof PlatformSettings, currentVal: boolean) => {
+    if (!isSuperAdmin) {
+      showToast('केवल सुपर एडमिन ही प्लेटफ़ॉर्म स्विच बदल सकते हैं (Super Admin clearance required)।');
+      return;
+    }
+    setIsActionPending(true);
+    try {
+      const newVal = !currentVal;
+      const res = await updatePlatformSettings({ [key]: newVal });
+      if (res.success && res.settings) {
+        setSwitches(res.settings);
+        showToast(`स्विच "${key}" सफलतापूर्वक ${newVal ? 'सक्रिय (ON)' : 'निष्क्रिय (OFF)'} किया गया।`);
+        // Refresh metrics
+        const updatedMetrics = await fetchAdminOverviewMetrics();
+        if (updatedMetrics) setOverview(updatedMetrics);
+      } else {
+        showToast(`त्रुटि: ${res.message || 'अपडेट विफल'}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
   };
 
-  // Handle Wage Save
-  const handleSaveWage = (clusterId: string) => {
-    setClusters((prev) =>
-      prev.map((c) =>
-        c.id === clusterId ? { ...c, statutory_minimum_daily_wage: tempWageValue } : c
-      )
-    );
-    setEditingWageClusterId(null);
-    setToastMessage(`क्लस्टर न्यूनतम मजदूरी को ₹${tempWageValue}/दिन पर अद्यतन किया गया।`);
-    setTimeout(() => setToastMessage(null), 4000);
+  const handleSaveMaintenanceMessage = async () => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await updatePlatformSettings({ maintenance_message: maintMsgDraft.trim() });
+      if (res.success && res.settings) {
+        setSwitches(res.settings);
+        setEditingMaintMsg(false);
+        showToast('रखरखाव संदेश (Maintenance Message) अद्यतन किया गया।');
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
   };
 
-  // Handle B2B Status Update
-  const handleUpdateB2BStatus = (id: string, newStatus: 'review' | 'matched' | 'approved') => {
-    setB2bRFQs((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
-    );
-    setToastMessage(`थोक मांग #${id} की स्थिति अद्यतन की गई।`);
-    setTimeout(() => setToastMessage(null), 4000);
-  };
-
-  // Handle Artisan GI Toggle
-  const handleToggleArtisanGI = (artisanId: string) => {
-    setArtisans((prev) =>
-      prev.map((a) =>
-        a.id === artisanId ? { ...a, gi_verified: !a.gi_verified } : a
-      )
-    );
-    setToastMessage(`शिल्पकार प्रमाणन स्थिति सफलतापूर्वक बदली गई।`);
-    setTimeout(() => setToastMessage(null), 4000);
-  };
-
-  // Handle Application Approval (Super Admin Only)
+  // -------------------------------------------------------------------------
+  // Handlers: Artisan Application Lifecycle
+  // -------------------------------------------------------------------------
   const handleApproveApp = async (appId: string) => {
     if (!isSuperAdmin) {
-      setToastMessage('त्रुटि: केवल सुपर एडमिन ही कारीगर आवेदन स्वीकृत कर सकते हैं (Super Admin clearance required)।');
-      setTimeout(() => setToastMessage(null), 4000);
+      showToast('केवल सुपर एडमिन ही कारीगर आवेदन स्वीकृत कर सकते हैं।');
       return;
     }
     setIsActionPending(true);
     try {
       const res = await approveAdminApplication(appId);
       if (res.success) {
-        setToastMessage(`आवेदन #${appId} स्वीकृत! कारीगर खाता सक्रिय कर दिया गया।`);
+        showToast(`आवेदन #${appId} स्वीकृत! कारीगर खाता सक्रिय कर दिया गया।`);
         await loadData();
       } else {
-        setToastMessage(`त्रुटि: ${res.error || 'अनुमोदन विफल'}`);
+        showToast(`त्रुटि: ${res.error || 'अनुमोदन विफल'}`);
       }
     } catch (e: any) {
-      setToastMessage(`त्रुटि: ${e.message}`);
+      showToast(`त्रुटि: ${e.message}`);
     } finally {
       setIsActionPending(false);
-      setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
-  // Handle Application Rejection (Super Admin Only)
   const handleRejectApp = async (appId: string) => {
     if (!isSuperAdmin) {
-      setToastMessage('त्रुटि: केवल सुपर एडमिन ही कारीगर आवेदन अस्वीकृत कर सकते हैं (Super Admin clearance required)।');
-      setTimeout(() => setToastMessage(null), 4000);
+      showToast('केवल सुपर एडमिन ही कारीगर आवेदन अस्वीकृत कर सकते हैं।');
       return;
     }
-    const reason = window.prompt("कृपया कारीगर आवेदन अस्वीकृत करने का कारण दर्ज करें (Enter reason for rejection):");
+    const reason = window.prompt('कारीगर आवेदन अस्वीकृत करने का कारण दर्ज करें (Reason):');
     if (!reason || !reason.trim()) {
-      setToastMessage('त्रुटि: अस्वीकृति का कारण अनिवार्य है।');
-      setTimeout(() => setToastMessage(null), 4000);
+      showToast('त्रुटि: अस्वीकृति का कारण अनिवार्य है।');
       return;
     }
     setIsActionPending(true);
     try {
       const res = await rejectAdminApplication(appId, reason.trim());
       if (res.success) {
-        setToastMessage(`आवेदन #${appId} अस्वीकृत किया गया।`);
+        showToast(`आवेदन #${appId} अस्वीकृत किया गया।`);
         await loadData();
       } else {
-        setToastMessage(`त्रुटि: ${res.error || 'अस्वीकृति विफल'}`);
+        showToast(`त्रुटि: ${res.error || 'अस्वीकृति विफल'}`);
       }
     } catch (e: any) {
-      setToastMessage(`त्रुटि: ${e.message}`);
+      showToast(`त्रुटि: ${e.message}`);
     } finally {
       setIsActionPending(false);
-      setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
-  // Handle Grant Admin Role
-  const handleGrantAdmin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAdminUserId.trim()) return;
+  // -------------------------------------------------------------------------
+  // Handlers: Artisan Governance (GI & Suspension)
+  // -------------------------------------------------------------------------
+  const handleToggleArtisanGI = async (artisanId: string, currentVerified: boolean) => {
+    if (!isSuperAdmin) {
+      showToast('केवल सुपर एडमिन ही आधिकारिक GI प्रमाणन बदल सकते हैं।');
+      return;
+    }
     setIsActionPending(true);
     try {
-      const res = await grantAdminRole(newAdminUserId.trim());
+      const newStatus = !currentVerified;
+      const res = await verifyArtisanGI(artisanId, newStatus);
       if (res.success) {
-        setToastMessage(res.message || 'प्रशासक पद सफलतापूर्वक दिया गया।');
+        setArtisans((prev) =>
+          prev.map((a) => (a.id === artisanId ? { ...a, gi_verified: newStatus } : a))
+        );
+        showToast(`कारीगर GI प्रमाणन ${newStatus ? 'सत्यापित (Certified)' : 'हटाया गया'}।`);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleSuspendArtisan = async (artisanId: string) => {
+    if (!isSuperAdmin) return;
+    const reason = window.prompt('कारीगर खाता निलंबित करने का कारण दर्ज करें (Reason for suspension):', 'Administrative review');
+    if (reason === null) return;
+
+    setIsActionPending(true);
+    try {
+      const res = await suspendArtisan(artisanId, reason);
+      if (res.success) {
+        setArtisans((prev) =>
+          prev.map((a) => (a.id === artisanId ? { ...a, is_active: false } : a))
+        );
+        showToast('कारीगर खाता सफलतापूर्वक निलंबित कर दिया गया।');
+        const updated = await fetchAdminOverviewMetrics();
+        if (updated) setOverview(updated);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleReactivateArtisan = async (artisanId: string) => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await reactivateArtisan(artisanId);
+      if (res.success) {
+        setArtisans((prev) =>
+          prev.map((a) => (a.id === artisanId ? { ...a, is_active: true } : a))
+        );
+        showToast('कारीगर खाता पुनः सक्रिय (Reactivated) कर दिया गया।');
+        const updated = await fetchAdminOverviewMetrics();
+        if (updated) setOverview(updated);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Handlers: Product Moderation Lifecycle
+  // -------------------------------------------------------------------------
+  const handleModerateProduct = async (
+    productId: string,
+    action: 'publish' | 'unpublish' | 'flag' | 'remove'
+  ) => {
+    const reason = window.prompt(`उत्पाद कार्रवाई '${action}' का कारण दर्ज करें (Reason):`, 'Administrative review');
+    if (reason === null || !reason.trim()) {
+      showToast('कार्रवाई का कारण अनिवार्य है।');
+      return;
+    }
+    setIsActionPending(true);
+    try {
+      const res = await moderateAdminProduct(productId, action, reason.trim());
+      if (res.success) {
+        showToast(`उत्पाद कार्रवाई '${action}' सफलतापूर्वक लागू की गई।`);
+        await loadData();
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleRestoreProduct = async (productId: string) => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await restoreAdminProduct(productId);
+      if (res.success) {
+        showToast('उत्पाद को सर्वर पर पुनः सक्रिय (Restored) कर दिया गया।');
+        await loadData();
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Handlers: Clusters & Wage Governance
+  // -------------------------------------------------------------------------
+  const handleSaveWage = async (clusterId: string) => {
+    if (!isSuperAdmin) {
+      showToast('केवल सुपर एडमिन ही वैधानिक मजदूरी दर अद्यतन कर सकते हैं।');
+      return;
+    }
+    setIsActionPending(true);
+    try {
+      const res = await updateClusterWage(clusterId, tempDailyWage, tempHourlyWage);
+      if (res.success) {
+        setClusters((prev) =>
+          prev.map((c) =>
+            c.id === clusterId
+              ? { ...c, statutory_daily_wage: tempDailyWage, statutory_hourly_wage: tempHourlyWage }
+              : c
+          )
+        );
+        setEditingWageClusterId(null);
+        showToast(`क्लस्टर वैधानिक न्यूनतम मजदूरी ₹${tempDailyWage}/दिन पर अद्यतन की गई।`);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Handlers: Order Oversight
+  // -------------------------------------------------------------------------
+  const handleUpdateOrderStatus = async (orderId: string, status: string, paymentStatus?: string) => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await updateAdminOrderStatus(orderId, status, paymentStatus);
+      if (res.success) {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId
+              ? {
+                  ...o,
+                  status,
+                  payment_status: paymentStatus || o.payment_status,
+                }
+              : o
+          )
+        );
+        showToast(`ऑर्डर #${orderId} की स्थिति अद्यतन की गई।`);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Handlers: B2B RFQs
+  // -------------------------------------------------------------------------
+  const handleUpdateB2BStatus = async (rfqId: string, newStatus: string) => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await updateAdminB2BStatus(rfqId, newStatus);
+      if (res.success) {
+        setB2bRFQs((prev) =>
+          prev.map((r) => (r.id === rfqId ? { ...r, status: newStatus } : r))
+        );
+        showToast(`थोक मांग #${rfqId} की स्थिति '${newStatus}' अद्यतन की गई।`);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Handlers: User & Administrator Management
+  // -------------------------------------------------------------------------
+  const handleSuspendUser = async (userId: string) => {
+    if (!isSuperAdmin) return;
+    const reason = window.prompt('खाता निलंबित करने का कारण दर्ज करें (Reason):', 'Administrative review');
+    if (reason === null) return;
+
+    setIsActionPending(true);
+    try {
+      const res = await suspendPlatformUser(userId, reason);
+      if (res.success) {
+        setPlatformUsers((prev) =>
+          prev.map((u) => (u.id === userId ? { ...u, is_suspended: true } : u))
+        );
+        showToast('उपयोगकर्ता खाता निलंबित किया गया।');
+        const updated = await fetchAdminOverviewMetrics();
+        if (updated) setOverview(updated);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleReactivateUser = async (userId: string) => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await reactivatePlatformUser(userId);
+      if (res.success) {
+        setPlatformUsers((prev) =>
+          prev.map((u) => (u.id === userId ? { ...u, is_suspended: false } : u))
+        );
+        showToast('उपयोगकर्ता खाता पुनः सक्रिय किया गया।');
+        const updated = await fetchAdminOverviewMetrics();
+        if (updated) setOverview(updated);
+      } else {
+        showToast(`त्रुटि: ${res.message}`);
+      }
+    } catch (e: any) {
+      showToast(`त्रुटि: ${e.message}`);
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleGrantAdmin = async (userId: string) => {
+    if (!isSuperAdmin) return;
+    setIsActionPending(true);
+    try {
+      const res = await grantAdminRole(userId);
+      if (res.success) {
+        showToast(res.message || 'प्रशासक पद प्रदान किया गया।');
         setNewAdminUserId('');
         await loadData();
       } else {
-        setToastMessage(`त्रुटि: ${res.message}`);
+        showToast(`त्रुटि: ${res.message}`);
       }
     } catch (e: any) {
-      setToastMessage(`त्रुटि: ${e.message}`);
+      showToast(`त्रुटि: ${e.message}`);
     } finally {
       setIsActionPending(false);
-      setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
-  // Handle Revoke Admin Role
   const handleRevokeAdmin = async (userId: string) => {
-    if (!confirm(`क्या आप वाकई उपयोगकर्ता ${userId} से प्रशासक पद वापस लेना चाहते हैं?`)) return;
+    if (!isSuperAdmin) return;
+    if (!window.confirm('क्या आप निश्चित हैं कि आप इस प्रशासक का पद वापस लेना चाहते हैं?')) return;
     setIsActionPending(true);
     try {
       const res = await revokeAdminRole(userId);
       if (res.success) {
-        setToastMessage(res.message || 'प्रशासक पद वापस ले लिया गया।');
+        showToast(res.message || 'प्रशासक पद वापस ले लिया गया।');
         await loadData();
       } else {
-        setToastMessage(`त्रुटि: ${res.message}`);
+        showToast(`त्रुटि: ${res.message}`);
       }
     } catch (e: any) {
-      setToastMessage(`त्रुटि: ${e.message}`);
+      showToast(`त्रुटि: ${e.message}`);
     } finally {
       setIsActionPending(false);
-      setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
-  // Filtered Inquiries
-  const filteredInquiries = useMemo(() => {
-    if (inquiryFilter === 'all') return inquiries;
-    return inquiries.filter((inq) => inq.status === inquiryFilter);
-  }, [inquiries, inquiryFilter]);
+  // Filtered Products
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      if (!p) return false;
+      const q = (searchQuery || '').toLowerCase().trim();
+      const title = (p.title || '').toLowerCase();
+      const craftType = (p.craft_type || '').toLowerCase();
+      const artisanName = (p.artisan_name || '').toLowerCase();
+      return !q || title.includes(q) || craftType.includes(q) || artisanName.includes(q);
+    });
+  }, [products, searchQuery]);
 
   return (
-    <AuthGuard
-      allowedRoles={['admin', 'super_admin']}
-      redirectMessage="Sign in as Administrator to access governance and cluster monitoring."
-    >
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-12 space-y-8">
+    <AuthGuard allowedRoles={['admin', 'super_admin']}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         {/* Toast Alert */}
         {toastMessage && (
-          <div className="fixed top-20 right-5 z-50 bg-[#1b4332] text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 border border-[#e9a83a]/40 animate-bounce">
-            <CheckCircle2 className="w-5 h-5 text-[#e9a83a]" />
+          <div className="fixed bottom-6 right-6 z-50 bg-[#1c1917] text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-amber-500/40 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4">
+            <CheckCircle2 className="w-5 h-5 text-amber-400 shrink-0" />
             <span className="text-xs sm:text-sm font-semibold">{toastMessage}</span>
           </div>
         )}
 
-        {/* Top Banner */}
-        <div className="bg-[#141414] text-white rounded-3xl p-6 sm:p-10 border border-[#27272a] flex flex-col md:flex-row justify-between md:items-center gap-6 shadow-md">
-          <div className="space-y-2.5 max-w-2xl">
-            <div className="inline-flex items-center gap-2 bg-white/10 text-[#F8C146] text-[11px] font-bold px-3.5 py-1 rounded-full uppercase tracking-wider">
-              <Compass className="w-3.5 h-3.5 text-[#F5A941]" />
-              <span>National Heritage Craft Governance • Master Control Console</span>
+        {/* 👑 SUPER ADMIN EMERGENCY QUICK CONTROL BAR */}
+        {isSuperAdmin && (
+          <div className="bg-gradient-to-r from-amber-950/80 via-neutral-900 to-amber-950/80 text-white rounded-3xl p-5 border-2 border-amber-500/50 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-amber-500/20 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="text-xl">👑</span>
+                <div>
+                  <div className="text-xs font-black tracking-wider uppercase text-amber-400">
+                    सुपर एडमिन अधिकार सक्रिय • Super Admin Authority Active
+                  </div>
+                  <div className="text-[11px] text-neutral-300 font-mono">
+                    प्राथमिक पहचान: aryanrockstar2007@gmail.com {user?.email ? `(${user.email})` : ''}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadData}
+                  disabled={isLoadingData}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingData ? 'animate-spin' : ''}`} />
+                  <span>रिफ्रेश (Sync)</span>
+                </button>
+                <div className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold">
+                  ● सर्वर प्राधिकृत (Server Authoritative)
+                </div>
+              </div>
             </div>
 
-            <h1 className="font-sans text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white">
-              प्रशासकीय नियंत्रण व क्लस्टर निगरानी (Admin Control Center)
+            {/* Emergency Toggle Switches */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+              {/* Maintenance Mode */}
+              <button
+                onClick={() => handleToggleSwitch('maintenance_mode', switches.maintenance_mode)}
+                disabled={isActionPending}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  switches.maintenance_mode
+                    ? 'bg-red-950/80 border-red-500 text-red-200'
+                    : 'bg-black/40 border-neutral-700 hover:border-neutral-500 text-neutral-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">रखरखाव (Maint)</span>
+                  <Power className={`w-3.5 h-3.5 ${switches.maintenance_mode ? 'text-red-400' : 'text-neutral-500'}`} />
+                </div>
+                <div className="text-xs font-extrabold mt-1">
+                  {switches.maintenance_mode ? '🚨 LOCKDOWN ON' : 'सामान्य (OFF)'}
+                </div>
+              </button>
+
+              {/* Marketplace Active */}
+              <button
+                onClick={() => handleToggleSwitch('marketplace_enabled', switches.marketplace_enabled)}
+                disabled={isActionPending}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  switches.marketplace_enabled
+                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
+                    : 'bg-red-950/60 border-red-500 text-red-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">मार्केटप्लेस</span>
+                  <ShoppingCart className={`w-3.5 h-3.5 ${switches.marketplace_enabled ? 'text-emerald-400' : 'text-red-400'}`} />
+                </div>
+                <div className="text-xs font-extrabold mt-1">
+                  {switches.marketplace_enabled ? 'सक्रिय (Active)' : 'रोक (Paused)'}
+                </div>
+              </button>
+
+              {/* Product Publishing */}
+              <button
+                onClick={() => handleToggleSwitch('product_publishing_enabled', switches.product_publishing_enabled)}
+                disabled={isActionPending}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  switches.product_publishing_enabled
+                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
+                    : 'bg-red-950/60 border-red-500 text-red-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">उत्पाद प्रकाशन</span>
+                  <Package className={`w-3.5 h-3.5 ${switches.product_publishing_enabled ? 'text-emerald-400' : 'text-red-400'}`} />
+                </div>
+                <div className="text-xs font-extrabold mt-1">
+                  {switches.product_publishing_enabled ? 'सक्रिय (Active)' : 'रोक (Paused)'}
+                </div>
+              </button>
+
+              {/* Artisan Onboarding */}
+              <button
+                onClick={() => handleToggleSwitch('artisan_onboarding_enabled', switches.artisan_onboarding_enabled)}
+                disabled={isActionPending}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  switches.artisan_onboarding_enabled
+                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
+                    : 'bg-red-950/60 border-red-500 text-red-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">कारीगर ऑनबोर्डिंग</span>
+                  <Users className={`w-3.5 h-3.5 ${switches.artisan_onboarding_enabled ? 'text-emerald-400' : 'text-red-400'}`} />
+                </div>
+                <div className="text-xs font-extrabold mt-1">
+                  {switches.artisan_onboarding_enabled ? 'सक्रिय (Active)' : 'रोक (Paused)'}
+                </div>
+              </button>
+
+              {/* B2B Procurement */}
+              <button
+                onClick={() => handleToggleSwitch('b2b_enabled', switches.b2b_enabled)}
+                disabled={isActionPending}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  switches.b2b_enabled
+                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
+                    : 'bg-red-950/60 border-red-500 text-red-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">थोक मांग (B2B)</span>
+                  <Briefcase className={`w-3.5 h-3.5 ${switches.b2b_enabled ? 'text-emerald-400' : 'text-red-400'}`} />
+                </div>
+                <div className="text-xs font-extrabold mt-1">
+                  {switches.b2b_enabled ? 'सक्रिय (Active)' : 'रोक (Paused)'}
+                </div>
+              </button>
+
+              {/* Orders Active */}
+              <button
+                onClick={() => handleToggleSwitch('orders_enabled', switches.orders_enabled)}
+                disabled={isActionPending}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  switches.orders_enabled
+                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
+                    : 'bg-red-950/60 border-red-500 text-red-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider">ऑर्डर खरीद</span>
+                  <DollarSign className={`w-3.5 h-3.5 ${switches.orders_enabled ? 'text-emerald-400' : 'text-red-400'}`} />
+                </div>
+                <div className="text-xs font-extrabold mt-1">
+                  {switches.orders_enabled ? 'सक्रिय (Active)' : 'रोक (Paused)'}
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Top Header Banner */}
+        <div className="bg-[#141414] text-white rounded-3xl p-6 sm:p-8 border border-[#27272a] flex flex-col md:flex-row justify-between md:items-center gap-6 shadow-md">
+          <div className="space-y-2 max-w-2xl">
+            <div className="inline-flex items-center gap-2 bg-white/10 text-amber-400 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+              <Compass className="w-3.5 h-3.5 text-amber-400" />
+              <span>MoSJE National Craft Governance • Central Control Console</span>
+            </div>
+
+            <h1 className="font-sans text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+              {isSuperAdmin ? 'सुपर एडमिन नियंत्रण कक्ष (Super Admin Control Center)' : 'प्रशासकीय नियंत्रण कक्ष (Admin Console)'}
             </h1>
 
             <p className="text-xs sm:text-sm text-neutral-300 font-light leading-relaxed">
-              संपूर्ण राष्ट्रीय प्लेटफ़ॉर्म का केंद्रीय नियंत्रण — उत्पाद कैटलॉग निष्कासन, वैधानिक न्यूनतम मजदूरी निर्धारण, थोक खरीद (B2B), ग्राहक पूछताछ और शिल्पकार प्रमाणन।
+              प्लेटफ़ॉर्म के सभी महत्वपूर्ण तंत्रों पर पूर्ण अधिकार — आपातकालीन स्विच, कारीगर आवेदन स्वीकृति, GI प्रमाणन, उत्पाद मॉडरेशन, वैधानिक न्यूनतम मजदूरी और ऑडिट ट्रेल।
             </p>
           </div>
 
-          {/* Protection Badges */}
-          <div className="bg-[#1c1917] p-5 rounded-2xl border border-[#2e2e30] text-xs space-y-2 shrink-0">
-            <div className="flex items-center gap-2 text-[#34d399] font-bold">
-              <ShieldCheck className="w-4 h-4 text-[#34d399]" />
-              <span>प्रमाणित प्रशासक (Authorised Admin)</span>
+          {/* User Badge */}
+          <div className="bg-[#1c1917] p-4 rounded-2xl border border-[#2e2e30] text-xs space-y-2 shrink-0">
+            <div className="flex items-center gap-2 text-emerald-400 font-bold">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>{isSuperAdmin ? '👑 सुपर एडमिनिस्ट्रेटर' : 'प्रमाणित प्रशासक (Admin)'}</span>
             </div>
-            <div className="text-[11px] font-mono text-[#F8C146] bg-black/40 px-2.5 py-1 rounded-lg border border-[#3e3e42] truncate max-w-xs">
-              {user?.email || 'Verified Supabase administrator'}
+            <div className="text-[11px] font-mono text-amber-400 bg-black/40 px-2.5 py-1 rounded-lg border border-[#3e3e42] truncate max-w-xs">
+              {user?.email || 'aryanrockstar2007@gmail.com'}
             </div>
-            <div className="flex items-center gap-2 text-[#a1a1aa] text-[10px] pt-1.5 border-t border-[#2e2e30]">
-              <span>Full Governance Clearance • MoSJE Oversight</span>
+            <div className="flex items-center gap-2 text-neutral-400 text-[10px] pt-1 border-t border-[#2e2e30]">
+              <span>DPDP Act 2023 Compliant • UIDAI Vault Guard</span>
             </div>
           </div>
         </div>
 
-        {/* Overall Platform Key Metric Bar */}
+        {/* Key Metric Snapshot */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] bento-shadow space-y-1">
+          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] shadow-xs space-y-1">
             <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
               <span>लाइव उत्पाद</span>
               <Package className="w-3.5 h-3.5 text-[#1b4332]" />
             </div>
-            <div className="font-sans text-2xl font-black text-[#231f1e]">{products.length}</div>
+            <div className="font-sans text-2xl font-black text-[#231f1e]">
+              {overview?.active_products ?? products.length}
+            </div>
             <div className="text-[10px] text-[#2d6a4f] font-semibold">मार्केटप्लेस पर सक्रिय</div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] bento-shadow space-y-1">
+          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] shadow-xs space-y-1">
+            <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
+              <span>कारीगर आवेदन</span>
+              <Users className="w-3.5 h-3.5 text-amber-600" />
+            </div>
+            <div className="font-sans text-2xl font-black text-amber-600">
+              {applications.filter((a) => a.status === 'pending').length}
+            </div>
+            <div className="text-[10px] text-[#6f5f58]">समीक्षा प्रतीक्षारत</div>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] shadow-xs space-y-1">
+            <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
+              <span>सक्रिय कारीगर</span>
+              <Award className="w-3.5 h-3.5 text-[#c85a32]" />
+            </div>
+            <div className="font-sans text-2xl font-black text-[#c85a32]">
+              {overview?.active_artisans ?? artisans.filter((a) => a.is_active).length}
+            </div>
+            <div className="text-[10px] text-[#2d6a4f] font-semibold">पंजीकृत व सत्यापित</div>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] shadow-xs space-y-1">
             <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
               <span>शिल्प क्लस्टर</span>
-              <Building2 className="w-3.5 h-3.5 text-[#e9a83a]" />
+              <Building2 className="w-3.5 h-3.5 text-amber-600" />
             </div>
-            <div className="font-sans text-2xl font-black text-[#c85a32]">{clusters.length || 5}</div>
-            <div className="text-[10px] text-[#6f5f58]">न्यूनतम मजदूरी लागू</div>
+            <div className="font-sans text-2xl font-black text-neutral-800">
+              {clusters.length}
+            </div>
+            <div className="text-[10px] text-[#6f5f58]">वैधानिक मजदूरी लागू</div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] bento-shadow space-y-1">
+          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] shadow-xs space-y-1">
             <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
-              <span>थोक मांग (B2B)</span>
-              <Briefcase className="w-3.5 h-3.5 text-[#1b4332]" />
+              <span>कुल ऑर्डर</span>
+              <ShoppingCart className="w-3.5 h-3.5 text-[#1b4332]" />
             </div>
-            <div className="font-sans text-2xl font-black text-[#1b4332]">{b2bRFQs.length}</div>
-            <div className="text-[10px] text-[#2d6a4f] font-semibold">संस्थागत ऑर्डर</div>
+            <div className="font-sans text-2xl font-black text-[#1b4332]">
+              {overview?.total_orders ?? orders.length}
+            </div>
+            <div className="text-[10px] text-[#2d6a4f] font-semibold">₹{overview?.total_revenue?.toLocaleString('en-IN') || '0'} बिक्री</div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] bento-shadow space-y-1">
+          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] shadow-xs space-y-1">
             <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
-              <span>ग्राहक पूछताछ</span>
-              <MessageSquare className="w-3.5 h-3.5 text-[#0284c7]" />
+              <span>प्लेटफ़ॉर्म स्थिति</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
             </div>
-            <div className="font-sans text-2xl font-black text-[#0284c7]">{inquiries.length}</div>
-            <div className="text-[10px] text-[#6f5f58]">कुल संदेश</div>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] bento-shadow space-y-1">
-            <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
-              <span>पंजीकृत कारीगर</span>
-              <Users className="w-3.5 h-3.5 text-[#d97706]" />
+            <div className="font-sans text-lg font-black text-emerald-700">
+              {switches.maintenance_mode ? 'MAINTENANCE' : 'OPERATIONAL'}
             </div>
-            <div className="font-sans text-2xl font-black text-[#d97706]">{artisans.length}</div>
-            <div className="text-[10px] text-[#2d6a4f] font-semibold">100% GI सत्यापित</div>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-[#e6ded3] bento-shadow space-y-1">
-            <div className="text-[10px] uppercase font-bold text-[#6f5f58] flex items-center justify-between">
-              <span>DPDP सुरक्षा</span>
-              <ShieldCheck className="w-3.5 h-3.5 text-[#059669]" />
-            </div>
-            <div className="font-sans text-2xl font-black text-[#059669]">100%</div>
-            <div className="text-[10px] text-[#059669] font-semibold">UIDAI व EXIF सुरक्षित</div>
+            <div className="text-[10px] text-emerald-600 font-semibold">सर्वर सुरक्षित</div>
           </div>
         </div>
 
-        {/* 6 Comprehensive Governance Tabs */}
-        <div className="flex items-center gap-2 border-b border-[#e6ded3] pb-3 overflow-x-auto no-scrollbar">
+        {/* 9 PRODUCTION NAVIGATION TABS */}
+        <div className="flex items-center gap-1.5 border-b border-[#e6ded3] pb-3 overflow-x-auto no-scrollbar">
           <button
             type="button"
-            onClick={() => setActiveTab('products')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-              activeTab === 'products'
-                ? 'bg-[#c85a32] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+            onClick={() => setActiveTab('overview')}
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              activeTab === 'overview'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
             }`}
           >
-            <Package className="w-4 h-4" />
-            <span>उत्पाद नियंत्रण ({products.length})</span>
+            <TrendingUp className="w-3.5 h-3.5" />
+            <span>प्लेटफ़ॉर्म समीक्षा (Overview)</span>
           </button>
+
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('switches')}
+              className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                activeTab === 'switches'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300'
+              }`}
+            >
+              <Power className="w-3.5 h-3.5 text-amber-700" />
+              <span>👑 आपातकालीन नियंत्रण (Switches)</span>
+            </button>
+          )}
 
           <button
             type="button"
-            onClick={() => setActiveTab('clusters')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-              activeTab === 'clusters'
-                ? 'bg-[#1b4332] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+            onClick={() => setActiveTab('applications')}
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              activeTab === 'applications'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
             }`}
           >
-            <Building2 className="w-4 h-4" />
-            <span>शिल्प समूह व न्यूनतम मजदूरी ({clusters.length || 5})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('b2b')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-              activeTab === 'b2b'
-                ? 'bg-[#1e293b] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
-            }`}
-          >
-            <Briefcase className="w-4 h-4" />
-            <span>थोक मांग (B2B RFQs) ({b2bRFQs.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('inquiries')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-              activeTab === 'inquiries'
-                ? 'bg-[#0284c7] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
-            }`}
-          >
-            <MessageSquare className="w-4 h-4" />
-            <span>ग्राहक पूछताछ निगरानी ({inquiries.length})</span>
+            <Users className="w-3.5 h-3.5" />
+            <span>कारीगर आवेदन (Applications)</span>
+            {applications.filter((a) => a.status === 'pending').length > 0 && (
+              <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-black">
+                {applications.filter((a) => a.status === 'pending').length}
+              </span>
+            )}
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('artisans')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
               activeTab === 'artisans'
-                ? 'bg-[#d97706] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
             }`}
           >
-            <Users className="w-4 h-4" />
-            <span>कारीगर निर्देशिका ({artisans.length})</span>
+            <Award className="w-3.5 h-3.5" />
+            <span>कारीगर व GI प्रमाणन (Artisans)</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setActiveTab('security')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-              activeTab === 'security'
-                ? 'bg-[#059669] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+            onClick={() => setActiveTab('products')}
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              activeTab === 'products'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
             }`}
           >
-            <ShieldCheck className="w-4 h-4" />
-            <span>सुरक्षा व DPDP ऑडिट</span>
+            <Package className="w-3.5 h-3.5" />
+            <span>उत्पाद मॉडरेशन (Products)</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setActiveTab('applications')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-              activeTab === 'applications'
-                ? 'bg-[#b45309] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+            onClick={() => setActiveTab('clusters')}
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              activeTab === 'clusters'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
             }`}
           >
-            <UserCheck className="w-4 h-4" />
-            <span>कारीगर आवेदन ({applications.filter((a) => a.status === 'pending').length} लंबित)</span>
+            <Building2 className="w-3.5 h-3.5" />
+            <span>क्लस्टर व मजदूरी (Clusters)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('orders')}
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              activeTab === 'orders'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
+            }`}
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            <span>ऑर्डर निगरानी (Orders)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('b2b')}
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+              activeTab === 'b2b'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
+            }`}
+          >
+            <Briefcase className="w-3.5 h-3.5" />
+            <span>थोक मांग B2B (RFQs)</span>
           </button>
 
           {isSuperAdmin && (
             <button
               type="button"
               onClick={() => setActiveTab('admin_management')}
-              className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
                 activeTab === 'admin_management'
-                  ? 'bg-[#7c2d12] text-white shadow-sm'
-                  : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
               }`}
             >
-              <KeyRound className="w-4 h-4" />
-              <span>प्रशासक प्रबंधन ({adminUsers.length})</span>
+              <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+              <span>उपयोगकर्ता व प्रशासक (Users)</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={() => setActiveTab('audit_logs')}
-            className={`px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-2xl font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
               activeTab === 'audit_logs'
-                ? 'bg-[#4338ca] text-white shadow-sm'
-                : 'bg-white text-[#6f5f58] border border-[#e6ded3] hover:bg-[#faf7f2]'
+                ? 'bg-[#1b4332] text-white shadow-xs'
+                : 'bg-white text-[#6f5f58] hover:text-[#1b4332] border border-[#e6ded3]'
             }`}
           >
-            <History className="w-4 h-4" />
-            <span>ऑडिट लॉग्स ({auditLogs.length})</span>
+            <History className="w-3.5 h-3.5" />
+            <span>ऑडिट ट्रेल (Audit Trail)</span>
           </button>
         </div>
 
-        {/* ===================================================================== */}
-        {/* TAB 1: PRODUCT GOVERNANCE & REMOVAL                                   */}
-        {/* ===================================================================== */}
-        {activeTab === 'products' && (
+        {/* ================================================================= */}
+        {/* TAB 1: PLATFORM OVERVIEW */}
+        {/* ================================================================= */}
+        {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* KPI Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-              <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#e6ded3] bento-shadow space-y-1">
-                <div className="text-[11px] uppercase tracking-wider text-[#6f5f58] font-bold flex items-center justify-between">
-                  <span>लाइव मार्केटप्लेस उत्पाद</span>
-                  <Package className="w-4 h-4 text-[#1b4332]" />
+            {/* Security Alerts Banner */}
+            {overview?.security_warnings && overview.security_warnings.length > 0 && (
+              <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span>सक्रिय सुरक्षा एवं संचालन चेतावनियाँ (Active Alerts)</span>
                 </div>
-                <div className="font-sans text-3xl font-extrabold text-[#231f1e]">
-                  {products.length}
-                </div>
-                <div className="text-[11px] text-[#2d6a4f] font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> सार्वजनिक रूप से उपलब्ध
-                </div>
-              </div>
-
-              <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#e6ded3] bento-shadow space-y-1">
-                <div className="text-[11px] uppercase tracking-wider text-[#6f5f58] font-bold flex items-center justify-between">
-                  <span>कारीगरों द्वारा लाइव अपलोड</span>
-                  <Upload className="w-4 h-4 text-[#c85a32]" />
-                </div>
-                <div className="font-sans text-3xl font-extrabold text-[#c85a32]">
-                  {products.filter((p) => p.id.startsWith('prod-live-')).length}
-                </div>
-                <div className="text-[11px] text-[#6f5f58]">
-                  Speak. Snap. Sell. अपलोड्स
+                <div className="space-y-1">
+                  {overview.security_warnings.map((warn, i) => (
+                    <div key={i} className="text-xs text-amber-800 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
+                      <span>{warn}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
 
-              <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#e6ded3] bento-shadow space-y-1">
-                <div className="text-[11px] uppercase tracking-wider text-[#6f5f58] font-bold flex items-center justify-between">
-                  <span>हटाए गए उत्पाद (Removed)</span>
-                  <Trash2 className="w-4 h-4 text-red-500" />
-                </div>
-                <div className="font-sans text-3xl font-extrabold text-red-600">
-                  {removedCount}
-                </div>
-                <div className="text-[11px] text-red-700">
-                  मार्केटप्लेस से निष्कासित
-                </div>
-              </div>
-
-              <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#e6ded3] bento-shadow space-y-1">
-                <div className="text-[11px] uppercase tracking-wider text-[#6f5f58] font-bold flex items-center justify-between">
-                  <span>प्रशासनिक अधिकार</span>
+            {/* Health & Switch Status Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-6 rounded-3xl border border-[#e6ded3] shadow-xs space-y-4">
+                <h3 className="font-sans text-base font-bold text-[#231f1e] flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-[#1b4332]" />
+                  <span>राष्ट्रीय प्लेटफ़ॉर्म स्वास्थ्य स्थिति (System Status)</span>
+                </h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-neutral-50 border border-neutral-200">
+                    <span className="text-xs font-semibold text-neutral-700">प्लेटफ़ॉर्म स्थिति (Platform Mode)</span>
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+                      switches.maintenance_mode ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'
+                    }`}>
+                      {switches.maintenance_mode ? 'रखरखाव (Maintenance Mode)' : 'सक्रिय (Live Operational)'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-neutral-50 border border-neutral-200">
+                    <span className="text-xs font-semibold text-neutral-700">UIDAI आधार वॉल्ट सुरक्षा</span>
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                      HMAC-SHA256 सुरक्षित
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-neutral-50 border border-neutral-200">
+                    <span className="text-xs font-semibold text-neutral-700">DPDP Act 2023 सहमति तंत्र</span>
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                      सक्रिय (Sovereign Audited)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-neutral-50 border border-neutral-200">
+                    <span className="text-xs font-semibold text-neutral-700">निलंबित खाते (Suspended Accounts)</span>
+                    <span className="text-xs font-bold text-neutral-800 bg-neutral-100 px-2.5 py-1 rounded-full">
+                      {overview?.suspended_accounts ?? 0}
+                    </span>
+                  </div>
                 </div>
-                <div className="font-sans text-2xl font-extrabold text-[#1b4332]">
-                  Full Access
-                </div>
-                <div className="text-[11px] text-[#6f5f58]">
-                  उत्पाद जोड़ने व हटाने का अधिकार
+              </div>
+
+              <div className="bg-white p-6 rounded-3xl border border-[#e6ded3] shadow-xs space-y-4">
+                <h3 className="font-sans text-base font-bold text-[#231f1e] flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-amber-600" />
+                  <span>सक्रिय आपातकालीन स्विच (Switches Overview)</span>
+                </h3>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className={`p-3 rounded-xl border ${switches.marketplace_enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-bold">मार्केटप्लेस</div>
+                    <div>{switches.marketplace_enabled ? 'सक्रिय (ON)' : 'बंद (OFF)'}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${switches.product_publishing_enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-bold">उत्पाद प्रकाशन</div>
+                    <div>{switches.product_publishing_enabled ? 'सक्रिय (ON)' : 'बंद (OFF)'}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${switches.artisan_onboarding_enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-bold">कारीगर ऑनबोर्डिंग</div>
+                    <div>{switches.artisan_onboarding_enabled ? 'सक्रिय (ON)' : 'बंद (OFF)'}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${switches.b2b_enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-bold">थोक मांग (B2B)</div>
+                    <div>{switches.b2b_enabled ? 'सक्रिय (ON)' : 'बंद (OFF)'}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${switches.orders_enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-bold">ऑर्डर खरीद</div>
+                    <div>{switches.orders_enabled ? 'सक्रिय (ON)' : 'बंद (OFF)'}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${switches.voice_catalog_enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-bold">ध्वनि कैटलॉग (Voice)</div>
+                    <div>{switches.voice_catalog_enabled ? 'सक्रिय (ON)' : 'बंद (OFF)'}</div>
+                  </div>
                 </div>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Product Table Card */}
-            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow space-y-4 p-5 sm:p-7">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
-                <div>
-                  <h3 className="font-sans font-bold text-xl text-[#231f1e]">
-                    उत्पाद कैटलॉग प्रशासन (Catalog Governance)
-                  </h3>
-                  <p className="text-xs text-[#6f5f58] mt-0.5">
-                    किसी भी उत्पाद को सीधे मार्केटप्लेस से हटाने के लिए दाईं ओर स्थित &quot;हटाएं&quot; बटन दबाएं।
-                  </p>
-                </div>
+        {/* ================================================================= */}
+        {/* TAB 2: PLATFORM CONTROLS (SWITCHES) */}
+        {/* ================================================================= */}
+        {activeTab === 'switches' && isSuperAdmin && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-3xl border border-[#e6ded3] shadow-xs space-y-4">
+              <div>
+                <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                  प्लेटफ़ॉर्म आपातकालीन एवं संचालन स्विच (Persistent Emergency Switches)
+                </h3>
+                <p className="text-xs text-[#6f5f58] mt-1">
+                  ये स्विच सीधे डेटाबेस में सुरक्षित होते हैं और पूरे प्लेटफ़ॉर्म पर तुरंत प्रभावी होते हैं। प्रत्येक परिवर्तन ऑडिट लॉग में रिकॉर्ड होता है।
+                </p>
+              </div>
 
-                <div className="flex items-center gap-2.5">
-                  {removedCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleRestore}
-                      className="bg-[#faf7f2] hover:bg-[#e6ded3] text-[#1b4332] border border-[#e6ded3] font-bold text-xs px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
-                      title="हटाए गए सभी मूल उत्पादों को रीसेट करें"
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                {[
+                  {
+                    key: 'maintenance_mode' as const,
+                    title: 'आपातकालीन रखरखाव मोड (Maintenance Mode)',
+                    desc: 'सक्रिय होने पर गैर-प्रशासकीय सभी यूज़र को HTTP 503 रखरखाव संदेश दिखता है।',
+                    color: 'red',
+                  },
+                  {
+                    key: 'marketplace_enabled' as const,
+                    title: 'सार्वजनिक बाज़ार (Marketplace Active)',
+                    desc: 'मार्केटप्लेस ब्राउजिंग, कार्ट और चेकआउट को नियंत्रित करता है।',
+                    color: 'emerald',
+                  },
+                  {
+                    key: 'product_publishing_enabled' as const,
+                    title: 'नया उत्पाद प्रकाशन (Product Publishing)',
+                    desc: 'कारीगरों द्वारा नए उत्पादों को अपलोड व प्रकाशित करने की अनुमति देता है।',
+                    color: 'emerald',
+                  },
+                  {
+                    key: 'artisan_onboarding_enabled' as const,
+                    title: 'कारीगर ऑनबोर्डिंग (Artisan Onboarding)',
+                    desc: 'नए कारीगर अपग्रेड आवेदनों की सबमिशन को चालू या बंद करता है।',
+                    color: 'emerald',
+                  },
+                  {
+                    key: 'b2b_enabled' as const,
+                    title: 'थोक खरीद व मिलान (B2B Procurement)',
+                    desc: 'संस्थागत खरीदारों के लिए RFQ सबमिशन व AI मैचमेकिंग को नियंत्रित करता है।',
+                    color: 'emerald',
+                  },
+                  {
+                    key: 'orders_enabled' as const,
+                    title: 'ऑर्डर व भुगतान (Orders & Checkout)',
+                    desc: 'ग्राहकों द्वारा नए आर्डरों की खरीद को चालू या बंद करता है।',
+                    color: 'emerald',
+                  },
+                  {
+                    key: 'ai_catalog_enabled' as const,
+                    title: 'AI मल्टीमॉडल विश्लेषण (Gemma 4 31B)',
+                    desc: 'शिल्प फोटो से स्वतः विवरण तैयार करने की सुविधा को नियंत्रित करता है।',
+                    color: 'blue',
+                  },
+                  {
+                    key: 'voice_catalog_enabled' as const,
+                    title: 'भारतीय भाषा ध्वनि कैटलॉग (Sarvam ASR)',
+                    desc: 'क्षेत्रीय आवाज रिकॉर्डिंग से कैटलॉग बनाने की सुविधा को नियंत्रित करता है।',
+                    color: 'blue',
+                  },
+                ].map((item) => {
+                  const isEnabled = switches[item.key] as boolean;
+                  return (
+                    <div
+                      key={item.key}
+                      className={`p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
+                        isEnabled
+                          ? 'bg-neutral-50/80 border-neutral-300'
+                          : 'bg-red-50/50 border-red-200'
+                      }`}
                     >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span>मूल कैटलॉग रीसेट करें</span>
-                    </button>
-                  )}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-[#231f1e]">{item.title}</span>
+                          <span
+                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                              isEnabled
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {isEnabled ? 'ON' : 'OFF'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#6f5f58] leading-relaxed">{item.desc}</p>
+                      </div>
 
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-[#6f5f58] absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      placeholder="उत्पाद या शिल्प खोजें..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-9 pr-3 py-1.5 text-xs rounded-xl border border-[#e6ded3] bg-[#faf7f2] focus:outline-none focus:border-[#1b4332] w-48 sm:w-64"
-                    />
+                      <button
+                        onClick={() => handleToggleSwitch(item.key, isEnabled)}
+                        disabled={isActionPending}
+                        className={`w-full py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                          isEnabled
+                            ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-300'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        }`}
+                      >
+                        <Power className="w-3.5 h-3.5" />
+                        <span>{isEnabled ? 'स्विच बंद करें (Turn OFF)' : 'स्विच चालू करें (Turn ON)'}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Maintenance Message Editor */}
+            <div className="bg-white p-6 rounded-3xl border border-[#e6ded3] shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-sans text-sm font-bold text-[#231f1e]">
+                    सार्वजनिक रखरखाव संदेश (Custom Maintenance Notice)
+                  </h4>
+                  <p className="text-xs text-[#6f5f58]">
+                    जब आपातकालीन रखरखाव मोड सक्रिय हो, तब यूज़र्स को यह संदेश प्रदर्शित किया जाता है।
+                  </p>
+                </div>
+                {!editingMaintMsg && (
+                  <button
+                    onClick={() => setEditingMaintMsg(true)}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-300 hover:bg-amber-100 cursor-pointer"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    <span>संपादित करें</span>
+                  </button>
+                )}
+              </div>
+
+              {editingMaintMsg ? (
+                <div className="space-y-3">
+                  <textarea
+                    value={maintMsgDraft}
+                    onChange={(e) => setMaintMsgDraft(e.target.value)}
+                    rows={3}
+                    className="w-full text-xs p-3 rounded-xl border border-neutral-300 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSaveMaintenanceMessage}
+                      disabled={isActionPending}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl cursor-pointer"
+                    >
+                      सुरक्षित करें (Save)
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMaintMsgDraft(switches.maintenance_message);
+                        setEditingMaintMsg(false);
+                      }}
+                      className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold text-xs rounded-xl cursor-pointer"
+                    >
+                      रद्द करें
+                    </button>
                   </div>
                 </div>
-              </div>
-
-              {/* Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#faf7f2] text-[#6f5f58] uppercase font-bold border-b border-[#e6ded3]">
-                    <tr>
-                      <th className="py-3 px-4">उत्पाद (Product)</th>
-                      <th className="py-3 px-4">शिल्प व राज्य (Craft & State)</th>
-                      <th className="py-3 px-4">प्रमाणित मूल्य (Fair Price)</th>
-                      <th className="py-3 px-4">प्रकार (Type)</th>
-                      <th className="py-3 px-4 text-right">कार्रवाई (Admin Action)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#e6ded3] text-[#231f1e]">
-                    {filteredProducts.map((p) => (
-                      <tr key={p.id} className="hover:bg-[#faf7f2] transition-colors">
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-xl bg-white border border-[#e6ded3] overflow-hidden shrink-0">
-                              <img
-                                src={p.studio_image_url || '/logo.png'}
-                                alt={p.title_en}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).src = '/logo.png';
-                                }}
-                              />
-                            </div>
-                            <div className="min-w-0 max-w-xs">
-                              <span className="font-bold text-sm text-[#231f1e] block truncate">
-                                {p.title_hi || p.title_en}
-                              </span>
-                              <span className="text-[11px] text-[#6f5f58] block truncate">
-                                {p.title_en}
-                              </span>
-                              <span className="text-[10px] text-[#2d6a4f] block font-mono">
-                                ID: {p.id}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <span className="bg-[#1b4332]/10 text-[#1b4332] font-semibold px-2.5 py-0.5 rounded-full block w-fit">
-                            {p.craft_type}
-                          </span>
-                          <span className="text-[11px] text-[#6f5f58] block mt-1">
-                            📍 {p.artisan_state || 'भारत'}
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <div className="font-sans font-extrabold text-base text-[#c85a32]">
-                            ₹{(p.recommended_retail_d2c || p.floor_price).toLocaleString('en-IN')}
-                          </div>
-                          <span className="text-[10px] text-[#2d6a4f]">
-                            लागत + ₹650/दिन मजदूरी
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          {p.id.startsWith('prod-live-') ? (
-                            <span className="bg-[#e8f5e9] text-[#1b4332] text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit border border-[#2d6a4f]/20">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#1b4332] animate-ping" />
-                              <span>Live Upload</span>
-                            </span>
-                          ) : (
-                            <span className="bg-[#faf7f2] text-[#6f5f58] text-[10px] font-bold px-2 py-0.5 rounded-full border border-[#e6ded3] block w-fit">
-                              Catalog Seed
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Link
-                              href={`/craft/${p.id}`}
-                              target="_blank"
-                              className="p-2 rounded-xl bg-white border border-[#e6ded3] text-[#6f5f58] hover:text-[#1b4332] hover:border-[#1b4332] transition-colors"
-                              title="मार्केटप्लेस पर देखें"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </Link>
-
-                            <button
-                              type="button"
-                              onClick={() => setProductToDelete(p)}
-                              className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-500 text-red-600 hover:text-white border border-red-200 hover:border-red-500 font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-                              title="उत्पाद को मार्केटप्लेस से हटाएं"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>हटाएं (Remove)</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {filteredProducts.length === 0 && (
-                <div className="py-12 text-center space-y-2">
-                  <div className="w-12 h-12 rounded-full bg-[#faf7f2] text-[#6f5f58] flex items-center justify-center mx-auto text-xl">
-                    📦
-                  </div>
-                  <p className="text-sm font-bold text-[#231f1e]">कोई उत्पाद नहीं मिला</p>
-                  <p className="text-xs text-[#6f5f58]">
-                    {removedCount > 0
-                      ? 'सभी उत्पाद हटा दिए गए हैं। आप ऊपर दिए गए "मूल कैटलॉग रीसेट करें" बटन से उन्हें वापस ला सकते हैं।'
-                      : 'खोज शब्द बदलकर पुनः प्रयास करें।'}
-                  </p>
+              ) : (
+                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs text-neutral-800 font-medium">
+                  {switches.maintenance_message}
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* ===================================================================== */}
-        {/* TAB 2: CLUSTERS & STATUTORY WAGES WITH INLINE EDITOR                  */}
-        {/* ===================================================================== */}
-        {activeTab === 'clusters' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e4e4e7] overflow-hidden bento-shadow">
-              <div className="p-6 sm:p-7 border-b border-[#f4f4f5] flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                <div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    शिल्प समूह व वैधानिक न्यूनतम पारिश्रमिक नीतियां (Cluster Wage Floor Governance)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    ये दैनिक मजदूरी दरें AI मूल्य निर्धारण एल्गोरिदम के लिए अनिवार्य न्यूनतम सीमा (Cost-Plus Wage Floor) तय करती हैं।
-                  </p>
-                </div>
-
-                <div className="text-xs bg-[#f4f4f5] text-[#545454] border border-[#e4e4e7] px-3.5 py-1.5 rounded-full font-semibold flex items-center gap-1.5 w-fit">
-                  <ShieldCheck className="w-4 h-4 text-[#059669]" />
-                  <span>Statutory Wage Baseline Enforced</span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#fafafa] text-[#71717a] uppercase font-bold border-b border-[#e4e4e7]">
-                    <tr>
-                      <th className="py-4 px-6">Cluster & Origin</th>
-                      <th className="py-4 px-6">Heritage Discipline</th>
-                      <th className="py-4 px-6">Active Artisans</th>
-                      <th className="py-4 px-6">Statutory Wage Baseline</th>
-                      <th className="py-4 px-6">Provenance Status</th>
-                      <th className="py-4 px-6 text-right">Admin Wage Modifier</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#f4f4f5] text-[#1c1917]">
-                    {clusters.map((c) => (
-                      <tr key={c.id} className="hover:bg-[#fafafa] transition-colors">
-                        <td className="py-4 px-6">
-                          <div className="font-bold text-sm text-[#1c1917]">{c.name}</div>
-                          <div className="text-[11px] text-[#71717a] flex items-center gap-1 mt-0.5">
-                            <MapPin className="w-3 h-3 text-[#F5A941]" /> {c.district}, {c.state}
-                          </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className="bg-[#f4f4f5] text-[#545454] px-2.5 py-1 rounded-md font-medium">
-                            {c.craft_type}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6 font-medium text-[#1c1917]">
-                          {c.active_artisans_count.toLocaleString('en-IN')} पंजीकृत
-                        </td>
-                        <td className="py-4 px-6">
-                          {editingWageClusterId === c.id ? (
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                value={tempWageValue}
-                                onChange={(e) => setTempWageValue(Number(e.target.value))}
-                                className="w-24 px-2 py-1 border border-[#1b4332] rounded-lg text-xs font-bold"
-                              />
-                              <button
-                                onClick={() => handleSaveWage(c.id)}
-                                className="bg-[#1b4332] text-white p-1.5 rounded-lg hover:bg-[#2d6a4f]"
-                                title="सुरक्षित करें"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setEditingWageClusterId(null)}
-                                className="border border-neutral-300 p-1.5 rounded-lg hover:bg-neutral-100"
-                                title="रद्द करें"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="font-bold text-[#065f46] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1 rounded-md">
-                              ₹{c.statutory_minimum_daily_wage}/दिन
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className="inline-flex items-center gap-1 text-[#059669] font-semibold">
-                            <Award className="w-3.5 h-3.5" /> GI Certified
-                          </span>
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingWageClusterId(c.id);
-                              setTempWageValue(c.statutory_minimum_daily_wage);
-                            }}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-[#1b4332] hover:text-[#2d6a4f] bg-neutral-100 hover:bg-neutral-200 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>मजदूरी बदलें</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+        {/* ================================================================= */}
+        {/* TAB 3: ARTISAN APPLICATIONS */}
+        {/* ================================================================= */}
+        {activeTab === 'applications' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+            <div className="p-6 border-b border-[#e6ded3] flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+              <div>
+                <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                  कारीगर उन्नयन आवेदन (Artisan Upgrade Applications)
+                </h3>
+                <p className="text-xs text-[#6f5f58] mt-0.5">
+                  कारीगर आवेदनों का परीक्षण करें। केवल सुपर एडमिन अनुमोदन से ही कारीगर खाता सक्रिय होता है।
+                </p>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* ===================================================================== */}
-        {/* TAB 3: B2B BULK RFQS & PROCUREMENT OVERSIGHT                          */}
-        {/* ===================================================================== */}
-        {activeTab === 'b2b' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e4e4e7] overflow-hidden bento-shadow p-6 sm:p-7 space-y-5">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-[#f4f4f5] pb-4">
-                <div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    थोक मांग व संस्थागत खरीद नियंत्रण (B2B Bulk Procurement RFQs)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    कॉर्पोरेट, बुटीक और सरकारी एम्पोरियम द्वारा दर्ज की गई थोक आवश्यकताओं की समीक्षा व कारीगर आवंटन।
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs bg-[#f4f4f5] text-[#545454] px-3 py-1 rounded-full font-semibold border border-[#e4e4e7]">
-                    {b2bRFQs.length} सक्रिय मांगें
-                  </span>
-                </div>
+            {applications.length === 0 ? (
+              <div className="p-12 text-center text-[#6f5f58] space-y-2">
+                <Users className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs">कोई कारीगर आवेदन उपलब्ध नहीं है।</p>
               </div>
-
+            ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-[#fafafa] text-[#71717a] uppercase font-bold border-b border-[#e4e4e7]">
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
                     <tr>
-                      <th className="py-3 px-4">संस्था / क्रेता (Buyer Organization)</th>
-                      <th className="py-3 px-4">आवश्यक शिल्प (Craft)</th>
-                      <th className="py-3 px-4">मात्रा व बजट (Volume & Budget)</th>
-                      <th className="py-3 px-4">AI मिलान स्कोर (Match %)</th>
-                      <th className="py-3 px-4">स्थिति (Status)</th>
-                      <th className="py-3 px-4 text-right">प्रशासक निर्णय (Admin Action)</th>
+                      <th className="p-4">आईडी / नाम</th>
+                      <th className="p-4">शिल्प प्रकार</th>
+                      <th className="p-4">स्थान / राज्य</th>
+                      <th className="p-4">अनुभव</th>
+                      <th className="p-4">स्थिति</th>
+                      <th className="p-4">जमा करने की तिथि</th>
+                      <th className="p-4 text-right">कार्रवाई</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#f4f4f5] text-[#1c1917]">
-                    {b2bRFQs.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-sm text-[#71717a]">
-                          कोई सक्रिय B2B मांग उपलब्ध नहीं है (No active B2B RFQ records found).
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {applications.map((app) => (
+                      <tr key={app.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4">
+                          <div className="font-bold text-[#231f1e]">{app.full_name || 'शिल्पकार'}</div>
+                          <div className="text-[10px] text-neutral-500 font-mono">{app.id}</div>
                         </td>
-                      </tr>
-                    ) : (
-                      b2bRFQs.map((rfq) => (
-                      <tr key={rfq.id} className="hover:bg-[#fafafa] transition-colors">
-                        <td className="py-4 px-4">
-                          <div className="font-bold text-sm text-[#1c1917]">{rfq.company_name}</div>
-                          <div className="text-[11px] text-[#71717a] flex items-center gap-1 mt-0.5">
-                            <Users className="w-3 h-3 text-[#F5A941]" /> {rfq.buyer_name} • {rfq.buyer_phone}
-                          </div>
-                          <div className="text-[10px] text-[#a1a1aa] mt-0.5">📍 {rfq.delivery_state} • {rfq.created_at}</div>
+                        <td className="p-4 font-semibold text-neutral-800">{app.craft_category}</td>
+                        <td className="p-4 text-neutral-600">
+                          {app.district ? `${app.district}, ` : ''}
+                          {app.state || 'India'}
                         </td>
-
-                        <td className="py-4 px-4">
-                          <span className="bg-[#1b4332]/10 text-[#1b4332] font-semibold px-2.5 py-1 rounded-md block w-fit">
-                            {rfq.craft_type}
+                        <td className="p-4 text-neutral-600">{app.experience_years} वर्ष</td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                              app.status === 'approved'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : app.status === 'rejected'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {app.status === 'approved' ? 'स्वीकृत' : app.status === 'rejected' ? 'अस्वीकृत' : 'प्रतीक्षारत'}
                           </span>
-                          <span className="text-[11px] text-[#71717a] block mt-1">
-                            अवधि: {rfq.deadline_days} दिन
-                          </span>
                         </td>
-
-                        <td className="py-4 px-4">
-                          <div className="font-bold text-sm text-[#c85a32]">
-                            {rfq.quantity} इकाइयाँ
-                          </div>
-                          <div className="text-[11px] text-[#545454]">
-                            ₹{rfq.budget_per_unit.toLocaleString('en-IN')}/इकाई
-                          </div>
-                          <div className="text-[10px] font-semibold text-[#059669]">
-                            कुल: ₹{(rfq.quantity * rfq.budget_per_unit).toLocaleString('en-IN')}
-                          </div>
+                        <td className="p-4 text-neutral-500">
+                          {app.submitted_at || app.created_at
+                            ? new Date(app.submitted_at || app.created_at || '').toLocaleDateString('en-IN')
+                            : 'हाल ही में'}
                         </td>
-
-                        <td className="py-4 px-4">
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 bg-neutral-200 rounded-full h-2 overflow-hidden">
-                              <div
-                                className="bg-[#059669] h-2 rounded-full"
-                                style={{ width: `${rfq.match_score}%` }}
-                              />
-                            </div>
-                            <span className="font-extrabold text-[#059669]">{rfq.match_score}%</span>
-                          </div>
-                        </td>
-
-                        <td className="py-4 px-4">
-                          {rfq.status === 'approved' ? (
-                            <span className="bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full text-[10px]">
-                              ✓ स्वीकृत (Approved)
-                            </span>
-                          ) : rfq.status === 'matched' ? (
-                            <span className="bg-blue-100 text-blue-800 font-bold px-2.5 py-1 rounded-full text-[10px]">
-                              ⚡ कारीगर मिलान (Matched)
-                            </span>
-                          ) : (
-                            <span className="bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full text-[10px]">
-                              ⏳ समीक्षाधीन (In Review)
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="py-4 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {rfq.status !== 'approved' && (
+                        <td className="p-4 text-right space-x-2">
+                          {app.status === 'pending' && isSuperAdmin ? (
+                            <>
                               <button
-                                onClick={() => handleUpdateB2BStatus(rfq.id, 'approved')}
-                                className="px-2.5 py-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                                onClick={() => handleApproveApp(app.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
                               >
                                 स्वीकृत करें
                               </button>
-                            )}
-                            {rfq.status !== 'matched' && (
                               <button
-                                onClick={() => handleUpdateB2BStatus(rfq.id, 'matched')}
-                                className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 text-[#1c1917] text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                                onClick={() => handleRejectApp(app.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
                               >
-                                मैच करें
+                                अस्वीकृत करें
                               </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===================================================================== */}
-        {/* TAB 4: CUSTOMER INQUIRIES OVERSIGHT                                   */}
-        {/* ===================================================================== */}
-        {activeTab === 'inquiries' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e4e4e7] overflow-hidden bento-shadow p-6 sm:p-7 space-y-5">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-[#f4f4f5] pb-4">
-                <div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    सार्वजनिक ग्राहक पूछताछ निगरानी (All Customer Inquiries Feed)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    खरीदारों द्वारा कारीगरों को भेजी गई सभी पूछताछों की निगरानी व सहायता व्यवस्था।
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 bg-[#f4f4f5] p-1 rounded-xl border border-[#e4e4e7]">
-                    <button
-                      onClick={() => setInquiryFilter('all')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        inquiryFilter === 'all' ? 'bg-white shadow-xs text-[#1c1917]' : 'text-[#71717a]'
-                      }`}
-                    >
-                      सभी ({inquiries.length})
-                    </button>
-                    <button
-                      onClick={() => setInquiryFilter('new')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        inquiryFilter === 'new' ? 'bg-white shadow-xs text-[#c85a32]' : 'text-[#71717a]'
-                      }`}
-                    >
-                      नया ({inquiries.filter((i) => i.status === 'new').length})
-                    </button>
-                    <button
-                      onClick={() => setInquiryFilter('replied')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        inquiryFilter === 'replied' ? 'bg-white shadow-xs text-[#059669]' : 'text-[#71717a]'
-                      }`}
-                    >
-                      उत्तर दिया ({inquiries.filter((i) => i.status === 'replied').length})
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredInquiries.map((inq) => (
-                  <div
-                    key={inq.id}
-                    className="p-5 rounded-2xl border border-[#e4e4e7] bg-[#fafafa] hover:bg-white hover:border-[#1b4332]/30 transition-all space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <span className="font-bold text-sm text-[#1c1917] block">
-                          {inq.customer_name}
-                        </span>
-                        <span className="text-[11px] text-[#71717a] block">
-                          📞 {inq.customer_phone} {inq.customer_email ? `• ${inq.customer_email}` : ''}
-                        </span>
-                      </div>
-                      <span
-                        className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                          inq.status === 'new'
-                            ? 'bg-amber-100 text-amber-800'
-                            : inq.status === 'replied'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-neutral-100 text-neutral-600'
-                        }`}
-                      >
-                        {inq.status === 'new' ? 'नया प्रश्न' : 'उत्तर दिया गया'}
-                      </span>
-                    </div>
-
-                    <div className="p-2.5 bg-white rounded-xl border border-[#e4e4e7] text-xs space-y-1">
-                      <div className="font-semibold text-[#1c1917] truncate">
-                        🎨 शिल्प: {inq.product_title}
-                      </div>
-                      <div className="text-[11px] text-[#71717a]">
-                        कारीगर: {inq.artisan_name || 'हस्तशिल्पकार'} • मात्रा: {inq.quantity || 1}
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-[#545454] leading-relaxed bg-white/70 p-3 rounded-xl border border-[#e4e4e7]">
-                      &quot;{inq.message}&quot;
-                    </p>
-
-                    <div className="flex items-center justify-between pt-1 border-t border-[#e4e4e7] text-[11px]">
-                      <span className="text-[#71717a]">
-                        {inq.created_at ? new Date(inq.created_at).toLocaleDateString('hi-IN') : 'हाल ही में'}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {inq.status === 'new' && (
-                          <button
-                            onClick={() => {
-                              updateInquiryStatus(inq.id, 'replied');
-                              setInquiries(getAllInquiries());
-                              setToastMessage('पूछताछ स्थिति "उत्तर दिया गया" में बदली गई।');
-                              setTimeout(() => setToastMessage(null), 3000);
-                            }}
-                            className="text-[#059669] hover:underline font-bold text-xs cursor-pointer"
-                          >
-                            मार्क उत्तर दिया
-                          </button>
-                        )}
-                        <button
-                          onClick={() => {
-                            deleteInquiry(inq.id);
-                            setInquiries(getAllInquiries());
-                            setToastMessage('पूछताछ हटाई गई।');
-                            setTimeout(() => setToastMessage(null), 3000);
-                          }}
-                          className="text-red-600 hover:underline font-bold text-xs cursor-pointer"
-                        >
-                          हटाएं
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {filteredInquiries.length === 0 && (
-                <div className="py-10 text-center text-[#71717a] text-xs">
-                  कोई पूछताछ उपलब्ध नहीं है।
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ===================================================================== */}
-        {/* TAB 5: REGISTERED ARTISANS DIRECTORY                                  */}
-        {/* ===================================================================== */}
-        {activeTab === 'artisans' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e4e4e7] overflow-hidden bento-shadow p-6 sm:p-7 space-y-5">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-[#f4f4f5] pb-4">
-                <div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    पंजीकृत शिल्पकार व कारीगर निर्देशिका (Master Artisans Directory)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    राष्ट्रीय शिल्प पंजीयन, क्लस्टर संबद्धता व GI पहचान का प्रशासनिक प्रबंधन।
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs bg-[#f4f4f5] text-[#545454] px-3 py-1 rounded-full font-semibold border border-[#e4e4e7]">
-                    {artisans.length} पंजीकृत शिल्पकार
-                  </span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#fafafa] text-[#71717a] uppercase font-bold border-b border-[#e4e4e7]">
-                    <tr>
-                      <th className="py-4 px-4">शिल्पकार (Master Artisan)</th>
-                      <th className="py-4 px-4">क्लस्टर व राज्य (Cluster & State)</th>
-                      <th className="py-4 px-4">शिल्प विधा (Heritage Craft)</th>
-                      <th className="py-4 px-4">सक्रिय उत्पाद (Listings)</th>
-                      <th className="py-4 px-4">प्रमाणन स्थिति (GI Certification)</th>
-                      <th className="py-4 px-4 text-right">कार्रवाई (Admin Action)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#f4f4f5] text-[#1c1917]">
-                    {artisans.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-sm text-[#71717a]">
-                          कोई शिल्पकार रिकॉर्ड नहीं मिला (No artisan records found).
-                        </td>
-                      </tr>
-                    ) : (
-                      artisans.map((art) => (
-                      <tr key={art.id} className="hover:bg-[#fafafa] transition-colors">
-                        <td className="py-4 px-4">
-                          <div className="font-bold text-sm text-[#1c1917]">{art.name}</div>
-                          <div className="text-[11px] text-[#71717a] flex items-center gap-1 mt-0.5">
-                            <Phone className="w-3 h-3 text-[#F5A941]" /> {art.phone}
-                          </div>
-                          <div className="text-[10px] text-[#a1a1aa]">पंजीकरण: {art.joined_date}</div>
-                        </td>
-
-                        <td className="py-4 px-4">
-                          <span className="font-semibold text-[#1c1917] block">{art.cluster}</span>
-                          <span className="text-[11px] text-[#71717a]">📍 {art.state}</span>
-                        </td>
-
-                        <td className="py-4 px-4">
-                          <span className="bg-[#1b4332]/10 text-[#1b4332] font-semibold px-2.5 py-1 rounded-md block w-fit">
-                            {art.craft_type}
-                          </span>
-                        </td>
-
-                        <td className="py-4 px-4 font-bold text-[#c85a32]">
-                          {art.products_count} उत्पाद
-                        </td>
-
-                        <td className="py-4 px-4">
-                          {art.gi_verified ? (
-                            <span className="inline-flex items-center gap-1 text-[#059669] bg-[#f0fdf4] border border-[#bbf7d0] px-2.5 py-1 rounded-full font-bold text-[10px]">
-                              <Award className="w-3 h-3" /> GI प्रमाणित शिल्पकार
-                            </span>
+                            </>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full font-bold text-[10px]">
-                              ⏳ सत्यापन लंबित
+                            <span className="text-[11px] text-neutral-400 font-mono">
+                              {app.status === 'approved' ? 'सक्रिय खाता' : app.rejection_reason || 'पूर्ण'}
                             </span>
                           )}
                         </td>
-
-                        <td className="py-4 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleArtisanGI(art.id)}
-                            className="px-3 py-1.5 rounded-xl border border-[#e4e4e7] bg-white hover:bg-[#f4f4f5] text-xs font-bold transition-all cursor-pointer"
-                          >
-                            {art.gi_verified ? 'प्रमाणन हटाएं' : 'सत्यापित करें'}
-                          </button>
-                        </td>
                       </tr>
-                    )))}
+                    ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* ===================================================================== */}
-        {/* TAB 6: SECURITY & DPDP STATUTORY AUDIT                                */}
-        {/* ===================================================================== */}
-        {activeTab === 'security' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e4e4e7] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
-              <div className="border-b border-[#f4f4f5] pb-4">
-                <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                  प्लेटफ़ॉर्म सुरक्षा, संप्रभु अनुपालन व DPDP ऑडिट (Security & Statutory Compliance)
+        {/* ================================================================= */}
+        {/* TAB 4: ARTISANS & GI CERTIFICATION */}
+        {/* ================================================================= */}
+        {activeTab === 'artisans' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+            <div className="p-6 border-b border-[#e6ded3] flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+              <div>
+                <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                  पंजीकृत शिल्पकार एवं भौगोलिक संकेत (GI) शासन
                 </h3>
-                <p className="text-xs text-[#545454] mt-0.5">
-                  डिजिटल पर्सनल डेटा प्रोटेक्शन (DPDP) अधिनियम 2023, UIDAI आधार सुरक्षा व एंटी-एक्सप्लॉयटेशन मूल्य निर्धारण की लाइव स्थिति।
+                <p className="text-xs text-[#6f5f58] mt-0.5">
+                  सुपर एडमिन प्राधिकार द्वारा कारीगरों को GI मान्यता प्रदान करें या खाते को निलंबित/पुनः सक्रिय करें।
                 </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-5 rounded-2xl border border-emerald-200 bg-emerald-50/50 space-y-2">
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>DPDP Act 2023 Voice & Visual Consent</span>
-                  </div>
-                  <p className="text-xs text-emerald-700 leading-relaxed">
-                    कारीगरों की आवाज व उत्पाद फोटो अपलोड से पहले क्षेत्रीय भाषा में स्पष्ट सहमति रिकॉर्ड की जाती है। कारीगर 1-क्लिक में डेटा निष्कासन का अनुरोध कर सकते हैं।
-                  </p>
-                  <div className="text-[10px] font-mono text-emerald-900 bg-white/70 p-2 rounded-lg border border-emerald-200">
-                    Status: COMPLIANT • 100% Consent Log Coverage
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-2xl border border-emerald-200 bg-emerald-50/50 space-y-2">
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>UIDAI Masked Aadhaar Vault</span>
-                  </div>
-                  <p className="text-xs text-emerald-700 leading-relaxed">
-                    कारीगर पहचान सत्यापन में UIDAI मानकों के अनुरूप केवल अंतिम 4 अंक (xxxx-xxxx-4321) संग्रहीत किए जाते हैं। कोई भी असंरक्षित आधार संख्या डेटाबेस में नहीं जाती।
-                  </p>
-                  <div className="text-[10px] font-mono text-emerald-900 bg-white/70 p-2 rounded-lg border border-emerald-200">
-                    Status: VAULT ENCRYPTED • Zero Raw Aadhaar Stored
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-2xl border border-emerald-200 bg-emerald-50/50 space-y-2">
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>GPS EXIF Metadata Automatic Stripping</span>
-                  </div>
-                  <p className="text-xs text-emerald-700 leading-relaxed">
-                    ग्रामीण कारीगरों के घरों और कार्यशालाओं की भू-स्थानिक सुरक्षा के लिए, सभी अपलोड की गई फोटो से GPS अक्षांश/देशांतर EXIF डेटा अपलोड होते ही स्थायी रूप से हटा दिया जाता है।
-                  </p>
-                  <div className="text-[10px] font-mono text-emerald-900 bg-white/70 p-2 rounded-lg border border-emerald-200">
-                    Status: ACTIVE • All EXIF Scrubbed on Edge Upload
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-2xl border border-emerald-200 bg-emerald-50/50 space-y-2">
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Anti-Exploitation Wage Floor Guardrails</span>
-                  </div>
-                  <p className="text-xs text-emerald-700 leading-relaxed">
-                    कोई भी बिचौलिया या ग्राहक कारीगर की वैधानिक न्यूनतम मजदूरी लागत से कम मूल्य पर उत्पाद नहीं खरीद सकता। सर्वर-साइड फ्लोर गार्डरेल सक्रिय रूप से लागू है।
-                  </p>
-                  <div className="text-[10px] font-mono text-emerald-900 bg-white/70 p-2 rounded-lg border border-emerald-200">
-                    Status: ENFORCED • Statutory Floor Guardrail Active
-                  </div>
-                </div>
-              </div>
-
-              {/* Edge Whitelist Audit Box */}
-              <div className="p-5 rounded-2xl border border-[#2e2e30] bg-[#141414] text-white space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-[#F8C146] font-bold text-sm">
-                    <ShieldCheck className="w-4 h-4 text-[#F5A941]" />
-                    <span>Cloudflare Edge Administrative Whitelist Status</span>
-                  </div>
-                  <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                    Active Firewall
-                  </span>
-                </div>
-                <p className="text-xs text-neutral-300 leading-relaxed">
-                  संवेदनशील प्रशासनिक API कार्यवाही सत्यापित Supabase JWT और सर्वर-साइड अनुमोदित administrator subject ID द्वारा सुरक्षित है।
-                </p>
-                <div className="text-xs font-mono text-[#F8C146] bg-black/50 p-3 rounded-xl border border-[#3e3e42]">
-                  Administrator identity is configured server-side.
-                </div>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* ===================================================================== */}
-        {/* TAB 7: ARTISAN UPGRADE APPLICATIONS                                   */}
-        {/* ===================================================================== */}
-        {activeTab === 'applications' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
-                <div>
-                  <div className="inline-flex items-center gap-1.5 bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-1">
-                    <KeyRound className="w-3 h-3 text-purple-700" />
-                    <span>Super Admin Authorization Required</span>
-                  </div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    कारीगर उन्नयन आवेदन (Artisan Upgrade Applications)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    शिल्पकारों द्वारा जमा किए गए आवेदनों की समीक्षा। सुरक्षा एवं नीतिगत कारणों से अनुमोदन केवल सुपर एडमिन (Super Admin) द्वारा ही मान्य है।
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                    {applications.filter((a) => a.status === 'pending').length} लंबित आवेदन
-                  </span>
-                  <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                    {applications.filter((a) => a.status === 'approved').length} स्वीकृत
-                  </span>
-                </div>
+            {artisans.length === 0 ? (
+              <div className="p-12 text-center text-[#6f5f58] space-y-2">
+                <Award className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs">कोई पंजीकृत कारीगर उपलब्ध नहीं है।</p>
               </div>
-
-              {applications.length === 0 ? (
-                <div className="text-center py-12 space-y-3 bg-[#faf7f2] rounded-2xl border border-dashed border-[#e6ded3]">
-                  <UserCheck className="w-10 h-10 text-[#a89e96] mx-auto" />
-                  <p className="text-sm font-bold text-[#1c1917]">कोई कारीगर आवेदन नहीं मिला</p>
-                  <p className="text-xs text-[#545454]">नये आवेदन प्राप्त होते ही यहाँ प्रदर्शित होंगे।</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-[#e6ded3] text-[#6f5f58] uppercase text-[10px] font-bold">
-                        <th className="py-3 px-3">आवेदक ID</th>
-                        <th className="py-3 px-3">शिल्प श्रेणी</th>
-                        <th className="py-3 px-3">अनुभव</th>
-                        <th className="py-3 px-3">स्थान</th>
-                        <th className="py-3 px-3">आवेदन तिथि</th>
-                        <th className="py-3 px-3">स्थिति</th>
-                        <th className="py-3 px-3 text-right">कार्यवाही</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#f4f0ea]">
-                      {applications.map((app) => (
-                        <tr key={app.id} className="hover:bg-[#faf7f2] transition-colors">
-                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#1c1917]">
-                            {app.user_id.slice(0, 14)}...
-                          </td>
-                          <td className="py-3.5 px-3 font-bold text-[#1c1917]">
-                            {app.craft_category}
-                          </td>
-                          <td className="py-3.5 px-3 text-[#545454]">
-                            {app.experience_years} वर्ष
-                          </td>
-                          <td className="py-3.5 px-3 text-[#545454]">
-                            {app.state || 'N/A'}{app.district ? `, ${app.district}` : ''}
-                          </td>
-                          <td className="py-3.5 px-3 text-[#545454]">
-                            {app.created_at ? new Date(app.created_at).toLocaleDateString('hi-IN') : 'हाल ही में'}
-                          </td>
-                          <td className="py-3.5 px-3">
-                            {app.status === 'pending' && (
-                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                                <Clock className="w-3 h-3" /> लंबित (Pending)
-                              </span>
-                            )}
-                            {app.status === 'approved' && (
-                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                <CheckCircle2 className="w-3 h-3" /> स्वीकृत (Approved)
-                              </span>
-                            )}
-                            {app.status === 'rejected' && (
-                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-red-50 text-red-800 border border-red-200">
-                                <UserX className="w-3 h-3" /> अस्वीकृत (Rejected)
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-3 text-right">
-                            {app.status === 'pending' && (
-                              isSuperAdmin ? (
-                                <div className="inline-flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleApproveApp(app.id)}
-                                    disabled={isActionPending}
-                                    className="inline-flex items-center gap-1 bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all shadow-2xs disabled:opacity-50 cursor-pointer"
-                                  >
-                                    <UserCheck className="w-3 h-3" />
-                                    <span>स्वीकार करें (Approve)</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRejectApp(app.id)}
-                                    disabled={isActionPending}
-                                    className="inline-flex items-center gap-1 bg-white hover:bg-red-50 text-red-700 border border-red-200 font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
-                                  >
-                                    <UserX className="w-3 h-3" />
-                                    <span>अस्वीकार (Reject)</span>
-                                  </button>
-                                </div>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                                  <Lock className="w-3 h-3 text-amber-700" /> केवल सुपर एडमिन
-                                </span>
-                              )
-                            )}
-                            {app.status !== 'pending' && (
-                              <span className="text-[11px] text-[#a89e96] italic">संसाधित</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ===================================================================== */}
-        {/* TAB 8: ADMIN USER GOVERNANCE (SUPER ADMIN ONLY)                       */}
-        {/* ===================================================================== */}
-        {activeTab === 'admin_management' && isSuperAdmin && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
-                <div>
-                  <div className="inline-flex items-center gap-1.5 bg-amber-100/60 text-amber-900 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-1">
-                    <KeyRound className="w-3 h-3 text-amber-700" />
-                    <span>Super Admin Clearance Only</span>
-                  </div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    प्रशासक खाता प्रबंधन (Platform Administrator Governance)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    प्लेटफ़ॉर्म प्रशासक नियुक्त करें या पद वापस लें। प्राथमिक सुपर एडमिन को हटाया नहीं जा सकता।
-                  </p>
-                </div>
-              </div>
-
-              {/* Grant Form */}
-              <div className="bg-[#faf7f2] p-5 rounded-2xl border border-[#e6ded3] space-y-3">
-                <h4 className="text-xs font-bold text-[#1c1917] uppercase tracking-wider">
-                  नया प्रशासक नियुक्त करें (Grant Administrator Role)
-                </h4>
-                <form onSubmit={handleGrantAdmin} className="flex flex-col sm:flex-row gap-2.5">
-                  <input
-                    type="text"
-                    required
-                    placeholder="उपयोगकर्ता UUID दर्ज करें (Enter User ID)..."
-                    value={newAdminUserId}
-                    onChange={(e) => setNewAdminUserId(e.target.value)}
-                    className="flex-1 bg-white border border-[#e6ded3] rounded-2xl px-4 py-2.5 text-xs text-[#1c1917] focus:ring-2 focus:ring-[#1b4332] focus:outline-hidden font-mono"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isActionPending || !newAdminUserId.trim()}
-                    className="bg-[#1b4332] hover:bg-[#2d6a4f] text-white font-bold text-xs px-5 py-2.5 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-2xs disabled:opacity-50 cursor-pointer"
-                  >
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>प्रशासक बनाएं (Grant Admin)</span>
-                  </button>
-                </form>
-                <p className="text-[11px] text-[#6f5f58]">
-                  नियुक्त किए गए उपयोगकर्ता को सर्वर-साइड Supabase app_metadata में 'admin' भूमिका प्राप्त होगी।
-                </p>
-              </div>
-
-              {/* Admins Table */}
+            ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-[#e6ded3] text-[#6f5f58] uppercase text-[10px] font-bold">
-                      <th className="py-3 px-3">उपयोगकर्ता ID</th>
-                      <th className="py-3 px-3">ईमेल</th>
-                      <th className="py-3 px-3">भूमिका (Role)</th>
-                      <th className="py-3 px-3">सृजन तिथि</th>
-                      <th className="py-3 px-3 text-right">कार्यवाही</th>
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-4">कारीगर नाम</th>
+                      <th className="p-4">शिल्प प्रकार</th>
+                      <th className="p-4">क्लस्टर / स्थान</th>
+                      <th className="p-4">उत्पाद</th>
+                      <th className="p-4">GI प्रमाणन</th>
+                      <th className="p-4">खाता स्थिति</th>
+                      <th className="p-4 text-right">सुपर एडमिन नियंत्रण</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#f4f0ea]">
-                    {adminUsers.map((adm) => {
-                      const isSelf = adm.id === user?.id;
-                      const isSuper = adm.role === 'super_admin';
-                      return (
-                        <tr key={adm.id} className="hover:bg-[#faf7f2] transition-colors">
-                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#1c1917]">
-                            {adm.id}
-                          </td>
-                          <td className="py-3.5 px-3 font-medium text-[#1c1917]">
-                            {adm.email || 'N/A'}
-                          </td>
-                          <td className="py-3.5 px-3">
-                            {isSuper ? (
-                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
-                                <KeyRound className="w-3 h-3" /> SUPER ADMIN
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200">
-                                <Shield className="w-3 h-3" /> ADMIN
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-3 text-[#545454]">
-                            {adm.created_at ? new Date(adm.created_at).toLocaleDateString('hi-IN') : 'N/A'}
-                          </td>
-                          <td className="py-3.5 px-3 text-right">
-                            {isSuper || isSelf ? (
-                              <span className="text-[10px] text-[#a89e96] italic">सुरक्षित खाता</span>
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {artisans.map((art) => (
+                      <tr key={art.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4">
+                          <div className="font-bold text-[#231f1e]">{art.full_name}</div>
+                          <div className="text-[10px] text-neutral-500 font-mono">{art.phone_number}</div>
+                        </td>
+                        <td className="p-4 font-semibold text-neutral-800">{art.primary_craft}</td>
+                        <td className="p-4 text-neutral-600">
+                          <div>{art.cluster_name || 'Craft Cluster'}</div>
+                          <div className="text-[10px] text-neutral-500">{art.state}</div>
+                        </td>
+                        <td className="p-4 font-bold text-[#1b4332]">{art.products_count} उत्पाद</td>
+                        <td className="p-4">
+                          <button
+                            onClick={() => handleToggleArtisanGI(art.id, art.gi_verified)}
+                            disabled={!isSuperAdmin || isActionPending}
+                            className={`px-3 py-1 rounded-full text-[10px] font-black uppercase transition-all cursor-pointer flex items-center gap-1 ${
+                              art.gi_verified
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+                                : 'bg-neutral-100 text-neutral-600 border border-neutral-300 hover:bg-neutral-200'
+                            }`}
+                            title={isSuperAdmin ? 'GI स्थिति बदलने के लिए क्लिक करें' : 'केवल सुपर एडमिन'}
+                          >
+                            <Award className="w-3 h-3" />
+                            <span>{art.gi_verified ? 'GI सत्यापित (Certified)' : 'गैर-सत्यापित (Unverified)'}</span>
+                          </button>
+                        </td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              art.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {art.is_active ? 'सक्रिय (Active)' : 'निलंबित (Suspended)'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right space-x-2">
+                          {isSuperAdmin && (
+                            art.is_active ? (
+                              <button
+                                onClick={() => handleSuspendArtisan(art.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-200 transition-colors cursor-pointer"
+                              >
+                                निलंबित करें
+                              </button>
                             ) : (
                               <button
-                                type="button"
-                                onClick={() => handleRevokeAdmin(adm.id)}
+                                onClick={() => handleReactivateArtisan(art.id)}
                                 disabled={isActionPending}
-                                className="inline-flex items-center gap-1 bg-white hover:bg-red-50 text-red-700 border border-red-200 font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+                                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-colors cursor-pointer"
                               >
-                                <UserX className="w-3 h-3" />
-                                <span>पद वापस लें (Revoke)</span>
+                                पुनः सक्रिय करें
                               </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 5: PRODUCTS MODERATION */}
+        {/* ================================================================= */}
+        {activeTab === 'products' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden space-y-4">
+            <div className="p-6 border-b border-[#e6ded3] flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+              <div>
+                <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                  उत्पाद कैटलॉग मॉडरेशन (Live Product Moderation)
+                </h3>
+                <p className="text-xs text-[#6f5f58] mt-0.5">
+                  मार्केटप्लेस उत्पादों की जांच करें। सर्वर-साइड प्रकाशन, निष्कासन व पुनर्स्थापना क्रियान्वित करें।
+                </p>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="उत्पाद या शिल्प खोजें..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full text-xs pl-9 pr-4 py-2 rounded-xl border border-[#e6ded3] focus:outline-none focus:ring-2 focus:ring-[#1b4332]"
+                />
+              </div>
+            </div>
+
+            {filteredProducts.length === 0 ? (
+              <div className="p-12 text-center text-[#6f5f58] space-y-2">
+                <Package className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs">कोई उत्पाद नहीं मिला।</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-4">उत्पाद विवरण</th>
+                      <th className="p-4">शिल्प प्रकार</th>
+                      <th className="p-4">कारीगर</th>
+                      <th className="p-4">मूल्य / न्यूनतम</th>
+                      <th className="p-4">स्टॉक</th>
+                      <th className="p-4">स्थिति</th>
+                      <th className="p-4 text-right">मॉडरेशन कार्रवाई</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {filteredProducts.map((p) => (
+                      <tr key={p.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4">
+                          <div className="font-bold text-[#231f1e]">{p.title}</div>
+                          <div className="text-[10px] text-neutral-500 font-mono">{p.id}</div>
+                        </td>
+                        <td className="p-4 font-semibold text-neutral-800">{p.craft_type}</td>
+                        <td className="p-4 text-neutral-600">{p.artisan_name || p.artisan_id}</td>
+                        <td className="p-4">
+                          <div className="font-bold text-[#1b4332]">₹{p.listing_price}</div>
+                          <div className="text-[10px] text-neutral-500">न्यूनतम: ₹{p.floor_price}</div>
+                        </td>
+                        <td className="p-4 text-neutral-700">{p.stock_quantity} नग</td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              p.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {p.is_active ? 'सक्रिय (Live)' : 'हटाया गया (Inactive)'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right space-x-1.5">
+                          {p.is_active ? (
+                            <>
+                              <button
+                                onClick={() => handleModerateProduct(p.id, 'unpublish')}
+                                disabled={isActionPending}
+                                className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-bold rounded-lg border border-amber-300 cursor-pointer"
+                              >
+                                अप्रकाशित करें
+                              </button>
+                              <button
+                                onClick={() => handleModerateProduct(p.id, 'remove')}
+                                disabled={isActionPending}
+                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 text-[11px] font-bold rounded-lg border border-red-300 cursor-pointer"
+                              >
+                                निष्कासित करें
+                              </button>
+                            </>
+                          ) : (
+                            isSuperAdmin && (
+                              <button
+                                onClick={() => handleRestoreProduct(p.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg cursor-pointer"
+                              >
+                                सर्वर पुनर्स्थापना (Restore)
+                              </button>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 6: CLUSTERS & WAGE GOVERNANCE */}
+        {/* ================================================================= */}
+        {activeTab === 'clusters' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+            <div className="p-6 border-b border-[#e6ded3] flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+              <div>
+                <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                  शिल्प क्लस्टर एवं वैधानिक न्यूनतम मजदूरी शासन
+                </h3>
+                <p className="text-xs text-[#6f5f58] mt-0.5">
+                  MoSJE कुशल कारीगर न्यूनतम दैनिक मजदूरी दर। इसके आधार पर निष्पक्ष मूल्य सीमा निर्धारित होती है।
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                  <tr>
+                    <th className="p-4">क्लस्टर नाम</th>
+                    <th className="p-4">शिल्प प्रकार</th>
+                    <th className="p-4">राज्य / जिला</th>
+                    <th className="p-4">GI पंजीकरण स्थिति</th>
+                    <th className="p-4">वैधानिक दैनिक मजदूरी</th>
+                    <th className="p-4">प्रति घंटा दर</th>
+                    <th className="p-4 text-right">मजदूरी अद्यतन</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#e6ded3]">
+                  {clusters.map((c) => (
+                    <tr key={c.id} className="hover:bg-neutral-50/50">
+                      <td className="p-4 font-bold text-[#231f1e]">{c.name}</td>
+                      <td className="p-4 font-semibold text-neutral-800">{c.craft_name}</td>
+                      <td className="p-4 text-neutral-600">
+                        {c.district}, {c.state}
+                      </td>
+                      <td className="p-4">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-300">
+                          {c.gi_tag_status || 'Registered GI'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        {editingWageClusterId === c.id ? (
+                          <input
+                            type="number"
+                            value={tempDailyWage}
+                            onChange={(e) => {
+                              const d = Number(e.target.value);
+                              setTempDailyWage(d);
+                              setTempHourlyWage(Math.round((d / 8) * 100) / 100);
+                            }}
+                            className="w-24 px-2 py-1 border border-amber-500 rounded-lg text-xs font-bold"
+                          />
+                        ) : (
+                          <span className="font-black text-[#1b4332] text-sm">₹{c.statutory_daily_wage}/दिन</span>
+                        )}
+                      </td>
+                      <td className="p-4 font-semibold text-neutral-600">
+                        ₹{c.statutory_hourly_wage}/घंटा
+                      </td>
+                      <td className="p-4 text-right">
+                        {isSuperAdmin && (
+                          editingWageClusterId === c.id ? (
+                            <div className="space-x-1">
+                              <button
+                                onClick={() => handleSaveWage(c.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg cursor-pointer"
+                              >
+                                सेव
+                              </button>
+                              <button
+                                onClick={() => setEditingWageClusterId(null)}
+                                className="px-2 py-1 bg-neutral-200 text-neutral-700 font-bold text-xs rounded-lg cursor-pointer"
+                              >
+                                रद्द
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingWageClusterId(c.id);
+                                setTempDailyWage(c.statutory_daily_wage);
+                                setTempHourlyWage(c.statutory_hourly_wage);
+                              }}
+                              className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs rounded-xl border border-amber-300 cursor-pointer"
+                            >
+                              दर बदलें
+                            </button>
+                          )
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 7: ORDERS & COMMERCE OVERSIGHT */}
+        {/* ================================================================= */}
+        {activeTab === 'orders' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+            <div className="p-6 border-b border-[#e6ded3]">
+              <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                ऑर्डर व वाणिज्य निगरानी (Platform Orders Oversight)
+              </h3>
+              <p className="text-xs text-[#6f5f58] mt-0.5">
+                प्लेटफ़ॉर्म पर संपन्न सभी लेन-देन, ग्राहक भुगतान व कारीगर डिलीवरी स्थिति का पर्यवेक्षण।
+              </p>
+            </div>
+
+            {orders.length === 0 ? (
+              <div className="p-12 text-center text-[#6f5f58] space-y-2">
+                <ShoppingCart className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs">कोई ऑर्डर दर्ज नहीं है।</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-4">ऑर्डर संख्या</th>
+                      <th className="p-4">उत्पाद</th>
+                      <th className="p-4">मात्रा</th>
+                      <th className="p-4">कुल राशि</th>
+                      <th className="p-4">भुगतान स्थिति</th>
+                      <th className="p-4">ऑर्डर स्थिति</th>
+                      <th className="p-4">दिनांक</th>
+                      <th className="p-4 text-right">सुपर एडमिन ओवरराइड</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {orders.map((o) => (
+                      <tr key={o.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4 font-mono font-bold text-[#231f1e]">{o.order_number}</td>
+                        <td className="p-4 font-semibold text-neutral-800">{o.product_title}</td>
+                        <td className="p-4">{o.quantity} नग</td>
+                        <td className="p-4 font-bold text-[#1b4332]">₹{o.total_price}</td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              o.payment_status === 'paid'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {o.payment_status}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 text-neutral-800 uppercase">
+                            {o.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-neutral-500">
+                          {o.created_at ? new Date(o.created_at).toLocaleDateString('en-IN') : 'N/A'}
+                        </td>
+                        <td className="p-4 text-right space-x-1.5">
+                          {isSuperAdmin && (
+                            <select
+                              value={o.status}
+                              onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)}
+                              className="text-[11px] font-semibold p-1 border border-neutral-300 rounded-lg bg-white"
+                            >
+                              <option value="pending">pending</option>
+                              <option value="paid">paid</option>
+                              <option value="confirmed">confirmed</option>
+                              <option value="processing">processing</option>
+                              <option value="shipped">shipped</option>
+                              <option value="delivered">delivered</option>
+                              <option value="cancelled">cancelled</option>
+                            </select>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 8: B2B RFQS */}
+        {/* ================================================================= */}
+        {activeTab === 'b2b' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+            <div className="p-6 border-b border-[#e6ded3]">
+              <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                थोक मांग एवं संस्थागत खरीद (B2B Bulk Procurement Governance)
+              </h3>
+              <p className="text-xs text-[#6f5f58] mt-0.5">
+                कॉर्पोरेट व सरकारी खरीदारों की थोक मांगें और AI मिलान परिणाम।
+              </p>
+            </div>
+
+            {b2bRFQs.length === 0 ? (
+              <div className="p-12 text-center text-[#6f5f58] space-y-2">
+                <Briefcase className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs">कोई B2B मांग उपलब्ध नहीं है।</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-4">खरीदार / संस्था</th>
+                      <th className="p-4">शिल्प प्रकार</th>
+                      <th className="p-4">मात्रा</th>
+                      <th className="p-4">बजट (प्रति इकाई)</th>
+                      <th className="p-4">कुल बजट</th>
+                      <th className="p-4">स्थिति</th>
+                      <th className="p-4 text-right">सुपर एडमिन स्थिति अद्यतन</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {b2bRFQs.map((r) => (
+                      <tr key={r.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4">
+                          <div className="font-bold text-[#231f1e]">{r.buyer_name}</div>
+                          <div className="text-[10px] text-neutral-500">{r.buyer_organization || r.buyer_email}</div>
+                        </td>
+                        <td className="p-4 font-semibold text-neutral-800">{r.craft_type}</td>
+                        <td className="p-4">{r.required_quantity} इकाइयाँ</td>
+                        <td className="p-4 font-bold text-[#1b4332]">₹{r.unit_budget}</td>
+                        <td className="p-4 font-black text-[#231f1e]">₹{r.total_budget?.toLocaleString('en-IN')}</td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              r.status === 'MATCHED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : r.status === 'FULFILLED'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right">
+                          {isSuperAdmin && (
+                            <select
+                              value={r.status}
+                              onChange={(e) => handleUpdateB2BStatus(r.id, e.target.value)}
+                              className="text-[11px] font-semibold p-1 border border-neutral-300 rounded-lg bg-white"
+                            >
+                              <option value="OPEN">OPEN</option>
+                              <option value="MATCHED">MATCHED</option>
+                              <option value="REVIEW">REVIEW</option>
+                              <option value="FULFILLED">FULFILLED</option>
+                              <option value="CLOSED">CLOSED</option>
+                            </select>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 9: USERS & ADMINISTRATOR MANAGEMENT */}
+        {/* ================================================================= */}
+        {activeTab === 'admin_management' && isSuperAdmin && (
+          <div className="space-y-6">
+            {/* Platform Users Table */}
+            <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+              <div className="p-6 border-b border-[#e6ded3] flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                <div>
+                  <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                    प्लेटफ़ॉर्म उपयोगकर्ता एवं खाता नियंत्रण (User Accounts Governance)
+                  </h3>
+                  <p className="text-xs text-[#6f5f58] mt-0.5">
+                    ग्राहकों, कारीगरों व प्रशासकों के खातों को देखें, निलंबित करें या पुनः सक्रिय करें।
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-4">आईडी / ईमेल</th>
+                      <th className="p-4">पद (Role)</th>
+                      <th className="p-4">खाता स्थिति</th>
+                      <th className="p-4">पंजीकरण तिथि</th>
+                      <th className="p-4 text-right">निलंबन नियंत्रण</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {platformUsers.map((u) => (
+                      <tr key={u.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4">
+                          <div className="font-bold text-[#231f1e]">{u.email || 'Anonymous Member'}</div>
+                          <div className="text-[10px] text-neutral-500 font-mono">{u.id}</div>
+                        </td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              u.role === 'super_admin'
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : u.role === 'admin'
+                                ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                : u.role === 'artisan'
+                                ? 'bg-emerald-100 text-emerald-900'
+                                : 'bg-neutral-100 text-neutral-800'
+                            }`}
+                          >
+                            {u.role === 'super_admin' ? '👑 सुपर एडमिन' : u.role}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              u.is_suspended ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {u.is_suspended ? 'निलंबित (Suspended)' : 'सक्रिय (Active)'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-neutral-500">
+                          {u.created_at ? new Date(u.created_at).toLocaleDateString('en-IN') : 'N/A'}
+                        </td>
+                        <td className="p-4 text-right">
+                          {u.role !== 'super_admin' && (
+                            u.is_suspended ? (
+                              <button
+                                onClick={() => handleReactivateUser(u.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-300 cursor-pointer"
+                              >
+                                पुनः सक्रिय करें
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleSuspendUser(u.id)}
+                                disabled={isActionPending}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-300 cursor-pointer"
+                              >
+                                निलंबित करें
+                              </button>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* ===================================================================== */}
-        {/* TAB 9: ADMINISTRATIVE AUDIT LOGS                                      */}
-        {/* ===================================================================== */}
-        {activeTab === 'audit_logs' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-[#e6ded3] overflow-hidden bento-shadow p-6 sm:p-7 space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-[#e6ded3] pb-4">
-                <div>
-                  <h3 className="font-sans font-bold text-xl text-[#1c1917]">
-                    प्रशासनिक ऑडिट लॉग (Administrative Audit Trail)
-                  </h3>
-                  <p className="text-xs text-[#545454] mt-0.5">
-                    प्लेटफ़ॉर्म पर किए गए सभी प्रशासनिक निर्णयों, भूमिका परिवर्तनों और कारीगर स्वीकृतियों का अपरिवर्तनीय सर्वर लॉग।
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => loadData()}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl border border-[#e6ded3] bg-[#faf7f2] hover:bg-white text-[#1c1917] transition-all cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>रिफ्रेश लॉग्स</span>
-                </button>
-              </div>
-
-              {auditLogs.length === 0 ? (
-                <div className="text-center py-12 space-y-3 bg-[#faf7f2] rounded-2xl border border-dashed border-[#e6ded3]">
-                  <History className="w-10 h-10 text-[#a89e96] mx-auto" />
-                  <p className="text-sm font-bold text-[#1c1917]">कोई ऑडिट लॉग रिकॉर्ड नहीं मिला</p>
-                  <p className="text-xs text-[#545454]">प्रशासनिक गतिविधियों के साथ ऑडिट लॉग स्वतः दर्ज होते हैं।</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-[#e6ded3] text-[#6f5f58] uppercase text-[10px] font-bold">
-                        <th className="py-3 px-3">समय (Timestamp)</th>
-                        <th className="py-3 px-3">कार्यवाही (Action)</th>
-                        <th className="py-3 px-3">प्रशासक (Actor)</th>
-                        <th className="py-3 px-3">लक्षित खाता (Target User)</th>
-                        <th className="py-3 px-3">विवरण (Details)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#f4f0ea]">
-                      {auditLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-[#faf7f2] transition-colors">
-                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#545454] whitespace-nowrap">
-                            {new Date(log.created_at).toLocaleString('hi-IN')}
-                          </td>
-                          <td className="py-3.5 px-3 font-mono font-bold text-[11px] text-[#1c1917]">
-                            <span className="bg-[#faf7f2] px-2 py-0.5 rounded-md border border-[#e6ded3]">
-                              {log.action}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-3 text-[#1c1917]">
-                            {log.actor_email || log.actor_id.slice(0, 12)}
-                          </td>
-                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#545454]">
-                            {log.target_user_id ? log.target_user_id.slice(0, 14) + '...' : '-'}
-                          </td>
-                          <td className="py-3.5 px-3 font-mono text-[11px] text-[#6f5f58] max-w-xs truncate">
-                            {log.details || '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ===================================================================== */}
-        {/* DELETE CONFIRMATION MODAL                                             */}
-        {/* ===================================================================== */}
-        {productToDelete && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full space-y-5 border border-[#e6ded3] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="w-14 h-14 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto text-2xl shadow-inner">
-                <AlertTriangle className="w-7 h-7" />
-              </div>
-
-              <div className="text-center space-y-1.5">
-                <h3 className="font-sans text-xl font-extrabold text-[#231f1e]">
-                  उत्पाद हटाएं? (Remove Product)
-                </h3>
-                <p className="text-xs text-[#6f5f58] leading-relaxed">
-                  क्या आप वाकई निम्नलिखित उत्पाद को सार्वजनिक मार्केटप्लेस और कैटलॉग से हटाना चाहते हैं?
+            {/* Admin Role Appointment Card */}
+            <div className="bg-white p-6 rounded-3xl border border-[#e6ded3] shadow-xs space-y-4">
+              <div>
+                <h4 className="font-sans text-sm font-bold text-[#231f1e]">
+                  प्रशासक पद नियुक्ति (Appoint Administrator)
+                </h4>
+                <p className="text-xs text-[#6f5f58]">
+                  किसी पंजीकृत यूज़र आईडी को 'admin' पद प्रदान करें।
                 </p>
-                <div className="p-3 bg-[#faf7f2] rounded-xl border border-[#e6ded3] text-left mt-2">
-                  <span className="font-bold text-xs text-[#231f1e] block">
-                    {productToDelete.title_hi || productToDelete.title_en}
-                  </span>
-                  <span className="text-[11px] text-[#6f5f58] block">
-                    शिल्प: {productToDelete.craft_type} • मूल्य: ₹{(productToDelete.recommended_retail_d2c || productToDelete.floor_price).toLocaleString('en-IN')}
-                  </span>
-                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  placeholder="यूज़र आईडी दर्ज करें (User ID)..."
+                  value={newAdminUserId}
+                  onChange={(e) => setNewAdminUserId(e.target.value)}
+                  className="flex-1 text-xs p-3 rounded-xl border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
                 <button
-                  type="button"
-                  onClick={() => setProductToDelete(null)}
-                  disabled={isDeleting}
-                  className="py-3 px-4 rounded-xl border border-[#e6ded3] bg-white hover:bg-[#faf7f2] text-[#231f1e] font-bold text-xs transition-all cursor-pointer"
+                  onClick={() => handleGrantAdmin(newAdminUserId)}
+                  disabled={!newAdminUserId.trim() || isActionPending}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl cursor-pointer"
                 >
-                  रद्द करें (Cancel)
-                </button>
-
-                <button
-                  type="button"
-                  onClick={confirmDelete}
-                  disabled={isDeleting}
-                  className="py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {isDeleting ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      <span>हाँ, हटाएं (Yes, Remove)</span>
-                    </>
-                  )}
+                  प्रशासक बनाएं
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 10: AUDIT TRAIL */}
+        {/* ================================================================= */}
+        {activeTab === 'audit_logs' && (
+          <div className="bg-white rounded-3xl border border-[#e6ded3] shadow-xs overflow-hidden">
+            <div className="p-6 border-b border-[#e6ded3]">
+              <h3 className="font-sans text-lg font-bold text-[#231f1e]">
+                अपरिवर्तनीय ऑडिट ट्रेल (Immutable Administrative Audit Trail)
+              </h3>
+              <p className="text-xs text-[#6f5f58] mt-0.5">
+                प्रशासकीय निर्णयों, भूमिका परिवर्तनों, GI सत्यापन और आपातकालीन स्विचों का आधिकारिक रिकॉर्ड।
+              </p>
+            </div>
+
+            {auditLogs.length === 0 ? (
+              <div className="p-12 text-center text-[#6f5f58] space-y-2">
+                <History className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs">कोई ऑडिट लॉग उपलब्ध नहीं है।</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#faf7f2] border-b border-[#e6ded3] text-[#6f5f58] font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-4">कार्रवाई (Action)</th>
+                      <th className="p-4">कर्ता (Actor)</th>
+                      <th className="p-4">लक्षित यूज़र</th>
+                      <th className="p-4">विवरण</th>
+                      <th className="p-4">समय (UTC)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e6ded3]">
+                    {auditLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-neutral-50/50">
+                        <td className="p-4">
+                          <span className="font-mono font-bold text-[#1b4332] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <div className="font-semibold text-neutral-800">{log.actor_email || log.actor_id}</div>
+                        </td>
+                        <td className="p-4 text-neutral-600 font-mono text-[11px]">
+                          {log.target_user_id || '—'}
+                        </td>
+                        <td className="p-4 text-neutral-700 max-w-xs truncate" title={log.details || ''}>
+                          {log.details || '—'}
+                        </td>
+                        <td className="p-4 text-neutral-500 font-mono text-[11px]">
+                          {log.created_at ? new Date(log.created_at).toLocaleString('en-IN') : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

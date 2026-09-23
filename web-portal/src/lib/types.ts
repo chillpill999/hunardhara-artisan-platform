@@ -233,3 +233,154 @@ export interface CartCheckoutResult {
   error?: string;
 }
 
+export interface PlatformSettings {
+  marketplace_enabled: boolean;
+  artisan_onboarding_enabled: boolean;
+  product_publishing_enabled: boolean;
+  b2b_enabled: boolean;
+  orders_enabled: boolean;
+  ai_catalog_enabled: boolean;
+  voice_catalog_enabled: boolean;
+  maintenance_mode: boolean;
+  maintenance_message: string;
+}
+
+export interface PlatformOverviewMetrics {
+  active_users: number;
+  active_artisans: number;
+  total_artisans: number;
+  pending_applications: number;
+  active_products: number;
+  total_products: number;
+  total_orders: number;
+  total_revenue: number;
+  open_rfqs: number;
+  suspended_accounts: number;
+  system_health: 'operational' | 'maintenance';
+  switches: PlatformSettings;
+  security_warnings: string[];
+}
+
+export interface AdminArtisanItem {
+  id: string;
+  full_name: string;
+  phone_number: string;
+  state: string;
+  district: string;
+  primary_craft: string;
+  cluster_id?: string;
+  cluster_name?: string;
+  is_active: boolean;
+  products_count: number;
+  gi_verified: boolean;
+  created_at?: string;
+}
+
+export interface AdminProductItem {
+  id: string;
+  title: string;
+  artisan_id: string;
+  artisan_name?: string;
+  craft_type: string;
+  listing_price: number;
+  floor_price: number;
+  stock_quantity: number;
+  is_active: boolean;
+  studio_image_url?: string;
+  created_at?: string;
+}
+
+export interface AdminClusterItem {
+  id: string;
+  name: string;
+  craft_name: string;
+  state: string;
+  district: string;
+  statutory_daily_wage: number;
+  statutory_hourly_wage: number;
+  gi_tag_status?: string;
+  gi_tag_number?: string;
+  artisans_count?: number;
+  updated_at?: string;
+}
+
+export interface AdminOrderItem {
+  id: string;
+  order_number: string;
+  customer_id: string;
+  artisan_id: string;
+  product_id: string;
+  product_title: string;
+  quantity: number;
+  total_price: number;
+  status: string;
+  payment_status: string;
+  created_at?: string;
+}
+
+export interface AdminB2BRFQItem {
+  id: string;
+  buyer_name: string;
+  buyer_organization?: string;
+  buyer_email: string;
+  craft_type: string;
+  required_quantity: number;
+  unit_budget: number;
+  total_budget: number;
+  deadline_days: number;
+  delivery_state?: string;
+  status: string;
+  matches_count: number;
+  created_at?: string;
+}
+
+export interface AdminPlatformUserItem {
+  id: string;
+  email?: string;
+  role: string;
+  is_suspended: boolean;
+  created_at?: string;
+  last_sign_in_at?: string;
+}
+
+export interface AdminAuditLogItem {
+  id: string;
+  action: string;
+  actor_id: string;
+  actor_email?: string | null;
+  target_user_id?: string | null;
+  details?: string | null;
+  created_at: string;
+}
+
+export interface ArtisanApplicationItem {
+  id: string;
+  user_id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  craft_category: string;
+  experience_years: number;
+  state?: string | null;
+  district?: string | null;
+  workshop_info?: string | null;
+  craft_description?: string | null;
+  sample_images?: string | null;
+  document_references?: string | null;
+  status: string;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  rejection_reason?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AdminUserItem {
+  id: string;
+  email: string | null;
+  role: string;
+  created_at?: string | null;
+  last_sign_in_at?: string | null;
+}
+
+

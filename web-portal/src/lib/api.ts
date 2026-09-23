@@ -1,4 +1,26 @@
-import { CraftCluster, Product, B2BRFQRequest, B2BMatchResponse, B2BMatchRecordItem, B2BMatchApiResult, ArtisanEarnings, ArtisanStudioDraft, CustomerOrder, CartCheckoutResult } from "./types";
+import {
+  CraftCluster,
+  Product,
+  B2BRFQRequest,
+  B2BMatchResponse,
+  B2BMatchRecordItem,
+  B2BMatchApiResult,
+  ArtisanEarnings,
+  ArtisanStudioDraft,
+  CustomerOrder,
+  CartCheckoutResult,
+  PlatformSettings,
+  PlatformOverviewMetrics,
+  AdminArtisanItem,
+  AdminProductItem,
+  AdminClusterItem,
+  AdminOrderItem,
+  AdminB2BRFQItem,
+  AdminPlatformUserItem,
+  ArtisanApplicationItem,
+  AdminUserItem,
+  AdminAuditLogItem,
+} from "./types";
 import { supabase } from "./supabase";
 
 
@@ -1447,45 +1469,7 @@ export async function cancelCustomerOrder(orderId: string): Promise<{
    SUPER ADMIN & APPLICATION WORKFLOW ENDPOINTS
    ========================================================================= */
 
-export interface ArtisanApplicationItem {
-  id: string;
-  user_id: string;
-  full_name?: string | null;
-  phone?: string | null;
-  craft_category: string;
-  experience_years: number;
-  state?: string | null;
-  district?: string | null;
-  workshop_info?: string | null;
-  craft_description?: string | null;
-  sample_images?: string | null;
-  document_references?: string | null;
-  status: string; // 'pending' | 'approved' | 'rejected'
-  submitted_at?: string | null;
-  reviewed_at?: string | null;
-  reviewed_by?: string | null;
-  rejection_reason?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface AdminUserItem {
-  id: string;
-  email: string | null;
-  role: string;
-  created_at?: string | null;
-  last_sign_in_at?: string | null;
-}
-
-export interface AdminAuditLogItem {
-  id: string;
-  action: string;
-  actor_id: string;
-  actor_email?: string | null;
-  target_user_id?: string | null;
-  details?: string | null;
-  created_at: string;
-}
+export type { ArtisanApplicationItem, AdminUserItem, AdminAuditLogItem };
 
 export interface BootstrapStatusResponse {
   bootstrapped: boolean;
@@ -1742,4 +1726,501 @@ export async function fetchAuditLogs(limit: number = 50, offset: number = 0): Pr
     return [];
   }
 }
+
+/**
+ * Fetch platform emergency switches (Admin / Super Admin).
+ */
+export async function fetchPlatformSettings(): Promise<PlatformSettings> {
+  const fallback: PlatformSettings = {
+    marketplace_enabled: true,
+    artisan_onboarding_enabled: true,
+    product_publishing_enabled: true,
+    b2b_enabled: true,
+    orders_enabled: true,
+    ai_catalog_enabled: true,
+    voice_catalog_enabled: true,
+    maintenance_mode: false,
+    maintenance_message: "Platform maintenance in progress.",
+  };
+
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return fallback;
+
+    const res = await fetch(`${API_BASE}/admin/platform-settings`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return fallback;
+    return await res.json();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Update platform emergency switches (Super Admin only).
+ */
+export async function updatePlatformSettings(
+  updates: Partial<PlatformSettings>
+): Promise<{ success: boolean; settings?: PlatformSettings; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/platform-settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify(updates),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to update platform settings." };
+    }
+    return { success: true, settings: data, message: "Platform switches updated successfully." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Fetch real-time platform overview metrics (Admin / Super Admin).
+ */
+export async function fetchAdminOverviewMetrics(): Promise<PlatformOverviewMetrics | null> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return null;
+
+    const res = await fetch(`${API_BASE}/admin/overview-metrics`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List registered artisans for governance (Admin / Super Admin).
+ */
+export async function fetchAdminArtisans(): Promise<AdminArtisanItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/artisans`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Authoritatively toggle or certify an artisan's GI registration status (Super Admin only).
+ */
+export async function verifyArtisanGI(
+  artisanId: string,
+  verified: boolean = true,
+  giRegistrationName?: string,
+  giReference?: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/artisans/${artisanId}/verify-gi`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({
+        verified,
+        gi_registration_name: giRegistrationName,
+        gi_reference: giReference,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to update GI certification." };
+    }
+    return { success: true, message: `GI verification ${verified ? "granted" : "revoked"} successfully.` };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Suspend an artisan account (Super Admin only).
+ */
+export async function suspendArtisan(
+  artisanId: string,
+  reason: string = "Suspended by Super Administrator"
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/artisans/${artisanId}/suspend`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ reason }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to suspend artisan." };
+    }
+    return { success: true, message: "Artisan account suspended." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Reactivate an artisan account (Super Admin only).
+ */
+export async function reactivateArtisan(
+  artisanId: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/artisans/${artisanId}/reactivate`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to reactivate artisan." };
+    }
+    return { success: true, message: "Artisan account reactivated." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * List products for moderation (Admin / Super Admin).
+ */
+export async function fetchAdminProducts(limit: number = 100, offset: number = 0): Promise<AdminProductItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/products?limit=${limit}&offset=${offset}`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Moderate a product (publish, unpublish, flag, remove).
+ */
+export async function moderateAdminProduct(
+  productId: string,
+  action: "publish" | "unpublish" | "flag" | "remove",
+  reason: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/products/${productId}/moderate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ action, reason }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Product moderation failed." };
+    }
+    return { success: true, message: `Product ${action} action applied.` };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Authoritatively restore an inactive or removed product (Super Admin only).
+ */
+export async function restoreAdminProduct(
+  productId: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/products/${productId}/restore`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Product restoration failed." };
+    }
+    return { success: true, message: "Product restored to active marketplace." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * List craft clusters for wage and GI governance (Admin / Super Admin).
+ */
+export async function fetchAdminClusters(): Promise<AdminClusterItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/clusters`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Update craft cluster statutory wage rate (Super Admin only).
+ */
+export async function updateClusterWage(
+  clusterId: string,
+  statutoryDailyWage: number,
+  statutoryHourlyWage?: number
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/clusters/${clusterId}/wage`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({
+        statutory_daily_wage: statutoryDailyWage,
+        statutory_hourly_wage: statutoryHourlyWage,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Wage update failed." };
+    }
+    return { success: true, message: data.message || "Statutory wage updated." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * List platform orders (Admin / Super Admin).
+ */
+export async function fetchAdminOrders(limit: number = 100, offset: number = 0): Promise<AdminOrderItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/orders?limit=${limit}&offset=${offset}`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Update order status or payment flag (Super Admin only).
+ */
+export async function updateAdminOrderStatus(
+  orderId: string,
+  status?: string,
+  paymentStatus?: string,
+  note?: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({
+        status,
+        payment_status: paymentStatus,
+        note,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to update order status." };
+    }
+    return { success: true, message: "Order status updated." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * List B2B RFQs (Admin / Super Admin).
+ */
+export async function fetchAdminB2BRFQs(): Promise<AdminB2BRFQItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/b2b/rfqs`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Update B2B RFQ status (Super Admin only).
+ */
+export async function updateAdminB2BStatus(
+  rfqId: string,
+  status: string,
+  note?: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/b2b/rfqs/${rfqId}/status`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ status, note }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to update B2B status." };
+    }
+    return { success: true, message: `B2B status updated to ${status}.` };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * List platform users for governance (Super Admin only).
+ */
+export async function fetchPlatformUsers(): Promise<AdminPlatformUserItem[]> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return [];
+
+    const res = await fetch(`${API_BASE}/admin/users`, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Suspend user account (Super Admin only).
+ */
+export async function suspendPlatformUser(
+  userId: string,
+  reason: string = "Suspended by Super Administrator"
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/users/${userId}/suspend`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ reason }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to suspend user." };
+    }
+    return { success: true, message: "User account suspended." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
+/**
+ * Reactivate suspended user account (Super Admin only).
+ */
+export async function reactivatePlatformUser(
+  userId: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const authHeaders = await getSupabaseAuthorizationHeader();
+    if (!authHeaders.Authorization) return { success: false, message: "Unauthorized" };
+
+    const res = await fetch(`${API_BASE}/admin/users/${userId}/reactivate`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, message: data.detail || "Failed to reactivate user." };
+    }
+    return { success: true, message: "User account reactivated." };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Network error" };
+  }
+}
+
 

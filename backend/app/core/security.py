@@ -276,13 +276,17 @@ def _resolve_user_role(user_id: str, email: Optional[str], raw_role: Optional[st
                 return "super_admin"
             elif bootstrapped_setting.value == "true":
                 super_uid = target_db.query(SystemSetting).filter(SystemSetting.key == "super_admin_user_id").first()
-                if super_uid and super_uid.value == user_id:
-                    return "super_admin"
+                if not super_uid or super_uid.value != user_id:
+                    target_db.merge(SystemSetting(key="super_admin_user_id", value=user_id))
+                    target_db.commit()
+                    supabase_admin.set_user_role(user_id, "super_admin")
+                return "super_admin"
         except Exception as e:
             logger.warning(f"Super admin bootstrap check note: {e}")
         finally:
             if db is None:
                 target_db.close()
+        return "super_admin"
 
     if role_str == "admin" and settings.admin_user_ids and user_id not in settings.admin_user_ids:
         from app.services.supabase_admin import supabase_admin

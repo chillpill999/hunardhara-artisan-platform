@@ -32,6 +32,7 @@ from app.services.voice_service import voice_service
 from app.services.pricing_service import pricing_service
 from app.services.openrouter_service import openrouter_service
 from app.services.embedding_service import embedding_service
+from app.services.platform_settings_service import platform_settings_service
 
 logger = logging.getLogger("artisan_platform.api.products")
 router = APIRouter(prefix="/products", tags=["Products & AI Pipelines"])
@@ -95,7 +96,8 @@ async def product_studio_upload(
 async def product_analyze_image(
     image: UploadFile = File(..., description="Craft photo to analyze"),
     hint: Optional[str] = Form(None, description="Optional artisan craft hint or cluster context"),
-    current_user: CurrentUser = Depends(require_artisan)
+    current_user: CurrentUser = Depends(require_artisan),
+    db: Session = Depends(get_db)
 ):
     """
     Multimodal Craft Image Understanding Pipeline (Google Gemma 4 31B):
@@ -103,6 +105,12 @@ async def product_analyze_image(
     artisan technique, and auto-generates bilingual e-commerce catalog listings.
     Requires authenticated artisan or admin.
     """
+    if not platform_settings_service.is_enabled(db, "ai_catalog_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI_CATALOG_PAUSED: AI multimodal analysis is temporarily suspended by platform administrators."
+        )
+
     if not image.filename:
         raise HTTPException(status_code=400, detail="INVALID_IMAGE_DATA: Filename missing")
 
@@ -141,13 +149,20 @@ async def product_analyze_image(
 async def product_voice_catalog_upload(
     audio: UploadFile = File(..., description="Voice recording audio (.opus / .wav / .m4a)"),
     language_code: str = Form("hi", description="ISO 639 Indic language code"),
-    current_user: CurrentUser = Depends(require_artisan)
+    current_user: CurrentUser = Depends(require_artisan),
+    db: Session = Depends(get_db)
 ):
     """
     R2 Voice-to-Catalog Pipeline:
     Extracts structured craft attributes, bilingual marketing descriptions, and SEO tags.
     Requires authenticated artisan or admin.
     """
+    if not platform_settings_service.is_enabled(db, "voice_catalog_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="VOICE_CATALOG_PAUSED: Voice-to-catalog pipeline is temporarily suspended by platform administrators."
+        )
+
     if not audio.filename:
         raise HTTPException(status_code=400, detail="INVALID_AUDIO_FORMAT_OR_CORRUPT")
 
@@ -309,6 +324,17 @@ def create_product(
     Rejects any marketplace listing priced below the certified cost-plus anti-exploitation floor.
     Guarantees idempotency via X-Idempotency-Key header or idempotency_key payload.
     """
+    if not platform_settings_service.is_enabled(db, "product_publishing_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="PRODUCT_PUBLISHING_PAUSED: Product publishing is temporarily suspended by platform administrators."
+        )
+    if not platform_settings_service.is_enabled(db, "marketplace_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MARKETPLACE_PAUSED: The marketplace is currently paused by platform administrators."
+        )
+
     # 0. Idempotency Check: Safely return existing product on retries
     effective_idempotency_key = (x_idempotency_key or product_in.idempotency_key)
     if effective_idempotency_key:

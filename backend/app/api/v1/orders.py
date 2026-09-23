@@ -21,6 +21,7 @@ from app.schemas.orders import (
     CartCheckoutRequest,
     CartCheckoutResponse,
 )
+from app.services.platform_settings_service import platform_settings_service
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -101,6 +102,17 @@ def create_customer_order(
     Enforces atomic inventory decrements to prevent overselling.
     Supports Idempotency-Key / X-Idempotency-Key to prevent duplicate order placements.
     """
+    if not platform_settings_service.is_enabled(db, "orders_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ORDERS_PAUSED: Order placement is temporarily suspended by platform administrators."
+        )
+    if not platform_settings_service.is_enabled(db, "marketplace_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MARKETPLACE_PAUSED: The marketplace is currently paused by platform administrators."
+        )
+
     effective_idempotency_key = idempotency_key or x_idempotency_key
     scope = f"order:{current_user.id}"
 
@@ -212,6 +224,17 @@ def checkout_customer_cart(
     If any single item fails or is out of stock, the entire cart checkout rolls back.
     Supports Idempotency-Key to prevent duplicate checkouts.
     """
+    if not platform_settings_service.is_enabled(db, "orders_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ORDERS_PAUSED: Order placement is temporarily suspended by platform administrators."
+        )
+    if not platform_settings_service.is_enabled(db, "marketplace_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MARKETPLACE_PAUSED: The marketplace is currently paused by platform administrators."
+        )
+
     effective_idempotency_key = idempotency_key or x_idempotency_key
     scope = f"checkout:{current_user.id}"
 

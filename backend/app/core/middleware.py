@@ -55,7 +55,48 @@ class RequestIDAndLoggingMiddleware(BaseHTTPMiddleware):
         if request.url.query:
             log_path = f"{request.url.path}?{redact_sensitive_text(request.url.query)}"
 
-        # 4. Call downstream handlers
+        # 4. Check Emergency Maintenance Mode
+        path = request.url.path
+        if (
+            path.startswith("/api/v1")
+            and not path.startswith("/api/v1/admin")
+            and not path.startswith("/api/v1/health")
+            and path != "/health"
+        ):
+            try:
+                from app.core.database import SessionLocal
+                from app.services.platform_settings_service import platform_settings_service
+                with SessionLocal() as db:
+                    if platform_settings_service.is_maintenance_mode(db):
+                        auth = request.headers.get("authorization")
+                        is_admin_req = False
+                        if auth and "Bearer " in auth:
+                            try:
+                                from app.core.security import decode_access_token
+                                token = auth.split("Bearer ", 1)[1].strip()
+                                payload = decode_access_token(token)
+                                if payload:
+                                    role = payload.get("app_metadata", {}).get("role")
+                                    if role in ("admin", "super_admin"):
+                                        is_admin_req = True
+                            except Exception:
+                                pass
+                        if not is_admin_req:
+                            msg = platform_settings_service.get_setting(db, "maintenance_message")
+                            from starlette.responses import JSONResponse
+                            return JSONResponse(
+                                status_code=503,
+                                content={
+                                    "error": "PLATFORM_MAINTENANCE",
+                                    "detail": msg,
+                                    "maintenance_mode": True
+                                },
+                                headers={"X-Request-ID": req_id, "Retry-After": "300"}
+                            )
+            except Exception as maint_err:
+                logger.warning(f"Maintenance check bypassed on error: {maint_err}")
+
+        # 5. Call downstream handlers
         try:
             response: Response = await call_next(request)
         except Exception as e:

@@ -11,6 +11,7 @@ from app.core.security import CurrentUser, get_current_user, require_admin, requ
 from app.models.artisan_application import ArtisanApplication
 from app.models.artisan import Artisan
 from app.models.craft_cluster import CraftCluster
+from app.services.platform_settings_service import platform_settings_service
 from app.schemas.applications import (
     ArtisanApplicationCreate,
     ArtisanApplicationResponse,
@@ -30,6 +31,12 @@ def submit_artisan_application(
     Allows an authenticated user/customer to apply for an artisan role upgrade.
     Application starts in 'pending' status.
     """
+    if not platform_settings_service.is_enabled(db, "artisan_onboarding_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ARTISAN_ONBOARDING_PAUSED: Artisan onboarding and application submissions are temporarily paused by platform administrators."
+        )
+
     # Check if there is already a pending application
     existing = db.query(ArtisanApplication).filter(
         ArtisanApplication.user_id == current_user.id,

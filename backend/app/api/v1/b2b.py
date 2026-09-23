@@ -21,6 +21,7 @@ from app.schemas.b2b import (
     B2BMatchStatusUpdateRequest,
 )
 from app.services.b2b_matching_service import b2b_matching_service
+from app.services.platform_settings_service import platform_settings_service
 
 logger = logging.getLogger("artisan_platform.api.b2b")
 router = APIRouter(prefix="/b2b", tags=["B2B Bulk Procurement & Matchmaker"])
@@ -71,6 +72,12 @@ def match_b2b_rfq(
     and persists an authoritative RFQ and match records in PostgreSQL.
     Requires authentication. If requested_artisan_id is provided, verifies it exists and is active.
     """
+    if not platform_settings_service.is_enabled(db, "b2b_enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="B2B_PAUSED: B2B bulk matching and procurement are temporarily suspended by platform administrators."
+        )
+
     quantity = rfq_in.quantity or rfq_in.required_quantity or 0
     if quantity < 1:
         raise HTTPException(
