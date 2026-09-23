@@ -46,9 +46,51 @@ export function getInquiriesForArtisan(artisanIdOrEmail?: string): ArtisanInquir
 }
 
 /**
- * Authoritative: Syncs inquiries with FastAPI backend PostgreSQL database
+ * Authoritative: Syncs inquiries with Supabase PostgreSQL database (primary)
+ * and FastAPI backend database (fallback).
  */
 export async function syncInquiriesFromCloud(artisanIdOrEmail?: string): Promise<ArtisanInquiry[]> {
+  // 1. Primary path: Supabase Database directly
+  try {
+    let query = (supabase.from('artisan_inquiries') as any)
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (artisanIdOrEmail) {
+      query = query.or(`artisan_id.eq.${artisanIdOrEmail},artisan_id.is.null`);
+    }
+
+    const { data, error } = await query;
+
+    if (!error && Array.isArray(data)) {
+      const mapped: ArtisanInquiry[] = data.map((d: any) => ({
+        id: d.id,
+        product_id: d.product_id || '',
+        product_title: d.product_title,
+        product_image: d.product_image,
+        artisan_id: d.artisan_id,
+        artisan_name: d.artisan_name,
+        customer_name: d.customer_name,
+        customer_phone: d.customer_phone,
+        customer_email: d.customer_email,
+        inquiry_type: d.inquiry_type || 'general',
+        message: d.message,
+        quantity: d.quantity,
+        status: d.status || 'new',
+        created_at: d.created_at || new Date().toISOString(),
+      }));
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(mapped));
+        window.dispatchEvent(new CustomEvent('hunardhara_inquiry_updated', { detail: { merged: true } }));
+      }
+      return mapped;
+    }
+  } catch (supErr) {
+    console.warn('Supabase inquiries sync failed, falling back to backend:', supErr);
+  }
+
+  // 2. Dual-path fallback: FastAPI backend
   try {
     const authHeaders = await getAuthHeader();
     const queryParam = artisanIdOrEmail ? `?artisan_id_override=${encodeURIComponent(artisanIdOrEmail)}` : '';
@@ -96,7 +138,7 @@ export async function syncInquiriesFromCloud(artisanIdOrEmail?: string): Promise
 }
 
 /**
- * Saves a new buyer inquiry authoritatively through FastAPI backend into PostgreSQL.
+ * Saves a new buyer inquiry authoritatively through Supabase (primary) and FastAPI backend (fallback).
  */
 export function saveInquiry(
   data: Omit<ArtisanInquiry, 'id' | 'created_at' | 'status'>
@@ -120,8 +162,42 @@ export function saveInquiry(
     }
   }
 
-  // Authoritative POST to FastAPI backend
+  // Authoritative Async Persistence
   (async () => {
+    // 1. Primary: Supabase Insert
+    try {
+      const { data: inserted, error } = await (supabase.from('artisan_inquiries') as any)
+        .insert({
+          product_id: data.product_id,
+          product_title: data.product_title,
+          product_image: data.product_image,
+          artisan_id: data.artisan_id,
+          artisan_name: data.artisan_name,
+          customer_name: data.customer_name,
+          customer_phone: data.customer_phone,
+          customer_email: data.customer_email,
+          inquiry_type: data.inquiry_type || 'general',
+          quantity: data.quantity,
+          message: data.message,
+          status: 'new',
+        })
+        .select()
+        .single();
+
+      if (!error && inserted) {
+        const current = getAllInquiries();
+        const replaced = current.map((item) => (item.id === localId ? { ...item, id: inserted.id } : item));
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(replaced));
+          window.dispatchEvent(new CustomEvent('hunardhara_inquiry_updated', { detail: inserted }));
+        }
+        return;
+      }
+    } catch (supErr) {
+      console.warn('Supabase saveInquiry insert failed, trying backend fallback:', supErr);
+    }
+
+    // 2. Dual-path fallback: FastAPI backend
     try {
       const authHeaders = await getAuthHeader();
       const res = await fetch(`${API_BASE}/inquiries`, {
@@ -177,8 +253,19 @@ export function updateInquiryStatus(id: string, status: ArtisanInquiry['status']
     }
   }
 
-  // Authoritative status PATCH to FastAPI backend
   (async () => {
+    // 1. Primary: Supabase update
+    try {
+      const { error } = await (supabase.from('artisan_inquiries') as any)
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (!error) return;
+    } catch (supErr) {
+      console.warn('Supabase inquiry status update failed, trying backend fallback:', supErr);
+    }
+
+    // 2. Dual-path fallback: FastAPI backend
     try {
       const authHeaders = await getAuthHeader();
       await fetch(`${API_BASE}/inquiries/${id}/status`, {
@@ -196,7 +283,7 @@ export function updateInquiryStatus(id: string, status: ArtisanInquiry['status']
 }
 
 /**
- * Deletes an inquiry authoritatively from PostgreSQL.
+ * Deletes an inquiry authoritatively from Supabase and PostgreSQL.
  */
 export function deleteInquiry(id: string): void {
   const all = getAllInquiries();
@@ -210,8 +297,19 @@ export function deleteInquiry(id: string): void {
     }
   }
 
-  // Authoritative DELETE to FastAPI backend
   (async () => {
+    // 1. Primary: Supabase delete
+    try {
+      const { error } = await (supabase.from('artisan_inquiries') as any)
+        .delete()
+        .eq('id', id);
+
+      if (!error) return;
+    } catch (supErr) {
+      console.warn('Supabase delete inquiry failed, trying backend fallback:', supErr);
+    }
+
+    // 2. Dual-path fallback: FastAPI backend
     try {
       const authHeaders = await getAuthHeader();
       await fetch(`${API_BASE}/inquiries/${id}`, {
@@ -224,4 +322,32 @@ export function deleteInquiry(id: string): void {
       console.warn('Backend delete inquiry note:', err);
     }
   })();
+}
+
+/**
+ * Subscribes to Supabase Realtime changes on artisan_inquiries for instant live updates.
+ */
+export function subscribeToInquiries(
+  artisanId?: string,
+  onUpdate?: (inquiry: any) => void
+) {
+  const channel = supabase
+    .channel(`artisan_inquiries_realtime_${artisanId || 'all'}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'artisan_inquiries',
+      },
+      (payload) => {
+        syncInquiriesFromCloud(artisanId);
+        if (onUpdate) {
+          onUpdate(payload.new || payload.old);
+        }
+      }
+    )
+    .subscribe();
+
+  return channel;
 }
