@@ -67,18 +67,19 @@ function LoginFormContent() {
   // If already logged in and onboarding is completed, redirect based on role
   React.useEffect(() => {
     if (user && !needsOnboarding && role) {
-      if (role === 'customer') {
-        const dest = searchParams.get('redirect');
-        if (dest && !dest.startsWith('/artisan') && !dest.startsWith('/admin')) {
-          router.push(dest);
-        } else {
+      const dest = searchParams.get('redirect');
+      if (dest) {
+        if (dest.startsWith('/admin') && role !== 'admin' && role !== 'super_admin') {
           router.push('/');
+        } else {
+          router.push(dest);
         }
       } else if (role === 'admin' || role === 'super_admin') {
-        router.push(searchParams.get('redirect') || '/admin');
+        router.push('/admin');
+      } else if (role === 'artisan') {
+        router.push('/artisan?tab=studio');
       } else {
-        // Artisan has direct window of selling and uploading
-        router.push(searchParams.get('redirect') || '/artisan?tab=studio');
+        router.push('/artisan');
       }
     }
   }, [user, role, needsOnboarding, searchParams, router]);

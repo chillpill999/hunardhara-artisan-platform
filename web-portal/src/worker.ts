@@ -236,9 +236,15 @@ export default {
     // =========================================================================
     if (pathname.startsWith('/api/v1/')) {
       const backendUrl = new URL(pathname + url.search, 'https://hunardhara-artisan-platform.onrender.com');
-      const forwardHeaders = new Headers(request.headers);
+      const forwardHeaders = new Headers();
+      for (const [key, val] of request.headers.entries()) {
+        const lower = key.toLowerCase();
+        if (!['host', 'cf-connecting-ip', 'cf-ray', 'cf-visitor', 'cf-ipcountry', 'x-real-ip'].includes(lower)) {
+          forwardHeaders.set(key, val);
+        }
+      }
       forwardHeaders.set('X-Forwarded-Host', url.host);
-      forwardHeaders.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
+      forwardHeaders.set('X-Forwarded-Proto', 'https');
 
       const proxyReq = new Request(backendUrl.toString(), {
         method: request.method,
