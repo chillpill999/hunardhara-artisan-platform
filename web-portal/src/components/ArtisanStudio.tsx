@@ -546,7 +546,15 @@ export default function ArtisanStudio() {
     try {
       setRecordingSeconds(0);
       timerIntervalRef.current = setInterval(() => {
-        setRecordingSeconds((s) => s + 1);
+        setRecordingSeconds((s) => {
+          const next = s + 1;
+          if (next >= 30) {
+            setTimeout(() => {
+              try { stopRecording(); } catch {}
+            }, 0);
+          }
+          return next;
+        });
       }, 1000);
 
       // 1. Client-Side Live Speech Recognition for instantaneous real-time visual feedback ONLY
@@ -706,9 +714,13 @@ export default function ArtisanStudio() {
       audioContextRef.current = null;
     }
 
-    // Quality Gate 1: Check recording duration (must be >= 1.2 seconds)
+    // Quality Gate 1: Check recording duration (must be between 1.2s and 30s)
     if (duration < 1.2) {
       setVoiceError(`⚠️ रिकॉर्डिंग बहुत छोटी थी (केवल ${duration.toFixed(1)} सेकंड)। कृपया कम से कम 2-3 सेकंड तक बोलें।`);
+      return;
+    }
+    if (duration > 30.0) {
+      setVoiceError("⚠️ ऑडियो रिकॉर्डिंग बहुत लंबी है (अधिकतम 30 सेकंड)। कृपया 30 सेकंड से कम में बोलें।");
       return;
     }
 
@@ -772,17 +784,23 @@ export default function ArtisanStudio() {
 
     try {
       // ONE Canonical Speak-to-Catalog Pipeline: 16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review
-      const speakResult = await speakToCatalog(wavBlob, selectedLanguage);
+      const speakResult = await speakToCatalog(wavBlob, selectedLanguage, duration);
 
       if (!speakResult.success) {
-        setIsAiProcessing(false);
         setStep(2);
-        setVoiceError(`⚠️ ${speakResult.error || 'आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें।'}`);
+        let errMsg = `⚠️ ${speakResult.error || 'आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें।'}`;
+        if (speakResult.code === 'STT_TIMEOUT' || speakResult.code === 'STT_CLIENT_TIMEOUT') {
+          errMsg = '⚠️ आवाज़ पहचानने में बहुत समय लग रहा है। कृपया फिर से बोलें।';
+        } else if (speakResult.code === 'AUDIO_DURATION_TOO_LONG') {
+          errMsg = '⚠️ ऑडियो रिकॉर्डिंग बहुत लंबी है (अधिकतम 30 सेकंड)। कृपया संक्षेप में बोलें।';
+        } else if (speakResult.code === 'STT_EMPTY_TRANSCRIPT' || speakResult.code === 'AUDIO_SILENT_OR_INCOMPREHENSIBLE') {
+          errMsg = '⚠️ आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें।';
+        }
+        setVoiceError(errMsg);
         return;
       }
 
       if (speakResult.requires_clarification) {
-        setIsAiProcessing(false);
         setStep(2);
         const spoken = (speakResult.transcript || '').trim();
         setRawTranscript(spoken);
@@ -797,7 +815,6 @@ export default function ArtisanStudio() {
 
       const spokenText = (speakResult.transcript || '').trim();
       if (!spokenText) {
-        setIsAiProcessing(false);
         setStep(2);
         setVoiceError('⚠️ आवाज़ स्पष्ट रूप से पहचानी नहीं जा सकी। कृपया माइक के पास साफ़ आवाज़ में पुनः बोलें।');
         return;
@@ -808,7 +825,6 @@ export default function ArtisanStudio() {
 
       const craftData = speakResult.attributes;
       if (!craftData) {
-        setIsAiProcessing(false);
         setStep(2);
         setVoiceError('⚠️ शिल्प विवरण प्राप्त नहीं हो सका। कृपया पुनः प्रयास करें।');
         return;
@@ -888,7 +904,7 @@ export default function ArtisanStudio() {
         }).catch(e => console.warn('Pricing initial fetch fallback:', e));
       }
 
-      // Pre-cache confirmation TTS audio for playback in Step 5
+      // Pre-cache confirmation TTS audio for playback in Step 5 (non-blocking)
       if (speakResult.confirmation_audio_base64) {
         setTtsAudioBase64(speakResult.confirmation_audio_base64);
       } else {
@@ -901,11 +917,16 @@ export default function ArtisanStudio() {
           .catch(() => {});
       }
 
-      setIsAiProcessing(false);
+      setStep(5); // Advance to Confirmation Screen
     } catch (err: any) {
-      setIsAiProcessing(false);
       setStep(2);
-      setVoiceError(`⚠️ आवाज़ प्रसंस्करण में त्रुटि: ${err?.message || 'अज्ञात त्रुटि'}`);
+      const isTimeout = err?.message?.includes('timeout') || err?.code === 'STT_CLIENT_TIMEOUT' || err?.code === 'STT_TIMEOUT';
+      const errMsg = isTimeout
+        ? '⚠️ आवाज़ पहचानने में बहुत समय लग रहा है। कृपया फिर से बोलें।'
+        : `⚠️ आवाज़ प्रसंस्करण में त्रुटि: ${err?.message || 'अज्ञात त्रुटि'}`;
+      setVoiceError(errMsg);
+    } finally {
+      setIsAiProcessing(false);
     }
   };
 

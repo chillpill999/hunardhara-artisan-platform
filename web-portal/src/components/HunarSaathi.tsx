@@ -122,57 +122,57 @@ export default function HunarSaathi({ onNavigateTab, isOpen, onClose }: HunarSaa
 
     let replyText = '';
     let replyAction: Message['action'] = undefined;
+    let isError = false;
 
     try {
-      // Query Sarvam 105B Indic LLM
+      // Query Sarvam 105B Indic LLM with bounded 18s client timeout
       const res = await chatWithHunarSaathi(text, 'Artisan Workspace - Dashboard');
       if (res.success && res.reply) {
         replyText = res.reply;
-      }
-    } catch (err) {
-      console.warn('Sarvam chat query error:', err);
-    }
-
-    // Fallback if LLM unavailable
-    if (!replyText) {
-      const lower = text.toLowerCase();
-      if (lower.includes('उत्पाद') || lower.includes('जोड़ना') || lower.includes('add') || lower.includes('product')) {
-        replyText = 'नया उत्पाद जोड़ना बहुत आसान है! बस अपने शिल्प की एक साफ फोटो लें और 10 सेकंड बोलकर बताएं। हमारी AI अपने आप विवरण और उचित मूल्य तैयार कर देगी।';
-      } else if (lower.includes('ऑर्डर') || lower.includes('order')) {
-        replyText = 'आपके वास्तविक ऑर्डरों और उनकी स्थिति की जानकारी देखने के लिए कृपया डैशबोर्ड के "ऑर्डर" टैब पर जाएं।';
-      } else if (lower.includes('कीमत') || lower.includes('मूल्य') || lower.includes('price')) {
-        replyText = 'हुनरधारा का नियम है कि आपकी मजदूरी कम से कम ₹650 प्रति दिन मिले। कच्ची सामग्री की लागत + निर्माण दिनों की मजदूरी को जोड़कर हम उचित मूल्य तय करते हैं। आप स्टूडियो में दिन और सामग्री भरें, AI सही कीमत बताएगा।';
-      } else if (lower.includes('बिक्री') || lower.includes('कमाई') || lower.includes('sales') || lower.includes('revenue')) {
-        replyText = 'अपनी वास्तविक कुल बिक्री, भुगतान और बिचौलियों से बचाई गई राशि देखने के लिए कृपया "कमाई" टैब पर जाएं।';
       } else {
-        replyText = 'मैं समझ गया। आप निश्चिंत रहें, आपका हुनर अनमोल है। आप चाहें तो ऊपर दिए गए बटन दबाकर उत्पाद जोड़ सकते हैं या अपनी वास्तविक बिक्री की जानकारी ले सकते हैं।';
+        isError = true;
+        if (res.code === 'AI_CLIENT_TIMEOUT' || res.code === 'AI_PROVIDER_TIMEOUT') {
+          replyText = 'AI उत्तर देने में बहुत समय ले रहा है। कृपया दोबारा प्रयास करें।';
+        } else {
+          replyText = res.error || 'AI सेवा अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद प्रयास करें।';
+        }
+        if (res.request_id) {
+          console.warn(`[HunarSaathi] Request ID: ${res.request_id}, Code: ${res.code}`);
+        }
       }
+    } catch (err: any) {
+      console.warn('Sarvam chat query error:', err);
+      isError = true;
+      replyText = 'AI सेवा अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद प्रयास करें।';
+    } finally {
+      setIsThinking(false);
     }
 
-    // Determine relevant action button
-    const combined = (text + ' ' + replyText).toLowerCase();
-    if (combined.includes('उत्पाद') || combined.includes('studio') || combined.includes('जोड़') || combined.includes('product')) {
-      replyAction = { label: '➕ अभी उत्पाद जोड़ें (Add Product)', tab: 'studio' };
-    } else if (combined.includes('ऑर्डर') || combined.includes('order')) {
-      replyAction = { label: '📋 ऑर्डर की सूची देखें (View Orders)', tab: 'orders' };
-    } else if (combined.includes('कमाई') || combined.includes('बिक्री') || combined.includes('revenue') || combined.includes('sales')) {
-      replyAction = { label: '💰 कमाई का पूरा हिसाब देखें', tab: 'revenue' };
-    }
+    if (replyText) {
+      if (!isError) {
+        const combined = (text + ' ' + replyText).toLowerCase();
+        if (combined.includes('उत्पाद') || combined.includes('studio') || combined.includes('जोड़') || combined.includes('product')) {
+          replyAction = { label: '➕ अभी उत्पाद जोड़ें (Add Product)', tab: 'studio' };
+        } else if (combined.includes('ऑर्डर') || combined.includes('order')) {
+          replyAction = { label: '📋 ऑर्डर की सूची देखें (View Orders)', tab: 'orders' };
+        } else if (combined.includes('कमाई') || combined.includes('बिक्री') || combined.includes('revenue') || combined.includes('sales')) {
+          replyAction = { label: '💰 कमाई का पूरा हिसाब देखें', tab: 'revenue' };
+        }
+      }
 
-    setIsThinking(false);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          sender: 'assistant',
+          text: replyText,
+          action: replyAction,
+        },
+      ]);
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `a-${Date.now()}`,
-        sender: 'assistant',
-        text: replyText,
-        action: replyAction,
-      },
-    ]);
-
-    if (autoVoice) {
-      playVoiceResponse(replyText);
+      if (autoVoice && !isError) {
+        playVoiceResponse(replyText);
+      }
     }
   };
 

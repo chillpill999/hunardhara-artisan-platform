@@ -3,6 +3,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SARVAM_API_KEY = Deno.env.get("SARVAM_API_KEY") || "";
+const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 
@@ -33,6 +34,7 @@ function generateRequestId(): string {
 
 interface StructuredVoiceError {
   success: false;
+  transcript?: string;
   error: string;
   code: string;
   status: number;
@@ -63,6 +65,35 @@ interface TTSResponse {
   error?: string;
   code?: string;
   request_id: string;
+}
+
+function getWavDuration(bytes: Uint8Array): number | null {
+  if (bytes.length < 44) return null;
+  // Verify 'RIFF' and 'WAVE' magic
+  if (
+    bytes[0] !== 0x52 || bytes[1] !== 0x49 || bytes[2] !== 0x46 || bytes[3] !== 0x46 ||
+    bytes[8] !== 0x57 || bytes[9] !== 0x41 || bytes[10] !== 0x56 || bytes[11] !== 0x45
+  ) {
+    return null;
+  }
+  let offset = 12;
+  let byteRate = 0;
+  let dataSize = 0;
+  while (offset + 8 <= bytes.length) {
+    const chunkId = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+    const chunkSize = bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24);
+    if (chunkId === "fmt " && offset + 24 <= bytes.length) {
+      byteRate = bytes[offset + 16] | (bytes[offset + 17] << 8) | (bytes[offset + 18] << 16) | (bytes[offset + 19] << 24);
+    } else if (chunkId === "data") {
+      dataSize = chunkSize > 0 ? chunkSize : (bytes.length - (offset + 8));
+      break;
+    }
+    offset += 8 + (chunkSize > 0 ? chunkSize : 0);
+  }
+  if (byteRate > 0 && dataSize > 0) {
+    return dataSize / byteRate;
+  }
+  return null;
 }
 
 async function verifyAuth(req: Request, requestId: string, corsHeaders: Record<string, string>): Promise<{ authorized: boolean; errorResponse?: Response; user?: any }> {
@@ -196,7 +227,37 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Validation 4: Supported formats
+      // Validation 4: Duration limit (<= 30 seconds)
+      const explicitDurationStr = (formData.get("duration_seconds") || formData.get("duration") || "") as string;
+      const explicitDuration = explicitDurationStr ? parseFloat(explicitDurationStr) : 0;
+      if (explicitDuration > 30.0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Audio recording is too long. Please keep it under 30 seconds.",
+            code: "AUDIO_DURATION_TOO_LONG",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
+      const wavDuration = getWavDuration(audioBytes);
+      if (wavDuration !== null && wavDuration > 30.0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Audio recording is too long. Please keep it under 30 seconds.",
+            code: "AUDIO_DURATION_TOO_LONG",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
+      // Validation 5: Supported formats
       const filename = audioFile.name || "recording.wav";
       const validExtensions = [".wav", ".webm", ".ogg", ".opus", ".mp3", ".m4a", ".flac", ".aac"];
       const hasValidExt = validExtensions.some(ext => filename.toLowerCase().endsWith(ext));
@@ -239,19 +300,50 @@ Deno.serve(async (req: Request) => {
           return new Response(
             JSON.stringify({
               success: false,
-              error: "Audio did not contain recognizable speech. Please speak clearly into the microphone.",
-              code: "AUDIO_SILENT_OR_INCOMPREHENSIBLE",
-              status: 400,
+              transcript: "",
+              error: "No speech was recognized. Please speak clearly and try again.",
+              code: "STT_EMPTY_TRANSCRIPT",
+              status: 422,
               request_id: requestId,
             }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+            { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
           );
         }
 
-        const extractResult = await extractCraftAttributes(transcript, languageCode);
+        const extractResult = await extractCraftAttributes(transcript, languageCode, requestId);
+
+        if (extractResult.requires_clarification) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              requires_clarification: true,
+              transcript: transcript,
+              attributes: null,
+              message_hi: extractResult.message_hi,
+              message_en: extractResult.message_en,
+              confirmation_audio_base64: null,
+              source: "sarvam_saaras_v4",
+              request_id: requestId,
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+          );
+        }
+
+        if (!extractResult.success) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: extractResult.error || "Failed to extract craft attributes",
+              code: extractResult.code || "AI_EXTRACTION_FAILED",
+              status: extractResult.status || 502,
+              request_id: requestId,
+            }),
+            { status: extractResult.status || 502, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+          );
+        }
 
         let confirmationAudioBase64: string | null = null;
-        if (extractResult.success && !extractResult.requires_clarification && extractResult.attributes) {
+        if (extractResult.attributes) {
           try {
             const script = extractResult.attributes.voice_script_hi || `आपका उत्पाद ${extractResult.attributes.product_name_hi || "शिल्प"} तैयार है।`;
             const ttsRes = await synthesizeWithSarvam(script, languageCode, "shubh", "bulbul:v3", requestId);
@@ -259,14 +351,14 @@ Deno.serve(async (req: Request) => {
               confirmationAudioBase64 = ttsRes.audio_base64;
             }
           } catch (e) {
-            console.warn("TTS confirmation synthesis skipped:", e);
+            console.warn("TTS confirmation synthesis skipped (non-fatal):", e);
           }
         }
 
         return new Response(
           JSON.stringify({
             success: true,
-            requires_clarification: extractResult.requires_clarification || false,
+            requires_clarification: false,
             transcript: transcript,
             attributes: extractResult.attributes || null,
             message_hi: extractResult.message_hi,
@@ -323,6 +415,47 @@ Deno.serve(async (req: Request) => {
       const filename = body.filename || "recording.wav";
       const languageCode = body.language_code || "hi-IN";
 
+      if (bytes.length === 0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Audio file is empty or zero length",
+            code: "AUDIO_EMPTY_OR_ZERO_LENGTH",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
+      const durationParam = body.duration_seconds || body.duration || 0;
+      if (durationParam > 30.0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Audio recording is too long. Please keep it under 30 seconds.",
+            code: "AUDIO_DURATION_TOO_LONG",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
+      const wavDuration = getWavDuration(bytes);
+      if (wavDuration !== null && wavDuration > 30.0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Audio recording is too long. Please keep it under 30 seconds.",
+            code: "AUDIO_DURATION_TOO_LONG",
+            status: 400,
+            request_id: requestId,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        );
+      }
+
       const asrResult = await transcribeWithSarvam(bytes, filename, languageCode, requestId);
       return new Response(
         JSON.stringify(asrResult),
@@ -336,10 +469,10 @@ Deno.serve(async (req: Request) => {
       const context = body.context || "";
       const systemPrompt = body.system_prompt || "You are Hunar Saathi, a warm, culturally respectful AI companion helping rural Indian artisans. Reply primarily in clear, simple Hindi.";
 
-      const chatResult = await chatWithSarvam(message, systemPrompt, context);
+      const chatResult = await chatWithSarvam(message, systemPrompt, context, requestId);
       return new Response(
-        JSON.stringify({ ...chatResult, request_id: requestId }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
+        JSON.stringify(chatResult),
+        { status: chatResult.success ? 200 : (chatResult.status || 502), headers: { ...corsHeaders, "Content-Type": "application/json", "x-request-id": requestId } }
       );
     }
 
@@ -386,7 +519,7 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-// Helper: Transcribe audio using Sarvam Saaras v4 STT API
+// Helper: Transcribe audio using Sarvam Saaras v4 STT API with bounded timeout & at most 1 retry
 async function transcribeWithSarvam(
   audioBytes: Uint8Array,
   filename: string,
@@ -396,6 +529,7 @@ async function transcribeWithSarvam(
   if (!SARVAM_API_KEY) {
     return {
       success: false,
+      transcript: "",
       error: "SARVAM_API_KEY is not configured in Supabase Edge Function environment",
       code: "MISSING_PROVIDER_SECRET",
       status: 500,
@@ -414,81 +548,175 @@ async function transcribeWithSarvam(
   else if (ext === "aac") mimeType = "audio/aac";
 
   const fileBlob = new Blob([audioBytes], { type: mimeType });
-  const fd = new FormData();
-  fd.append("file", fileBlob, filename);
-  fd.append("model", "saaras:v4");
-  fd.append("mode", "transcribe");
-  fd.append("language_code", languageCode || "hi-IN");
 
-  try {
-    const res = await fetch("https://api.sarvam.ai/speech-to-text", {
-      method: "POST",
-      headers: {
-        "api-subscription-key": SARVAM_API_KEY,
-      },
-      body: fd,
-      signal: AbortSignal.timeout(25000), // 25s timeout
-    });
+  let attempt = 0;
+  const maxAttempts = 2; // Initial attempt + at most 1 retry for 429/503/network error
 
-    if (!res.ok) {
-      const errText = await res.text();
-      let code = "SARVAM_UPSTREAM_ERROR";
-      let status = 502;
+  while (attempt < maxAttempts) {
+    attempt++;
+    const fd = new FormData();
+    fd.append("file", fileBlob, filename);
+    fd.append("model", "saaras:v4");
+    fd.append("mode", "transcribe");
+    fd.append("language_code", languageCode || "hi-IN");
 
-      if (res.status === 401 || res.status === 403) {
-        code = "SARVAM_AUTH_ERROR";
-        status = 403;
-      } else if (res.status === 429) {
-        code = "SARVAM_RATE_LIMIT";
-        status = 429;
-      } else if (res.status === 400 || res.status === 422) {
-        code = "SARVAM_VALIDATION_ERROR";
-        status = 400;
+    try {
+      const res = await fetch("https://api.sarvam.ai/speech-to-text", {
+        method: "POST",
+        headers: {
+          "api-subscription-key": SARVAM_API_KEY,
+        },
+        body: fd,
+        signal: AbortSignal.timeout(25000), // 25s upstream timeout
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+
+        // 400 / 422 -> SARVAM_VALIDATION_ERROR (status 400) - No retry
+        if (res.status === 400 || res.status === 422) {
+          return {
+            success: false,
+            transcript: "",
+            error: `Sarvam validation error: HTTP ${res.status}: ${errText}`,
+            code: "SARVAM_VALIDATION_ERROR",
+            status: 400,
+            provider: "sarvam",
+            provider_status: res.status,
+            request_id: requestId,
+          };
+        }
+
+        // 401 / 403 -> SARVAM_AUTH_ERROR (status 502) - No retry
+        if (res.status === 401 || res.status === 403) {
+          return {
+            success: false,
+            transcript: "",
+            error: `Sarvam authentication error: HTTP ${res.status}: ${errText}`,
+            code: "SARVAM_AUTH_ERROR",
+            status: 502,
+            provider: "sarvam",
+            provider_status: res.status,
+            request_id: requestId,
+          };
+        }
+
+        // 429 -> SARVAM_RATE_LIMIT (status 429) - Retry once if first attempt
+        if (res.status === 429) {
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 600));
+            continue;
+          }
+          return {
+            success: false,
+            transcript: "",
+            error: "Sarvam rate limit exceeded. Please wait a moment and try again.",
+            code: "SARVAM_RATE_LIMIT",
+            status: 429,
+            provider: "sarvam",
+            provider_status: res.status,
+            request_id: requestId,
+          };
+        }
+
+        // 503 -> SARVAM_SERVICE_UNAVAILABLE (status 503) - Retry once if first attempt
+        if (res.status === 503) {
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 600));
+            continue;
+          }
+          return {
+            success: false,
+            transcript: "",
+            error: "Sarvam speech recognition service temporarily unavailable. Please try again.",
+            code: "SARVAM_SERVICE_UNAVAILABLE",
+            status: 503,
+            provider: "sarvam",
+            provider_status: res.status,
+            request_id: requestId,
+          };
+        }
+
+        // 500 or other upstream error -> SARVAM_UPSTREAM_ERROR (status 502) - No retry
+        return {
+          success: false,
+          transcript: "",
+          error: `Sarvam upstream error: HTTP ${res.status}: ${errText}`,
+          code: "SARVAM_UPSTREAM_ERROR",
+          status: 502,
+          provider: "sarvam",
+          provider_status: res.status,
+          request_id: requestId,
+        };
+      }
+
+      const data = await res.json();
+      const transcript = (data.transcript || "").trim();
+
+      // Empty transcript check: Must return 422 STT_EMPTY_TRANSCRIPT
+      if (!transcript) {
+        return {
+          success: false,
+          transcript: "",
+          error: "No speech was recognized. Please speak clearly and try again.",
+          code: "STT_EMPTY_TRANSCRIPT",
+          status: 422,
+          provider: "sarvam",
+          request_id: requestId,
+        };
+      }
+
+      return {
+        success: true,
+        transcript,
+        language_code: data.language_code || languageCode,
+        source: "sarvam_saaras_v4",
+        provider_request_id: data.request_id,
+        request_id: requestId,
+      };
+    } catch (e: any) {
+      if (e.name === "TimeoutError" || e.name === "AbortError") {
+        return {
+          success: false,
+          transcript: "",
+          error: "Speech recognition timed out. Please try again.",
+          code: "STT_TIMEOUT",
+          status: 504,
+          provider: "sarvam",
+          request_id: requestId,
+        };
+      }
+
+      // Network error: allow 1 retry
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 600));
+        continue;
       }
 
       return {
         success: false,
-        error: `Sarvam ASR HTTP ${res.status}: ${errText}`,
-        code,
-        status,
-        provider: "sarvam",
-        provider_status: res.status,
-        request_id: requestId,
-      };
-    }
-
-    const data = await res.json();
-    return {
-      success: true,
-      transcript: (data.transcript || "").trim(),
-      language_code: data.language_code || languageCode,
-      source: "sarvam_saaras_v4",
-      provider_request_id: data.request_id,
-      request_id: requestId,
-    };
-  } catch (e: any) {
-    if (e.name === "TimeoutError" || e.name === "AbortError") {
-      return {
-        success: false,
-        error: "Sarvam speech recognition timed out after 25 seconds",
-        code: "GATEWAY_TIMEOUT",
-        status: 504,
+        transcript: "",
+        error: e.message || "Network error connecting to speech service",
+        code: "STT_NETWORK_ERROR",
+        status: 502,
         provider: "sarvam",
         request_id: requestId,
       };
     }
-    return {
-      success: false,
-      error: e.message || "ASR request failed",
-      code: "NETWORK_ERROR",
-      status: 502,
-      provider: "sarvam",
-      request_id: requestId,
-    };
   }
+
+  return {
+    success: false,
+    transcript: "",
+    error: "Speech recognition failed after bounded retry.",
+    code: "STT_NETWORK_ERROR",
+    status: 502,
+    provider: "sarvam",
+    request_id: requestId,
+  };
 }
 
-// Helper: Synthesize speech using Sarvam Bulbul TTS
+// Helper: Synthesize speech using Sarvam Bulbul TTS (bounded <= 12s timeout)
 async function synthesizeWithSarvam(
   text: string,
   languageCode: string,
@@ -521,11 +749,11 @@ async function synthesizeWithSarvam(
         speaker: speaker || "shubh",
         model: model || "bulbul:v3",
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(12000), // Bounded 12s timeout
     });
 
     if (!res.ok) {
-      const errText = await res.text();
+      const errText = await res.text().catch(() => "");
       return {
         success: false,
         format: "wav",
@@ -567,19 +795,33 @@ async function synthesizeWithSarvam(
       source: "sarvam_bulbul",
       message: e.message || "TTS error",
       error: e.message,
-      code: "TTS_REQUEST_FAILED",
+      code: e.name === "TimeoutError" || e.name === "AbortError" ? "TTS_TIMEOUT" : "TTS_REQUEST_FAILED",
       request_id: requestId,
     };
   }
 }
 
-// Helper: Chat completion via Sarvam 105B
-async function chatWithSarvam(message: string, systemPrompt: string, context?: string) {
+// Helper: Chat completion via Sarvam 105B (bounded 15s timeout, NO fake success fallback)
+async function chatWithSarvam(message: string, systemPrompt: string, context?: string, requestId: string = "") {
+  if (!message.trim()) {
+    return {
+      success: false,
+      reply: "",
+      error: "Message cannot be empty",
+      code: "INVALID_INPUT",
+      status: 400,
+      request_id: requestId,
+    };
+  }
+
   if (!SARVAM_API_KEY) {
     return {
-      success: true,
-      reply: "मैं समझ गया। आप निश्चिंत रहें, आपका हुनर अनमोल है। आप चाहें तो ऊपर दिए गए बटन दबाकर उत्पाद जोड़ सकते हैं।",
-      model: "offline_fallback",
+      success: false,
+      reply: "",
+      error: "SARVAM_API_KEY is not configured",
+      code: "MISSING_PROVIDER_SECRET",
+      status: 500,
+      request_id: requestId,
     };
   }
 
@@ -598,29 +840,77 @@ async function chatWithSarvam(message: string, systemPrompt: string, context?: s
       body: JSON.stringify({
         model: "sarvam-105b-conversations",
         messages,
+        max_tokens: 300,
+        temperature: 0.2,
+        reasoning_effort: null,
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(15000), // 15s hard timeout
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || "";
-      return { success: true, reply, model: "sarvam-105b" };
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      let code = "AI_PROVIDER_ERROR";
+      let status = 502;
+      if (res.status === 401 || res.status === 403) {
+        code = "AI_AUTH_ERROR";
+        status = 502;
+      } else if (res.status === 429) {
+        code = "AI_RATE_LIMIT";
+        status = 429;
+      }
+      return {
+        success: false,
+        reply: "",
+        error: `AI provider error HTTP ${res.status}: ${errText}`,
+        code,
+        status,
+        request_id: requestId,
+      };
     }
-  } catch (e) {
-    console.warn("Sarvam chat failed:", e);
-  }
 
-  return {
-    success: true,
-    reply: "नमस्ते! मैं हुनर साथी हूँ। मैं आपके शिल्प को डिजिटल दुनिया तक पहुँचाने में आपकी सहायता करूँगा।",
-    model: "fallback",
-  };
+    const data = await res.json();
+    const reply = (data.choices?.[0]?.message?.content || "").trim();
+    if (!reply) {
+      return {
+        success: false,
+        reply: "",
+        error: "AI returned an empty response.",
+        code: "AI_EMPTY_RESPONSE",
+        status: 422,
+        request_id: requestId,
+      };
+    }
+
+    return {
+      success: true,
+      reply,
+      model: "sarvam-105b",
+      request_id: requestId,
+    };
+  } catch (e: any) {
+    if (e.name === "TimeoutError" || e.name === "AbortError") {
+      return {
+        success: false,
+        reply: "",
+        error: "AI response timed out. Please try again.",
+        code: "AI_PROVIDER_TIMEOUT",
+        status: 504,
+        request_id: requestId,
+      };
+    }
+    return {
+      success: false,
+      reply: "",
+      error: e.message || "Network error connecting to AI provider",
+      code: "AI_PROVIDER_ERROR",
+      status: 502,
+      request_id: requestId,
+    };
+  }
 }
 
-// Helper: Extract craft attributes via Sarvam LLM
-// Truthfulness Rule: Missing/unknown fields remain null/empty - NO fake values
-async function extractCraftAttributes(transcript: string, languageCode: string): Promise<any> {
+// Helper: Extract craft attributes via Sarvam LLM (bounded 15s timeout, NO fake attributes)
+async function extractCraftAttributes(transcript: string, languageCode: string, requestId: string): Promise<any> {
   const clean = transcript.trim();
   const lower = clean.toLowerCase();
 
@@ -635,6 +925,7 @@ async function extractCraftAttributes(transcript: string, languageCode: string):
       message_hi: "नमस्ते शिल्पकार जी! कृपया अपने शिल्प का नाम, सामग्री और बनाने का समय बताएं।",
       message_en: "Greetings artisan! Please describe your craft item, materials used, and time to make.",
       attributes: null,
+      request_id: requestId,
     };
   }
 
@@ -648,10 +939,10 @@ Respond with ONLY valid JSON without markdown formatting:
   "product_name_en": "Product Name in English or null",
   "craft_type": "Specific Craft (e.g. Varanasi Silk, Bastar Dhokra, Khurja Pottery, Madhubani Painting, Channapatna Toys) or null",
   "materials": ["material 1"],
-  "dimensions": null or "string dimensions",
-  "color": null or "color name",
-  "production_days": null or integer number of days,
-  "material_cost": null or integer cost in INR,
+  "dimensions": null,
+  "color": null,
+  "production_days": null,
+  "material_cost": null,
   "description_hi": "विस्तृत विवरण हिंदी में",
   "description_en": "Detailed description in English",
   "voice_script_hi": "पुष्टि ऑडियो स्क्रिप्ट"
@@ -671,41 +962,99 @@ Respond with ONLY valid JSON without markdown formatting:
             { role: "system", content: "You are a strict JSON-only API. Never output preamble, explanation, or markdown fences." },
             { role: "user", content: prompt },
           ],
+          max_tokens: 500,
+          temperature: 0.1,
+          reasoning_effort: null,
         }),
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(15000), // 15s hard timeout
       });
 
       if (res.ok) {
         const data = await res.json();
         const rawText = data.choices?.[0]?.message?.content || "";
+        if (!rawText.trim()) {
+          return {
+            success: false,
+            error: "AI returned an empty response.",
+            code: "AI_EMPTY_RESPONSE",
+            status: 422,
+            request_id: requestId,
+          };
+        }
         const match = rawText.match(/\{[\s\S]*\}/);
         if (match) {
           const parsed = JSON.parse(match[0]);
           normalizeCraft(parsed, clean);
-          return { success: true, requires_clarification: false, attributes: parsed };
+          return { success: true, requires_clarification: false, attributes: parsed, request_id: requestId };
         }
       }
-    } catch (e) {
+    } catch (e: any) {
+      if (e.name === "TimeoutError" || e.name === "AbortError") {
+        return {
+          success: false,
+          error: "AI response timed out. Please try again.",
+          code: "AI_PROVIDER_TIMEOUT",
+          status: 504,
+          request_id: requestId,
+        };
+      }
       console.warn("Sarvam extraction error in voice-catalog:", e);
     }
   }
 
-  // Truthful extraction heuristic: DO NOT invent prices, materials, or days
-  const truthfulAttrs: any = {
-    product_name_hi: null,
-    product_name_en: null,
-    craft_type: null,
-    materials: [],
-    dimensions: null,
-    color: null,
-    production_days: null,
-    material_cost: null,
-    description_hi: clean,
-    description_en: null,
-    voice_script_hi: null,
+  // Fallback to OpenRouter Gemma if configured
+  if (OPENROUTER_API_KEY) {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemma-4-31b-it:free",
+          messages: [
+            { role: "system", content: "You are a strict JSON-only API. Output only raw JSON." },
+            { role: "user", content: prompt },
+          ],
+          max_tokens: 500,
+          temperature: 0.1,
+        }),
+        signal: AbortSignal.timeout(12000), // 12s timeout
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const raw = data.choices?.[0]?.message?.content || "";
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          normalizeCraft(parsed, clean);
+          return { success: true, requires_clarification: false, attributes: parsed, request_id: requestId };
+        }
+      }
+    } catch (e: any) {
+      if (e.name === "TimeoutError" || e.name === "AbortError") {
+        return {
+          success: false,
+          error: "AI response timed out. Please try again.",
+          code: "AI_PROVIDER_TIMEOUT",
+          status: 504,
+          request_id: requestId,
+        };
+      }
+      console.warn("OpenRouter fallback error in voice-catalog:", e);
+    }
+  }
+
+  // Strict Truthfulness: DO NOT fabricate fake success attributes
+  return {
+    success: false,
+    error: "AI craft extraction failed. Please try again.",
+    code: "AI_EXTRACTION_FAILED",
+    status: 502,
+    request_id: requestId,
   };
-  normalizeCraft(truthfulAttrs, clean);
-  return { success: true, requires_clarification: false, attributes: truthfulAttrs };
 }
 
 function normalizeCraft(parsed: any, clean: string) {

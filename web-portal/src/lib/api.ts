@@ -924,85 +924,117 @@ export async function synthesizeSpeech(
 }
 
 /**
- * Chat with Hunar Saathi using Supabase Edge Function (Sarvam 105B Indic LLM),
- * with fallback to Cloudflare Workers AI and Render backend.
+ * Utility helper: Wrap an async operation with a hard client-side timeout
+ */
+async function invokeWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutError: { error: string; code: string; status?: number }
+): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err: any = new Error(timeoutError.error);
+      err.code = timeoutError.code;
+      err.status = timeoutError.status || 504;
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Chat with Hunar Saathi using Supabase Edge Function (Sarvam 105B Indic LLM).
+ * Hard client-side timeout (~18s). NEVER returns fake success responses on failure.
  */
 export async function chatWithHunarSaathi(
   message: string,
   context?: string
-): Promise<{ success: boolean; reply: string; model?: string; provider?: string }> {
-  // 1. First priority: Supabase Sovereign Edge Function AI Chat (Sarvam 105B)
+): Promise<{ success: boolean; reply: string; model?: string; provider?: string; error?: string; code?: string; request_id?: string }> {
+  const clean = message.trim();
+  if (!clean) {
+    return {
+      success: false,
+      reply: "",
+      error: "Message cannot be empty",
+      code: "INVALID_INPUT",
+    };
+  }
+
+  // 1. Authoritative Production Path: Supabase Sovereign Edge Function AI Chat (Sarvam 105B)
   try {
-    const { data, error } = await supabase.functions.invoke("ai-catalog", {
-      body: {
-        action: "chat",
-        message,
-        context,
-      },
-    });
+    const { data, error } = await invokeWithTimeout(
+      supabase.functions.invoke("ai-catalog", {
+        body: {
+          action: "chat",
+          message: clean,
+          context,
+        },
+      }),
+      18000, // 18s client timeout
+      {
+        error: "AI उत्तर देने में बहुत समय ले रहा है। कृपया दोबारा प्रयास करें।",
+        code: "AI_CLIENT_TIMEOUT",
+        status: 504,
+      }
+    );
+
     if (!error && data?.success && data?.reply) {
       return {
         success: true,
         reply: data.reply,
         model: data.model || "sarvam-105b",
-        provider: "supabase_edge_sarvam",
+        provider: data.provider || "supabase_edge_sarvam",
+        request_id: data.request_id,
       };
     }
-  } catch (supabaseErr) {
-    console.warn("Supabase ai-catalog chat invocation failed:", supabaseErr);
-  }
 
-  // 2. Second priority: Free Edge Cloudflare Workers AI
-  try {
-    const authorization = await getSupabaseAuthorizationHeader();
-    const edgeRes = await fetch("/api/edge/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authorization },
-      body: JSON.stringify({ message, context })
-    });
-    if (edgeRes.ok) {
-      const data = await edgeRes.json();
-      if (data.success && data.reply) {
-        return {
-          success: true,
-          reply: data.reply,
-          model: data.model || "@cf/meta/llama-3.2-3b-instruct",
-          provider: "cloudflare_workers_ai"
-        };
-      }
+    if (data && !data.success) {
+      return {
+        success: false,
+        reply: "",
+        error: data.error || "AI सेवा से उत्तर नहीं मिला।",
+        code: data.code || "AI_PROVIDER_ERROR",
+        request_id: data.request_id,
+      };
     }
-  } catch {
-    // Edge unavailable, try Render backend
-  }
 
-  // 3. Third priority: Sarvam 105B LLM on Render backend
-  try {
-    const res = await fetch(`${API_BASE}/voice/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        context
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.reply) {
-        return {
-          success: true,
-          reply: data.reply,
-          model: data.model || "sarvam-105b",
-          provider: "sarvam_ai"
-        };
-      }
+    if (error) {
+      return {
+        success: false,
+        reply: "",
+        error: error.message || "AI सेवा से संपर्क करने में समस्या हुई।",
+        code: "AI_PROVIDER_ERROR",
+      };
     }
-  } catch (e) {
-    console.warn("Hunar Saathi LLM queries failed, falling back to rule engine:", e);
+  } catch (err: any) {
+    if (err.code === "AI_CLIENT_TIMEOUT") {
+      return {
+        success: false,
+        reply: "",
+        error: "AI उत्तर देने में बहुत समय ले रहा है। कृपया दोबारा प्रयास करें।",
+        code: "AI_CLIENT_TIMEOUT",
+      };
+    }
+    console.error("Hunar Saathi chat error:", err);
+    return {
+      success: false,
+      reply: "",
+      error: "AI सेवा अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद प्रयास करें।",
+      code: "AI_UNAVAILABLE",
+    };
   }
 
   return {
     success: false,
-    reply: "माफ़ कीजिये, अभी नेटवर्क में समस्या है। आप ऊपर दिए गए शॉर्टकट बटनों से उत्पाद या ऑर्डर की जानकारी देख सकते हैं।"
+    reply: "",
+    error: "AI सेवा अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद प्रयास करें।",
+    code: "AI_UNAVAILABLE",
   };
 }
 
@@ -1031,8 +1063,18 @@ export interface SpeakCatalogResponse {
  */
 export async function speakToCatalog(
   audioBlob: Blob,
-  languageCode: string = "hi-IN"
+  languageCode: string = "hi-IN",
+  durationSeconds?: number
 ): Promise<SpeakCatalogResponse> {
+  if (durationSeconds && durationSeconds > 30.0) {
+    return {
+      success: false,
+      error: "Audio recording is too long. Please keep it under 30 seconds.",
+      code: "AUDIO_DURATION_TOO_LONG",
+      status: 400,
+    };
+  }
+
   const isWebm = audioBlob.type?.includes("webm");
   const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
 
@@ -1041,12 +1083,23 @@ export async function speakToCatalog(
   formData.append("audio", audioBlob, fileName);
   formData.append("language_code", languageCode);
   formData.append("action", "speak-catalog");
+  if (durationSeconds) {
+    formData.append("duration_seconds", String(durationSeconds));
+  }
 
   // 1. Authoritative Production Path: Supabase Sovereign Edge Function voice-catalog
   try {
-    const { data, error } = await supabase.functions.invoke("voice-catalog", {
-      body: formData,
-    });
+    const { data, error } = await invokeWithTimeout(
+      supabase.functions.invoke("voice-catalog", {
+        body: formData,
+      }),
+      30000, // 30s hard client timeout
+      {
+        error: "Speech recognition took too long. Please try again.",
+        code: "STT_CLIENT_TIMEOUT",
+        status: 504,
+      }
+    );
 
     if (!error && data?.success) {
       return data;
@@ -1082,68 +1135,59 @@ export async function speakToCatalog(
         }
       } catch {}
 
-      if (!ENABLE_LEGACY_VOICE_BACKEND) {
-        return {
-          success: false,
-          error: errorMsg,
-          code,
-          request_id: requestId,
-          status,
-        };
-      }
+      return {
+        success: false,
+        error: errorMsg,
+        code,
+        request_id: requestId,
+        status,
+      };
     }
   } catch (supabaseErr: any) {
+    if (supabaseErr.code === "STT_CLIENT_TIMEOUT") {
+      return {
+        success: false,
+        error: "Speech recognition took too long. Please try again.",
+        code: "STT_CLIENT_TIMEOUT",
+        status: 504,
+      };
+    }
     console.error("Supabase voice-catalog speak-catalog failed:", supabaseErr);
-    if (!ENABLE_LEGACY_VOICE_BACKEND) {
-      return {
-        success: false,
-        error: supabaseErr?.message || "Speech service connection failed",
-        code: "CONNECTION_FAILED",
-      };
-    }
-  }
-
-  // 2. Legacy fallback strictly disabled in production
-  if (ENABLE_LEGACY_VOICE_BACKEND) {
-    try {
-      const authHeaders = await getSupabaseAuthorizationHeader();
-      const res = await fetch(`${API_BASE}/voice/speak-catalog`, {
-        method: "POST",
-        headers: { ...authHeaders },
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        return {
-          success: false,
-          error: data.error || data.detail || `Voice service error (HTTP ${res.status})`,
-        };
-      }
-      return data;
-    } catch (err: any) {
-      return {
-        success: false,
-        error: err?.message || "Legacy voice fallback failed",
-      };
-    }
+    return {
+      success: false,
+      error: supabaseErr?.message || "Speech service connection failed",
+      code: "CONNECTION_FAILED",
+      status: 500,
+    };
   }
 
   return {
     success: false,
     error: "Voice service unavailable",
     code: "VOICE_UNAVAILABLE",
+    status: 503,
   };
 }
 
 /**
  * Authoritative audio transcription via Supabase Edge Function (Sarvam Saaras v4 ASR).
- * Supabase is the sole production backend. Legacy fallback disabled.
+ * Supabase is the sole production backend. Hard 30s timeout, duration validation, legacy fallback disabled.
  */
 export async function transcribeAudio(
   audioBlob: Blob,
-  languageCode: string = "hi-IN"
-): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string; error?: string; code?: string; request_id?: string }> {
+  languageCode: string = "hi-IN",
+  durationSeconds?: number
+): Promise<{ success: boolean; transcript: string; language_code?: string; source?: string; error?: string; code?: string; request_id?: string; status?: number }> {
+  if (durationSeconds && durationSeconds > 30.0) {
+    return {
+      success: false,
+      transcript: "",
+      error: "Audio recording is too long. Please keep it under 30 seconds.",
+      code: "AUDIO_DURATION_TOO_LONG",
+      status: 400,
+    };
+  }
+
   const isWebm = audioBlob.type?.includes("webm");
   const fileName = isWebm ? "artisan_audio.webm" : "artisan_audio.wav";
 
@@ -1152,12 +1196,23 @@ export async function transcribeAudio(
   formData.append("audio", audioBlob, fileName);
   formData.append("language_code", languageCode);
   formData.append("action", "transcribe");
+  if (durationSeconds) {
+    formData.append("duration_seconds", String(durationSeconds));
+  }
 
   // 1. Authoritative Production Path: Supabase Edge Function voice-catalog
   try {
-    const { data, error } = await supabase.functions.invoke("voice-catalog", {
-      body: formData,
-    });
+    const { data, error } = await invokeWithTimeout(
+      supabase.functions.invoke("voice-catalog", {
+        body: formData,
+      }),
+      30000, // 30s hard client timeout
+      {
+        error: "Speech recognition took too long. Please try again.",
+        code: "STT_CLIENT_TIMEOUT",
+        status: 504,
+      }
+    );
 
     if (!error && data?.success) {
       return data;
@@ -1170,6 +1225,7 @@ export async function transcribeAudio(
         error: data.error || "Speech transcription failed",
         code: data.code || "ASR_ERROR",
         request_id: data.request_id,
+        status: data.status || 500,
       };
     }
 
@@ -1177,6 +1233,7 @@ export async function transcribeAudio(
       let errorMsg = error.message || "Failed to invoke Supabase voice-catalog";
       let code = "SUPABASE_FUNCTION_ERROR";
       let requestId = "req_unknown";
+      let status = 500;
 
       try {
         const errorJson = (error as any)?.context ? await (error as any).context.json() : null;
@@ -1184,56 +1241,37 @@ export async function transcribeAudio(
           errorMsg = errorJson.error || errorMsg;
           code = errorJson.code || code;
           requestId = errorJson.request_id || requestId;
+          status = errorJson.status || status;
         }
       } catch {}
 
-      if (!ENABLE_LEGACY_VOICE_BACKEND) {
-        return {
-          success: false,
-          transcript: "",
-          error: errorMsg,
-          code,
-          request_id: requestId,
-        };
-      }
+      return {
+        success: false,
+        transcript: "",
+        error: errorMsg,
+        code,
+        request_id: requestId,
+        status,
+      };
     }
   } catch (supabaseErr: any) {
+    if (supabaseErr.code === "STT_CLIENT_TIMEOUT") {
+      return {
+        success: false,
+        transcript: "",
+        error: "Speech recognition took too long. Please try again.",
+        code: "STT_CLIENT_TIMEOUT",
+        status: 504,
+      };
+    }
     console.error("Supabase voice-catalog transcribe failed:", supabaseErr);
-    if (!ENABLE_LEGACY_VOICE_BACKEND) {
-      return {
-        success: false,
-        transcript: "",
-        error: supabaseErr?.message || "Speech service connection failed",
-        code: "CONNECTION_FAILED",
-      };
-    }
-  }
-
-  // 2. Legacy fallback strictly disabled in production
-  if (ENABLE_LEGACY_VOICE_BACKEND) {
-    try {
-      const authHeaders = await getSupabaseAuthorizationHeader();
-      const res = await fetch(`${API_BASE}/voice/transcribe`, {
-        method: "POST",
-        headers: { ...authHeaders },
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        return {
-          success: false,
-          transcript: "",
-          error: data.detail || data.error || `HTTP ${res.status}`,
-        };
-      }
-      return data;
-    } catch (err: any) {
-      return {
-        success: false,
-        transcript: "",
-        error: err?.message || "Legacy voice fallback failed",
-      };
-    }
+    return {
+      success: false,
+      transcript: "",
+      error: supabaseErr?.message || "Speech service connection failed",
+      code: "CONNECTION_FAILED",
+      status: 500,
+    };
   }
 
   return {
@@ -1241,6 +1279,7 @@ export async function transcribeAudio(
     transcript: "",
     error: "Speech transcription service unavailable",
     code: "VOICE_UNAVAILABLE",
+    status: 503,
   };
 }
 
@@ -1303,15 +1342,23 @@ export async function extractCraftFromVoice(
     };
   }
 
-  // 1. First priority: Supabase Sovereign Edge Function ai-catalog
+  // 1. Authoritative Production Path: Supabase Sovereign Edge Function ai-catalog (Sarvam 105B)
   try {
-    const { data, error } = await supabase.functions.invoke("ai-catalog", {
-      body: {
-        action: "extract-craft",
-        transcript: cleanTranscript,
-        language_code: languageCode,
-      },
-    });
+    const { data, error } = await invokeWithTimeout(
+      supabase.functions.invoke("ai-catalog", {
+        body: {
+          action: "extract-craft",
+          transcript: cleanTranscript,
+          language_code: languageCode,
+        },
+      }),
+      18000, // 18s client timeout
+      {
+        error: "AI craft extraction took too long. Please try again.",
+        code: "AI_CLIENT_TIMEOUT",
+        status: 504,
+      }
+    );
 
     if (!error && data) {
       if (data.requires_clarification) {
@@ -1337,52 +1384,11 @@ export async function extractCraftFromVoice(
         return data.attributes;
       }
     }
-  } catch (supabaseErr) {
-    console.warn("Supabase ai-catalog extraction failed, falling back to backend:", supabaseErr);
+  } catch (err: any) {
+    console.warn("Supabase ai-catalog extraction failed or timed out:", err);
   }
 
-  // 2. Dual-path fallback: backend /voice/extract-catalog
-  try {
-    const authHeaders = await getSupabaseAuthorizationHeader();
-    const res = await fetch(`${API_BASE}/voice/extract-catalog`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-        ...authHeaders,
-      },
-      body: JSON.stringify({ transcript: cleanTranscript, language_code: languageCode }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.requires_clarification) {
-        return {
-          product_name_hi: "",
-          product_name_en: "",
-          craft_type: "",
-          materials: [],
-          color: null,
-          dimensions: null,
-          production_days: null,
-          material_cost: null,
-          recommended_price: null,
-          wage_floor: null,
-          description_hi: "",
-          description_en: "",
-          requires_clarification: true,
-          message_hi: data.message_hi,
-          message_en: data.message_en,
-        };
-      }
-      if (data.success && data.attributes) {
-        return data.attributes;
-      }
-    }
-  } catch (e) {
-    console.warn("Backend voice extraction error:", e);
-  }
-
+  // Truthful empty return when AI extraction is unavailable - NEVER fabricate fake attributes
   return {
     product_name_hi: "",
     product_name_en: "",
@@ -1394,7 +1400,7 @@ export async function extractCraftFromVoice(
     material_cost: null,
     recommended_price: null,
     wage_floor: null,
-    description_hi: "",
+    description_hi: cleanTranscript,
     description_en: "",
     requires_clarification: true,
     message_hi: "शिल्प विवरण का विश्लेषण नहीं हो सका। कृपया पुनः प्रयास करें।",
