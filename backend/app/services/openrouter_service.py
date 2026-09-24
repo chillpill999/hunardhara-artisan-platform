@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.schemas.voice import VoiceCraftAttributes, MarketingDescription, VoiceCatalogResponse
 from app.schemas.image_understanding import ImageUnderstandingResponse
 from app.services.offline_mock_engine import offline_voice_engine
+from app.core.json_utils import extract_first_valid_json
 
 logger = logging.getLogger("artisan_platform.openrouter_service")
 
@@ -113,10 +114,9 @@ class OpenRouterService:
 
         if raw_output:
             try:
-                # Extract JSON block
-                match = re.search(r'\{[\s\S]*\}', raw_output)
-                if match:
-                    parsed = json.loads(match.group(0))
+                # Extract valid JSON block without greedy matching issues
+                parsed = extract_first_valid_json(raw_output)
+                if parsed:
                     p_days = parsed.get("production_time_days")
                     if p_days is not None:
                         try:
@@ -204,9 +204,8 @@ class OpenRouterService:
 
         if raw_output:
             try:
-                match = re.search(r'\{[\s\S]*\}', raw_output)
-                if match:
-                    parsed = json.loads(match.group(0))
+                parsed = extract_first_valid_json(raw_output)
+                if parsed:
                     return ImageUnderstandingResponse(
                         success=True,
                         craft_type=parsed.get("craft_type", "Traditional Indian Craft"),

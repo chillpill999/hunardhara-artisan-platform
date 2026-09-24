@@ -70,7 +70,8 @@ class Settings(BaseSettings):
         "ALLOWED_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000,https://hunardhara.technogamerzthenextlevel.workers.dev"
     )
-    EXTERNAL_TIMEOUT_SECONDS: int = int(os.getenv("EXTERNAL_TIMEOUT_SECONDS", "15"))
+    EXTERNAL_TIMEOUT_SECONDS: int = int(os.getenv("EXTERNAL_TIMEOUT_SECONDS", "30"))
+    SARVAM_STT_TIMEOUT_SECONDS: int = int(os.getenv("SARVAM_STT_TIMEOUT_SECONDS", "30"))
     OPENROUTER_TIMEOUT_SECONDS: int = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "30"))
     IDEMPOTENCY_TTL_SECONDS: int = int(os.getenv("IDEMPOTENCY_TTL_SECONDS", "300"))
 

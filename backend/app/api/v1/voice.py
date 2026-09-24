@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
@@ -37,12 +38,14 @@ class TTSResponse(BaseModel):
     summary="Synthesize Indic Speech (Sarvam AI Bulbul)",
     dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="voice_tts"))]
 )
-def synthesize_indic_speech(req: TTSRequest):
+async def synthesize_indic_speech(req: TTSRequest):
     """
     Synthesizes conversational, natural Indic speech for rural artisans using Sarvam AI Bulbul.
     Falls back gracefully if network or quota is unavailable.
+    Non-blocking async execution offloaded from the main event loop.
     """
-    return sarvam_service.synthesize_speech(
+    return await asyncio.to_thread(
+        sarvam_service.synthesize_speech,
         text=req.text,
         language_code=req.language_code or "hi-IN",
         speaker=req.speaker or "shubh",
@@ -77,12 +80,14 @@ class TranscribeResponse(BaseModel):
     summary="Hunar Saathi Conversational AI (Sarvam 105B)",
     dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, prefix="voice_chat"))]
 )
-def hunar_saathi_chat(req: ChatRequest):
+async def hunar_saathi_chat(req: ChatRequest):
     """
     Conversational assistant for rural artisans using sovereign Sarvam 105B Indic LLM.
     Answers pricing, scheme, catalog, and platform questions in warm, culturally resonant Hindi.
+    Non-blocking async execution offloaded from the main event loop.
     """
-    res = sarvam_service.chat_completion(
+    res = await asyncio.to_thread(
+        sarvam_service.chat_completion,
         user_message=req.message,
         system_prompt=req.system_prompt,
         context=req.context
@@ -116,6 +121,7 @@ async def transcribe_audio(
     """
     Transcribes audio recording in Hindi/Indic languages to Devanagari text using Sarvam Saarika.
     Requires authenticated artisan or admin.
+    Non-blocking execution offloaded from the event loop.
     """
     audio_bytes = await audio.read()
     raw_fn = audio.filename or "recording.wav"
@@ -130,7 +136,8 @@ async def transcribe_audio(
     except HTTPException as he:
         return TranscribeResponse(success=False, transcript="", error=he.detail)
 
-    res = sarvam_service.transcribe_speech(
+    res = await asyncio.to_thread(
+        sarvam_service.transcribe_speech,
         audio_bytes=audio_bytes,
         filename=raw_fn,
         language_code=language_code
@@ -139,7 +146,7 @@ async def transcribe_audio(
         success=res.get("success", False),
         transcript=res.get("transcript", ""),
         language_code=res.get("language_code", language_code),
-        source=res.get("source", "sarvam_saarika"),
+        source=res.get("source", "sarvam_saaras_v4"),
         error=res.get("error")
     )
 
@@ -170,7 +177,7 @@ class ExtractCatalogRequest(BaseModel):
     summary="Extract Craft Attributes via Sarvam AI",
     dependencies=[Depends(RateLimiter(max_requests=20, window_seconds=60, prefix="voice_extract"))]
 )
-def extract_catalog_from_voice(
+async def extract_catalog_from_voice(
     req: ExtractCatalogRequest,
     current_user: CurrentUser = Depends(require_artisan)
 ):
@@ -178,8 +185,10 @@ def extract_catalog_from_voice(
     Parses spoken artisan description into structured craft attributes,
     calculates statutory wage floor, and prepares bilingual listing details.
     Requires authenticated artisan or admin.
+    Non-blocking async execution offloaded from the main event loop.
     """
-    res = sarvam_service.extract_craft_attributes(
+    res = await asyncio.to_thread(
+        sarvam_service.extract_craft_attributes,
         transcript=req.transcript,
         language_code=req.language_code or "hi-IN"
     )
@@ -206,6 +215,7 @@ async def speak_to_catalog(
     Canonical Speak-to-Catalog Pipeline:
     16kHz mono WAV -> real Sarvam ASR -> real craft extraction -> frontend review.
     Zero canned defaults; proper HTTP errors on upstream failure; clarification gating for empty/greeting speech.
+    Non-blocking async execution offloaded from the main event loop.
     """
     audio_bytes = await audio.read()
     filename = audio.filename or "recording.wav"
@@ -261,9 +271,10 @@ async def speak_to_catalog(
             }
         )
 
-    # 4. Authoritative ASR via Sarvam Saarika
+    # 4. Authoritative ASR via Sarvam Saaras v4 (offloaded to thread to avoid freezing event loop)
     lang_code = "hi-IN" if language_code.startswith("hi") else language_code
-    asr_res = sarvam_service.transcribe_speech(
+    asr_res = await asyncio.to_thread(
+        sarvam_service.transcribe_speech,
         audio_bytes=audio_bytes,
         filename=filename,
         language_code=lang_code
@@ -288,7 +299,9 @@ async def speak_to_catalog(
             content={"success": False, "error": "AUDIO_SILENT_OR_INCOMPREHENSIBLE"}
         )
 
-    extract_res = sarvam_service.extract_craft_attributes(
+    # 5. Extract craft attributes (offloaded to thread to avoid freezing event loop)
+    extract_res = await asyncio.to_thread(
+        sarvam_service.extract_craft_attributes,
         transcript=transcript,
         language_code=lang_code
     )
@@ -327,11 +340,12 @@ async def speak_to_catalog(
 
     attributes = extracted_attrs or {}
 
-    # 6. Synthesize voice confirmation (best-effort, non-blocking)
+    # 6. Synthesize voice confirmation (best-effort, non-blocking offloaded to thread)
     confirmation_audio = None
     try:
         voice_script = attributes.get("voice_script_hi", f"आपका उत्पाद {attributes.get('product_name_hi', '')} तैयार है।")
-        tts_res = sarvam_service.synthesize_speech(
+        tts_res = await asyncio.to_thread(
+            sarvam_service.synthesize_speech,
             text=voice_script,
             language_code=lang_code,
             speaker="shubh"

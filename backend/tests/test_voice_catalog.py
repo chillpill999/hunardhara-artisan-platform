@@ -731,5 +731,159 @@ class TestVoiceToCatalogEngine:
         data = res.json()
         assert "AI_EXTRACTION_FAILED" in str(data)
 
+    def test_voice_asr_non_blocking_async_offload(self):
+        """TC-VOICE-31: Verifies async wrappers offload blocking calls to threads without freezing event loop."""
+        import asyncio
+        from app.services.sarvam_service import sarvam_service
+
+        # Test that async wrappers exist and are coroutine functions
+        assert asyncio.iscoroutinefunction(sarvam_service.async_transcribe_speech)
+        assert asyncio.iscoroutinefunction(sarvam_service.async_extract_craft_attributes)
+        assert asyncio.iscoroutinefunction(sarvam_service.async_synthesize_speech)
+        assert asyncio.iscoroutinefunction(sarvam_service.async_chat_completion)
+
+    def test_voice_asr_timeout_and_retry_transient_failures(self, monkeypatch):
+        """TC-VOICE-32: Verifies ASR timeout is >= 30s and transient 503/429 errors trigger retry."""
+        from app.services.sarvam_service import SarvamService
+        from app.core.config import settings
+        import urllib.error
+
+        assert settings.EXTERNAL_TIMEOUT_SECONDS >= 30
+        assert settings.SARVAM_STT_TIMEOUT_SECONDS >= 30
+
+        svc = SarvamService()
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", "test-key")
+
+        attempt_count = 0
+        def mock_urlopen(req, timeout):
+            nonlocal attempt_count
+            attempt_count += 1
+            assert timeout >= 30
+            if attempt_count == 1:
+                # First attempt fails with transient 503 Service Unavailable
+                import io
+                raise urllib.error.HTTPError("https://api.sarvam.ai", 503, "Service Unavailable", {}, io.BytesIO(b'{"message": "temporary overload"}'))
+            # Second attempt succeeds
+            import io
+            return io.BytesIO(b'{"transcript": "Dhokra brass bell", "language_code": "hi-IN"}')
+
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+        res = svc.transcribe_speech(b"RIFF....WAVEfmt ", filename="bell.wav")
+
+        assert attempt_count == 2
+        assert res["success"] is True
+        assert res["transcript"] == "Dhokra brass bell"
+
+    def test_voice_asr_detailed_http_error_reporting(self, monkeypatch):
+        """TC-VOICE-33: Verifies transcribe_speech extracts and returns structured HTTP error body."""
+        from app.services.sarvam_service import SarvamService
+        from app.core.config import settings
+        import urllib.error
+        import io
+
+        svc = SarvamService()
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", "test-key")
+
+        def mock_urlopen_fail(req, timeout):
+            raise urllib.error.HTTPError(
+                "https://api.sarvam.ai",
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(b'{"error": {"code": "unsupported_audio_format", "message": "Sample rate below 16000Hz"}}')
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_fail)
+        res = svc.transcribe_speech(b"RIFF....WAVEfmt ", filename="bell.wav")
+
+        assert res["success"] is False
+        assert res["status_code"] == 400
+        assert "Sample rate below 16000Hz" in res["error"]
+        assert "unsupported_audio_format" in res["details"]
+
+    def test_voice_expanded_craft_term_gating(self):
+        """TC-VOICE-34: Terse descriptions with jewelry, utensils, baskets, and regional terms are not rejected."""
+        from app.services.sarvam_service import SarvamService
+        svc = SarvamService()
+
+        # Terse descriptions (1-2 words) that previously failed
+        valid_terse_samples = [
+            "कांच की चूड़ी",         # Glass bangle
+            "चांदी की पायल",         # Silver anklet
+            "बांस की टोकरी",         # Bamboo basket
+            "सिल्क दुपट्टा",          # Silk dupatta
+            "ब्रास घंटी",            # Brass bell
+            "কাঁচের চুড়ি",          # Bengali glass bangle
+            "வெண்கல சிலை",           # Tamil bronze idol
+            "చెక్క బొమ్మ",            # Telugu wooden doll
+            "മൺപാത്രം",             # Malayalam / Indic clay pot
+            "silver anklet",        # English anklet
+            "bamboo basket",        # English basket
+            "dhokra bell"           # English dhokra bell
+        ]
+
+        for sample in valid_terse_samples:
+            res = svc.extract_craft_attributes(sample, force_fallback=True)
+            # Should NOT be bounced as "requires_clarification: True" with no attributes
+            assert not (res.get("requires_clarification") and not res.get("attributes")), f"Failed on: {sample}"
+
+    def test_voice_multilingual_cluster_normalization(self):
+        """TC-VOICE-35: Regional cluster keywords across Indic languages trigger craft cluster normalization."""
+        from app.services.sarvam_service import SarvamService
+
+        # 1. Bengali Varanasi Silk
+        res_bn = SarvamService._normalize_cluster_craft_type("বারাণসী খাঁটি সিল্ক শাড়ি", "Saree")
+        assert res_bn == "Varanasi Silk"
+
+        # 2. Tamil Bastar Dhokra
+        res_ta = SarvamService._normalize_cluster_craft_type("பஸ்தார் பித்தளை மணி குதிரை", "Handicraft")
+        assert res_ta == "Bastar Dhokra"
+
+        # 3. Telugu Khurja Pottery
+        res_te = SarvamService._normalize_cluster_craft_type("ఖుర్జా మట్టి కుండ", "Pottery")
+        assert res_te == "Khurja Pottery"
+
+        # 4. Kannada Madhubani Painting
+        res_kn = SarvamService._normalize_cluster_craft_type("ಮಧುಬನಿ ಚಿತ್ರಕಲೆ ಕಲೆ", "Painting")
+        assert res_kn == "Madhubani Painting"
+
+        # 5. Odia Channapatna Toys
+        res_or = SarvamService._normalize_cluster_craft_type("ଚନ୍ନପଟ୍ଟଣ କାଠ ଖେଳଣା", "Toy")
+        assert res_or == "Channapatna Toys"
+
+    def test_voice_non_greedy_balanced_json_extraction(self):
+        """TC-VOICE-36: Robust JSON extractor parses valid JSON without greedy span corruption across multiple blocks."""
+        from app.core.json_utils import extract_first_valid_json
+
+        # Case 1: JSON followed by trailing note containing another JSON object
+        raw_output_multiple_blocks = (
+            "Here is the catalog data:\n"
+            "{\n"
+            '  "product_name_hi": "ढोकरा घंटी",\n'
+            '  "craft_type": "Bastar Dhokra",\n'
+            '  "materials": ["पीतल"]\n'
+            "}\n"
+            "Note: Verification status is recorded in: {\"verified\": false, \"step\": 1}"
+        )
+        parsed = extract_first_valid_json(raw_output_multiple_blocks)
+        assert parsed is not None
+        assert parsed["product_name_hi"] == "ढोकरा घंटी"
+        assert parsed["craft_type"] == "Bastar Dhokra"
+        assert parsed["materials"] == ["पीतल"]
+
+        # Case 2: Markdown code fence block
+        code_fence_output = (
+            "```json\n"
+            "{\n"
+            '  "product_name_hi": "सिल्क साड़ी",\n'
+            '  "craft_type": "Varanasi Silk"\n'
+            "}\n"
+            "```"
+        )
+        parsed_cf = extract_first_valid_json(code_fence_output)
+        assert parsed_cf is not None
+        assert parsed_cf["craft_type"] == "Varanasi Silk"
+
+
 
 

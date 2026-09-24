@@ -1,11 +1,14 @@
 import re
 import json
+import time
+import asyncio
 import logging
 import urllib.request
 import urllib.error
 from typing import Optional, Dict, Any
 
 from app.core.config import settings
+from app.core.json_utils import extract_first_valid_json
 
 logger = logging.getLogger("artisan_platform.sarvam_service")
 
@@ -173,27 +176,87 @@ class SarvamService:
         ]
         body = b"".join(lines)
 
-        req = urllib.request.Request(
-            "https://api.sarvam.ai/speech-to-text",
-            data=body,
-            headers={
-                "api-subscription-key": api_key,
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "Hunardhara-Artisan-Platform/1.0"
-            }
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=settings.EXTERNAL_TIMEOUT_SECONDS) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+        timeout = max(30, getattr(settings, "SARVAM_STT_TIMEOUT_SECONDS", 30), getattr(settings, "EXTERNAL_TIMEOUT_SECONDS", 30))
+        max_retries = 1
+
+        for attempt in range(max_retries + 1):
+            req = urllib.request.Request(
+                "https://api.sarvam.ai/speech-to-text",
+                data=body,
+                headers={
+                    "api-subscription-key": api_key,
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "User-Agent": "Hunardhara-Artisan-Platform/1.0"
+                }
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return {
+                        "success": True,
+                        "transcript": data.get("transcript", ""),
+                        "language_code": data.get("language_code", language_code),
+                        "source": "sarvam_saaras_v4"
+                    }
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                logger.error(f"Sarvam ASR HTTP error {e.code} (attempt {attempt + 1}): {err_body}")
+
+                # Only retry on 429 rate limit or 5xx server errors
+                if e.code in (429, 502, 503, 504) and attempt < max_retries:
+                    logger.warning(f"Transient HTTP {e.code} from Sarvam ASR. Retrying in 1s...")
+                    time.sleep(1.0)
+                    continue
+
+                parsed_err = None
+                try:
+                    parsed_err = json.loads(err_body)
+                except Exception:
+                    pass
+
+                err_msg = ""
+                if isinstance(parsed_err, dict):
+                    if isinstance(parsed_err.get("error"), dict):
+                        err_msg = parsed_err["error"].get("message") or ""
+                    else:
+                        err_msg = str(parsed_err.get("message") or parsed_err.get("error") or "")
+
+                final_err = f"Sarvam HTTP {e.code}: {err_msg or err_body}"
                 return {
-                    "success": True,
-                    "transcript": data.get("transcript", ""),
-                    "language_code": data.get("language_code", language_code),
+                    "success": False,
+                    "transcript": "",
+                    "error": final_err,
+                    "status_code": e.code,
+                    "details": err_body,
                     "source": "sarvam_saaras_v4"
                 }
-        except Exception as e:
-            logger.error(f"Sarvam ASR error: {e}")
-            return {"success": False, "transcript": "", "error": str(e)}
+            except urllib.error.URLError as e:
+                logger.error(f"Sarvam ASR network error (attempt {attempt + 1}): {e.reason}")
+                if attempt < max_retries:
+                    logger.warning("Transient network error to Sarvam ASR. Retrying in 1s...")
+                    time.sleep(1.0)
+                    continue
+                return {
+                    "success": False,
+                    "transcript": "",
+                    "error": f"Sarvam connection failed: {e.reason}",
+                    "source": "sarvam_saaras_v4"
+                }
+            except TimeoutError as e:
+                logger.error(f"Sarvam ASR timeout error (attempt {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    logger.warning("Sarvam ASR timed out. Retrying in 1s...")
+                    time.sleep(1.0)
+                    continue
+                return {
+                    "success": False,
+                    "transcript": "",
+                    "error": "Sarvam ASR request timed out. Please try again.",
+                    "source": "sarvam_saaras_v4"
+                }
+            except Exception as e:
+                logger.error(f"Sarvam ASR unexpected error: {e}")
+                return {"success": False, "transcript": "", "error": str(e), "source": "sarvam_saaras_v4"}
 
     def translate_text(
         self,
@@ -233,6 +296,10 @@ class SarvamService:
                     "translated_text": data.get("translated_text", text),
                     "source_language_code": data.get("source_language_code", source_language_code)
                 }
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            logger.error(f"Sarvam translation HTTP error {e.code}: {err_body}")
+            return {"success": False, "translated_text": text, "error": f"Sarvam HTTP {e.code}: {err_body}"}
         except Exception as e:
             logger.error(f"Sarvam translation error: {e}")
             return {"success": False, "translated_text": text, "error": str(e)}
@@ -292,9 +359,170 @@ class SarvamService:
                         "model": "sarvam-105b-conversations"
                     }
                 return {"success": False, "reply": "", "error": "No response choice"}
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            logger.error(f"Sarvam chat HTTP error {e.code}: {err_body}")
+            return {"success": False, "reply": "", "error": f"Sarvam HTTP {e.code}: {err_body}"}
         except Exception as e:
             logger.error(f"Sarvam chat error: {e}")
             return {"success": False, "reply": "", "error": str(e)}
+
+    async def async_transcribe_speech(self, *args, **kwargs) -> Dict[str, Any]:
+        """Non-blocking async wrapper for transcribe_speech."""
+        return await asyncio.to_thread(self.transcribe_speech, *args, **kwargs)
+
+    async def async_extract_craft_attributes(self, *args, **kwargs) -> Dict[str, Any]:
+        """Non-blocking async wrapper for extract_craft_attributes."""
+        return await asyncio.to_thread(self.extract_craft_attributes, *args, **kwargs)
+
+    async def async_synthesize_speech(self, *args, **kwargs) -> Dict[str, Any]:
+        """Non-blocking async wrapper for synthesize_speech."""
+        return await asyncio.to_thread(self.synthesize_speech, *args, **kwargs)
+
+    async def async_chat_completion(self, *args, **kwargs) -> Dict[str, Any]:
+        """Non-blocking async wrapper for chat_completion."""
+        return await asyncio.to_thread(self.chat_completion, *args, **kwargs)
+
+    @staticmethod
+    def _normalize_cluster_craft_type(clean_transcript: str, detected_craft_type: Optional[str] = None) -> Optional[str]:
+        """
+        Normalizes craft category when a statutory Indian craft cluster is explicitly identified in the transcript.
+        Multilingual support across Devanagari/Hindi, English, Bengali, Tamil, Telugu, Kannada, Odia, Gujarati, Marathi.
+        """
+        t_low = (clean_transcript or "").lower()
+        ct_low = (detected_craft_type or "").lower()
+
+        # 1. Varanasi Silk (GI #28)
+        varanasi_kw = [
+            "वाराणसी", "बनारस", "काशी", "कातान", "कतान", "बनारसी",
+            "varanasi", "banaras", "kashi", "banarasi", "katan",
+            "বারাণসী", "বেনারস", "কাশী", "বেনারসী", "কাতান",
+            "வாரணாசி", "பனாரஸ்", "காசி", "பனாரசி",
+            "వారణాసి", "బనారస్", "కాశీ", "బనారసి",
+            "ವಾರಣಾಸಿ", "ಬನಾರಸ್", "ಕಾಶೀ", "ಬನಾರಸಿ",
+            "ବାରାଣସୀ", "ବନାରସ", "କାଶୀ", "ବନାରସୀ",
+            "વારાણસી", "બનારસ", "કાશી", "બનારસી"
+        ]
+        varanasi_crafts = [
+            "saree", "silk", "textile", "handloom", "dupatta", "brocade", "weave",
+            "साड़ी", "साडी", "सिल्क", "कतान", "कातान", "वस्त्र", "दुपट्टा", "हथकरघा",
+            "শাড়ি", "সিল্ক", "বস্ত্র", "তাঁত",
+            "புடவை", "பட்டு", "கைத்தறி",
+            "చీర", "పట్టు", "చేనేత",
+            "ಸೀರೆ", "ರೇಷ್ಮೆ", "ಮಗ್ಗ",
+            "ଶାଢ଼ୀ", "ରେଶମ",
+            "સાડી", "રેશમ",
+            "साडी", "रेशीम"
+        ]
+        if any(k in t_low for k in varanasi_kw):
+            if any(s in ct_low for s in varanasi_crafts) or any(s in t_low for s in varanasi_crafts) or not ct_low:
+                return "Varanasi Silk"
+
+        # 2. Bastar Dhokra (GI #83)
+        bastar_kw = [
+            "बस्तर", "ढोकरा", "डोकरा", "जगदलपुर", "कोंडागांव",
+            "bastar", "dhokra", "dokra", "jagdalpur", "kondagaon",
+            "বাস্তার", "ডোকরা", "ঢোকরা", "জগদলপুর",
+            "பஸ்தார்", "தோக்ரா", "டோக்ரா",
+            "బస్తర్", "ధోక్రా", "డోక్రా",
+            "ಬಸ್ತಾರ್", "ಧೋಕ್ರಾ", "ಡೋಕ್ರಾ",
+            "ବସ୍ତର", "ଢୋକରା", "ଡୋକରା",
+            "બસ્તર", "ઢોકરા", "ડોકરા"
+        ]
+        bastar_crafts = [
+            "bell", "horse", "figurine", "brass", "metal", "statue", "bronze", "lost-wax", "casting",
+            "घंटी", "घंटा", "घोड़ा", "मूर्ति", "प्रतिमा", "पीतल", "धातु", "ढोकरा", "कांसा",
+            "ঘণ্টা", "ঘোড়া", "মূর্তি", "পিতল", "ধাতু",
+            "மணி", "குதிரை", "சிலை", "பித்தளை", "உலோகம்",
+            "గంట", "గుర్రం", "విగ్రహం", "ఇత్తడి", "లోహం",
+            "ಗಂಟೆ", "ಕುದುರೆ", "ಮೂರ್ತಿ", "ಹಿತ್ತಾಳೆ",
+            "ଘଣ୍ଟି", "ଘୋଡ଼ା", "ମୂର୍ତ୍ତି", "ପିତ୍ତଳ",
+            "ઘંટ", "ઘોડો", "મૂર્તિ", "પિત્તળ",
+            "घंटी", "घोडा", "मूर्ती", "पितळ"
+        ]
+        if any(k in t_low for k in bastar_kw):
+            if any(s in ct_low for s in bastar_crafts) or any(s in t_low for s in bastar_crafts) or not ct_low:
+                return "Bastar Dhokra"
+
+        # 3. Khurja Pottery (GI #178)
+        khurja_kw = [
+            "खुर्जा", "बुलंदशहर",
+            "khurja", "bulandshahr",
+            "খুর্জা", "বুলন্দশহর",
+            "குர்ஜா",
+            "ఖుర్జా",
+            "ಖುರ್ಜಾ",
+            "ଖୁର୍ଜା",
+            "ખુરજા"
+        ]
+        khurja_crafts = [
+            "pottery", "pot", "vase", "ceramic", "clay", "crockery", "tile", "planter", "earthenware",
+            "मिट्टी", "बर्तन", "पॉट", "घड़ा", "फूलदान", "चीनी मिट्टी", "टेराकोटा",
+            "মৃৎশিল্প", "মাটির পাত্র", "ফুলদানি", "সিরামিক",
+            "மண்பாண்டம்", "குவளை", "செராமிக்",
+            "కుండలు", "మట్టిపాత్రలు", "కుండ",
+            "ಮಡಕೆ", "ಸೆರಾಮಿಕ್", "ಹೂದಾನಿ",
+            "ମାଟିପାତ୍ର", "କୁମ୍ଭାର", "ଫୁଲଦାନୀ",
+            "માટીકામ", "વાસણ", "કુંડું",
+            "मातीची भांडी", "फुलदाणी"
+        ]
+        if any(k in t_low for k in khurja_kw):
+            if any(s in ct_low for s in khurja_crafts) or any(s in t_low for s in khurja_crafts) or not ct_low:
+                return "Khurja Pottery"
+
+        # 4. Madhubani Painting (GI #105)
+        madhubani_kw = [
+            "मधुबनी", "मिथिला", "जितवारपुर", "रांती",
+            "madhubani", "mithila", "jitwarpur", "ranti",
+            "মধুবনী", "মিথিলা",
+            "மதுபனி", "மிதிலா",
+            "మధుబని", "మిథిల",
+            "ಮಧುಬನಿ", "ಮಿಥಿಲಾ",
+            "ମଧୁବନୀ", "ମିଥିଳା",
+            "મધુબની", "મિથિલા"
+        ]
+        madhubani_crafts = [
+            "painting", "art", "folk", "canvas", "pattachitra", "drawing",
+            "पेंटिंग", "चित्र", "चित्रकला", "लोककला", "तस्वीर",
+            "চিত্রকলা", "আঁকা", "পটচিত্র", "লোকশিল্প",
+            "ஓவியம்", "சித்திரம்", "கலை",
+            "చిత్రలేఖనం", "చిత్రం", "కళ",
+            "ಚಿತ್ರಕಲೆ", "ಚಿತ್ರ", "ಕಲೆ",
+            "ଚିତ୍ରକଳା", "ପଟ୍ଟଚିତ୍ର", "କଳା",
+            "ચિત્રકળા", "ચિત્ર",
+            "चित्रकला", "चित्र"
+        ]
+        if any(k in t_low for k in madhubani_kw):
+            if any(s in ct_low for s in madhubani_crafts) or any(s in t_low for s in madhubani_crafts) or not ct_low:
+                return "Madhubani Painting"
+
+        # 5. Channapatna Toys (GI #19)
+        channapatna_kw = [
+            "चन्नपटना", "चन्नापटना", "रामनगर",
+            "channapatna", "ramanagara",
+            "চান্নাপাটনা",
+            "சன்னபட்னா", "சென்னபட்டணம்",
+            "చన్నపట్న", "చెన్నపట్నం",
+            "ಚನ್ನಪಟ್ಟಣ", "ಚನ್ನಪಟ್ಟಣದ", "ರಾಮನಗರ",
+            "ଚନ୍ନପଟ୍ଟଣ",
+            "ચન્નાપટણા"
+        ]
+        channapatna_crafts = [
+            "toy", "toys", "wood", "wooden", "lacquer", "doll", "figurine", "handicraft",
+            "खिलौना", "काष्ठ", "लकड़ी", "लाख", "गुड़िया",
+            "পুতুল", "খেলনা", "কাঠের খেলনা", "লাক্ষা",
+            "பொம்மை", "மரப்பொம்மை",
+            "బొమ్మ", "చెక్క బొమ్మలు",
+            "ಗೊಂಬೆ", "ಮರದ ಆಟಿಕೆ", "ಲಾಖೆ",
+            "ଖେଳଣା", "କାଠ",
+            "રમકડું", "લાકડાનું",
+            "खेळणी", "લાકડી खेळणी"
+        ]
+        if any(k in t_low for k in channapatna_kw):
+            if any(s in ct_low for s in channapatna_crafts) or any(s in t_low for s in channapatna_crafts) or not ct_low:
+                return "Channapatna Toys"
+
+        return detected_craft_type
 
     def extract_craft_attributes(
         self,
@@ -317,11 +545,45 @@ class SarvamService:
             "haan", "ha", "theek", "hai", "ji", "जी", "हां", "हाँ", "ठीक", "है"
         }
         is_all_greetings = bool(words) and all(re.sub(r"[^\w\s]", "", w).lower() in greeting_words for w in words)
-        has_craft_term = bool(re.search(
-            r"(घंटी|साड़ी|खिलौना|पॉट|बर्तन|पेंटिंग|चित्र|मूर्ति|दीपक|कालीन|दरी|मोजरी|जूती|दुपट्टा|शॉल|चाक|लकड़ी|पीतल|मिट्टी|सिल्क|चमड़ा|ऊन|बांस|बॉक्स|डिब्बा|घैला|घइला|bell|saree|toy|pot|pottery|painting|statue|carpet|rug|leather|wood|brass|silk|clay|box|mojari)",
-            clean_t,
-            re.IGNORECASE
-        ))
+
+        # Comprehensive multilingual craft lexicon covering textiles, apparel, jewelry, metals, pottery, art, woodcraft, leather
+        # across Hindi/Devanagari, English, Bengali, Tamil, Telugu, Kannada, Odia, Gujarati, Marathi
+        craft_term_pattern = (
+            r"("
+            # Hindi / Devanagari craft & material nouns
+            r"घंटी|घंटा|साड़ी|साडी|खिलौना|गुड़िया|पॉट|बर्तन|पेंटिंग|चित्र|चित्रकला|मूर्ति|प्रतिमा|दीपक|दीया|दीप|"
+            r"कालीन|दरी|मोजरी|जूती|चप्पल|दुपट्टा|शॉल|शाल|स्टोल|कुर्ता|कुर्ती|चाक|लकड़ी|काष्ठ|पीतल|कांसा|तांबा|"
+            r"लोहा|चांदी|सोना|धातु|मिट्टी|टेराकोटा|कांच|काँच|सिल्क|रेशम|सूती|कॉटन|चमड़ा|चमड़े|ऊन|बांस|बेंत|जूट|बॉक्स|डिब्बा|"
+            r"पिटारा|घैला|घइला|मटका|सुराही|कुल्हड़|फूलदान|गमला|पायल|पाजेब|घुंघरू|कंगन|चूड़ी|चूड़ियां|कड़ा|हार|माला|"
+            r"अंगूठी|झुमका|बाली|नथ|आभूषण|जेवर|थैला|झोला|पोटली|पर्स|टोकरी|डलिया|चटाई|मुखौटा|कठपुतली|लाख|हथकरघा|"
+            r"कढ़ाई|चिकनकारी|ज़रदोज़ी|बांधनी|कलमकारी|खादी|"
+            # English craft & material nouns
+            r"bell|saree|sari|toy|doll|pot|pottery|painting|picture|art|statue|idol|figurine|sculpture|carpet|"
+            r"rug|mat|leather|wood|wooden|brass|bronze|copper|iron|silver|gold|metal|silk|cotton|wool|clay|"
+            r"terracotta|ceramic|glass|box|casket|mojari|jutti|shoe|sandal|dupatta|shawl|stole|scarf|kurta|kurti|"
+            r"dress|anklet|bangle|bracelet|necklace|pendant|ring|earring|jhumka|jewel|jewelry|jewellery|"
+            r"ornament|bag|purse|pouch|basket|tray|coaster|vase|planter|lamp|diya|lantern|candle|plate|thali|"
+            r"bowl|cup|jug|kettle|spoon|tapestry|embroidery|handloom|weaving|craft|handicraft|puppet|mask|"
+            r"lacquer|channapatna|dhokra|madhubani|khurja|varanasi|"
+            # Bengali
+            r"শাড়ি|খেলনা|পুতুল|মূর্তি|ঘণ্টা|পিতল|কাঁসা|কাঁচ|কাঁচের|মাটির|মৃৎশিল্প|চিত্রকলা|পটচিত্র|শাল|চুড়ি|ঝুড়ি|মালা|নূপুর|বস্ত্র|তাঁত|ডোকরা|"
+            # Tamil
+            r"புடவை|பொம்மை|சிலை|மணி|பித்தளை|வெண்கல|வெண்கலம்|மண்பாண்டம்|கூடை|ஓவியம்|மாலை|வளையல்|கொலுசு|பட்டு|கைத்தறி|தோக்ரா|"
+            # Telugu
+            r"చీర|బొమ్మ|విగ్రహం|గంట|ఇత్తడి|చెక్క|కుండ|బుట్ట|చిత్రం|గాజులు|పట్టీలు|పట్టు|చేనేత|ధోక్రా|"
+            # Kannada
+            r"ಸೀರೆ|ಗೊಂಬೆ|ಮೂರ್ತಿ|ಗಂಟೆ|ಹಿತ್ತಾಳೆ|ಮಡಕೆ|ಬುಟ್ಟಿ|ಚಿತ್ರ|ಬಳೆ|ಕಾಲುಂಗುರ|ರೇಷ್ಮೆ|ಮಗ್ಗ|ಧೋಕ್ರಾ|"
+            # Malayalam
+            r"മൺപാത്രം|പാത്രം|മൺ|മണ്ണ്|വിഗ്രഹം|പ്രതിമ|ശില്പം|മണി|സാരി|പാവ|ചിത്രം|വള|പാദസരം|പട്ട്|തടി|കുട്ട|വെങ്കലം|"
+            # Odia
+            r"ଶାଢ଼ୀ|ଖେଳଣା|କଣ୍ଢେଇ|ମୂର୍ତ୍ତି|ଘଣ୍ଟି|ପିତ୍ତଳ|ମାଟିପାତ୍ର|ଚିତ୍ରକଳା|ପଟ୍ଟଚିତ୍ର|ରେଶମ|ଢୋକରା|"
+            # Gujarati
+            r"સાડી|રમકડું|મૂર્તિ|ઘંટ|પિત્તળ|કાચ|ટોપલી|માટીકામ|ચિત્ર|બંગડી|ઝાંઝર|રેશમ|ઢોકરા|"
+            # Marathi
+            r"साडी|खेळणी|मूर्ती|घंटी|पितळ|टोपली|मातीची भांडी|चित्रकला|बांगडी|पैंजण|रेशीम|ढोकरा"
+            r")"
+        )
+        has_craft_term = bool(re.search(craft_term_pattern, clean_t, re.IGNORECASE))
 
         if not clean_t or is_all_greetings or (len(words) < 3 and not has_craft_term):
             return {
@@ -371,9 +633,8 @@ class SarvamService:
                     )
                     if res.get("success") and res.get("reply"):
                         reply = res["reply"]
-                        json_match = re.search(r"\{[\s\S]*\}", reply)
-                        if json_match:
-                            parsed = json.loads(json_match.group(0))
+                        parsed = extract_first_valid_json(reply)
+                        if parsed:
                             # Decouple pricing: Calculate only if genuine economic inputs are provided
                             days = parsed.get("production_days")
                             cost = parsed.get("material_cost")
@@ -392,22 +653,7 @@ class SarvamService:
                                 rec_price = None
 
                             # Normalize craft category if cluster is explicitly identified in transcript
-                            ct_lower = (parsed.get("craft_type") or "").lower()
-                            if any(k in clean_t.lower() for k in ["वाराणसी", "बनारस", "varanasi", "banarasi", "कातान", "कतान"]):
-                                if any(s in ct_lower for s in ["saree", "silk", "textile", "handloom", "साड़ी", "सिल्क", "कतान", "कातान", "वस्त्र"]) or not ct_lower:
-                                    parsed["craft_type"] = "Varanasi Silk"
-                            elif any(k in clean_t.lower() for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]):
-                                if any(s in ct_lower for s in ["bell", "horse", "figurine", "brass", "metal", "घंटी", "घोड़ा", "मूर्ति", "पीतल", "धातु", "ढोकरा"]) or not ct_lower:
-                                    parsed["craft_type"] = "Bastar Dhokra"
-                            elif any(k in clean_t.lower() for k in ["खुर्जा", "khurja"]):
-                                if any(s in ct_lower for s in ["pottery", "pot", "vase", "ceramic", "मिट्टी", "बर्तन", "पॉट", "घड़ा", "फूलदान"]) or not ct_lower:
-                                    parsed["craft_type"] = "Khurja Pottery"
-                            elif any(k in clean_t.lower() for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]):
-                                if any(s in ct_lower for s in ["painting", "art", "folk", "पेंटिंग", "चित्र", "चित्रकला"]) or not ct_lower:
-                                    parsed["craft_type"] = "Madhubani Painting"
-                            elif any(k in clean_t.lower() for k in ["चन्नपटना", "चन्नापटना", "channapatna"]):
-                                if any(s in ct_lower for s in ["toy", "toys", "wood", "खिलौना", "काष्ठ", "लकड़ी"]) or not ct_lower:
-                                    parsed["craft_type"] = "Channapatna Toys"
+                            parsed["craft_type"] = self._normalize_cluster_craft_type(clean_t, parsed.get("craft_type"))
 
                             parsed["production_days"] = days
                             parsed["material_cost"] = cost
@@ -439,9 +685,8 @@ class SarvamService:
                         {"role": "user", "content": f"Artisan Voice Transcript:\n{clean_t}"}
                     ], max_tokens=1024, temperature=0.1)
                     if raw_cat:
-                        json_match = re.search(r"\{[\s\S]*\}", raw_cat)
-                        if json_match:
-                            parsed = json.loads(json_match.group(0))
+                        parsed = extract_first_valid_json(raw_cat)
+                        if parsed:
                             days = parsed.get("production_days")
                             cost = parsed.get("material_cost")
                             if days is not None:
@@ -459,22 +704,7 @@ class SarvamService:
                                 rec_price = None
 
                             # Normalize craft category if cluster is explicitly identified in transcript
-                            ct_lower = (parsed.get("craft_type") or "").lower()
-                            if any(k in clean_t.lower() for k in ["वाराणसी", "बनारस", "varanasi", "banarasi", "कातान", "कतान"]):
-                                if any(s in ct_lower for s in ["saree", "silk", "textile", "handloom", "साड़ी", "सिल्क", "कतान", "कातान", "वस्त्र"]) or not ct_lower:
-                                    parsed["craft_type"] = "Varanasi Silk"
-                            elif any(k in clean_t.lower() for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]):
-                                if any(s in ct_lower for s in ["bell", "horse", "figurine", "brass", "metal", "घंटी", "घोड़ा", "मूर्ति", "पीतल", "धातु", "ढोकरा"]) or not ct_lower:
-                                    parsed["craft_type"] = "Bastar Dhokra"
-                            elif any(k in clean_t.lower() for k in ["खुर्जा", "khurja"]):
-                                if any(s in ct_lower for s in ["pottery", "pot", "vase", "ceramic", "मिट्टी", "बर्तन", "पॉट", "घड़ा", "फूलदान"]) or not ct_lower:
-                                    parsed["craft_type"] = "Khurja Pottery"
-                            elif any(k in clean_t.lower() for k in ["मधुबनी", "मिथिला", "madhubani", "mithila"]):
-                                if any(s in ct_lower for s in ["painting", "art", "folk", "पेंटिंग", "चित्र", "चित्रकला"]) or not ct_lower:
-                                    parsed["craft_type"] = "Madhubani Painting"
-                            elif any(k in clean_t.lower() for k in ["चन्नपटना", "चन्नापटना", "channapatna"]):
-                                if any(s in ct_lower for s in ["toy", "toys", "wood", "खिलौना", "काष्ठ", "लकड़ी"]) or not ct_lower:
-                                    parsed["craft_type"] = "Channapatna Toys"
+                            parsed["craft_type"] = self._normalize_cluster_craft_type(clean_t, parsed.get("craft_type"))
 
                             parsed["production_days"] = days
                             parsed["material_cost"] = cost
@@ -547,14 +777,18 @@ class SarvamService:
 
         # Extract explicit materials only
         mat = []
-        if any(k in t_lower for k in ["पीतल", "brass"]): mat.append("पीतल (Brass)")
-        if any(k in t_lower for k in ["बेल मेटल", "bell metal"]): mat.append("बेल मेटल (Bell Metal)")
-        if any(k in t_lower for k in ["मिट्टी", "माटी", "clay", "terracotta"]): mat.append("मिट्टी (Terracotta Clay)")
-        if any(k in t_lower for k in ["शीशम", "सागवान", "लकड़ी", "wood", "rosewood"]): mat.append("प्राकृतिक काष्ठ (Wood)")
-        if any(k in t_lower for k in ["चमड़ा", "leather"]): mat.append("चर्म (Leather)")
-        if any(k in t_lower for k in ["बांस", "bamboo"]): mat.append("बांस (Bamboo)")
-        if any(k in t_lower for k in ["सिल्क", "silk", "रेशम"]): mat.append("शुद्ध सिल्क (Pure Silk)")
-        if any(k in t_lower for k in ["सूती", "कॉटन", "cotton"]): mat.append("सूती धागा (Cotton)")
+        if any(k in t_lower for k in ["पीतल", "brass", "ब्रास", "पितल", "பித்தளை", "ఇత్తడి", "ಹಿತ್ತಾಳೆ"]): mat.append("पीतल (Brass)")
+        if any(k in t_lower for k in ["बेल मेटल", "bell metal", "कांसा", "bronze", "வெண்கல", "வெண்கலம்", "కంచు", "ಬೆಲ್ ಮೆಟಲ್", "কাঁসা"]): mat.append("बेल मेटल (Bell Metal)")
+        if any(k in t_lower for k in ["मिट्टी", "माटी", "clay", "terracotta", "മൺ", "മണ്ണ", "மண்", "మట్టి", "ಮಣ್ಣು", "মাটি"]): mat.append("मिट्टी (Terracotta Clay)")
+        if any(k in t_lower for k in ["शीशम", "सागवान", "लकड़ी", "काष्ठ", "wood", "rosewood", "చెక్క", "மர", "മരം", "काठ", "কাঠ", "લાકડ"]): mat.append("प्राकृतिक काष्ठ (Wood)")
+        if any(k in t_lower for k in ["चमड़ा", "leather", "தோல்"]): mat.append("चर्म (Leather)")
+        if any(k in t_lower for k in ["बांस", "बांबू", "bamboo", "cane", "বাঁশ", "மூங்கில்", "వెదురు", "ಬಿದಿರು"]): mat.append("बांस (Bamboo)")
+        if any(k in t_lower for k in ["सिल्क", "silk", "रेशम", "रेशीम", "সিল্ক", "பட்டு", "పట్టు", "ರೇಷ್ಮೆ"]): mat.append("शुद्ध सिल्क (Pure Silk)")
+        if any(k in t_lower for k in ["सूती", "कॉटन", "cotton", "সুতি", "பருத்தி", "పత్తి"]): mat.append("सूती धागा (Cotton)")
+        if any(k in t_lower for k in ["कांच", "काँच", "glass", "কাঁচ", "கண்ணாடி", "గాజు", "ಗಾಜು", "કાચ"]): mat.append("कांच (Glass)")
+        if any(k in t_lower for k in ["चांदी", "silver", "रुपो", "রূপা", "வெள்ளி", "వెండి", "ಬೆಳ್ಳಿ", "ચાંદી"]): mat.append("चांदी (Silver)")
+        if any(k in t_lower for k in ["तांबा", "तांबे", "copper", "তামা", "செம்பு", "రాగి"]): mat.append("तांबा (Copper)")
+        if any(k in t_lower for k in ["सोना", "gold", "সোনার", "தங்கம்", "బంగారం"]): mat.append("स्वर्ण (Gold)")
 
         # Extract explicit color only
         color = None
@@ -567,10 +801,10 @@ class SarvamService:
         elif any(k in t_lower for k in ["सुनहरा", "gold", "golden"]): color = "सुनहरा (Golden)"
 
         # Product Noun & Truthful Craft Category - NO GI GUESSES (Zero Canned Templates)
-        if any(k in t_lower for k in ["घंटी", "bell"]):
+        if any(k in t_lower for k in ["घंटी", "bell", "ঘণ্টা", "மணி", "గంట", "ಗಂಟೆ"]):
             craft = "Bastar Dhokra" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Metal Craft"
-            name_hi = "हाथ से बनी पीतल की घंटी" if any(k in t_lower for k in ["पीतल", "brass"]) else "हाथ से बनी घंटी"
-            name_en = "Handcrafted Brass Bell" if any(k in t_lower for k in ["पीतल", "brass"]) else "Handcrafted Bell"
+            name_hi = "हाथ से बनी पीतल की घंटी" if any(k in t_lower for k in ["पीतल", "brass", "ब्रास"]) else "हाथ से बनी घंटी"
+            name_en = "Handcrafted Brass Bell" if any(k in t_lower for k in ["पीतल", "brass", "ब्रास"]) else "Handcrafted Bell"
         elif any(k in t_lower for k in ["घोड़ा", "horse", "अश्व"]):
             craft = "Bastar Dhokra" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "Metal Craft"
             name_hi = "हस्तनिर्मित बस्तर ढोकरा पीतल का घोड़ा" if any(k in t_lower for k in ["बस्तर", "bastar", "ढोकरा", "dhokra"]) else "हस्तनिर्मित धातु का घोड़ा"
@@ -587,7 +821,7 @@ class SarvamService:
             craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "Pottery"
             name_hi = "खुर्जा हस्तनिर्मित सिरेमिक फूलदान" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "मिट्टी का फूलदान" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "हस्तनिर्मित फूलदान"
             name_en = "Handcrafted Khurja Glazed Ceramic Flower Vase" if any(k in t_lower for k in ["खुर्जा", "khurja", "सिरेमिक", "ceramic"]) else "Handcrafted Earthen Clay Vase" if any(k in t_lower for k in ["मिट्टी", "माटी", "clay"]) else "Handcrafted Vase"
-        elif any(k in t_lower for k in ["घड़ा", "घैला", "घइला", "पॉट", "pottery", "कुल्हड़"]):
+        elif any(k in t_lower for k in ["घड़ा", "घैला", "घइला", "पॉट", "pottery", "कुल्हड़", "മൺപാത്രം", "மண்பாண்டம்", "కుండ", "ಮಡಕೆ", "মাটির পাত্র"]):
             craft = "Khurja Pottery" if any(k in t_lower for k in ["खुर्जा", "khurja"]) else "Pottery"
             name_hi = "चाक पर बना हस्तनिर्मित माटी का घड़ा"
             name_en = "Handcrafted Earthen Clay Pot"
@@ -595,10 +829,26 @@ class SarvamService:
             craft = "Woodcraft"
             name_hi = "काष्ठ आभूषण डिब्बा" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "हस्तनिर्मित डिब्बा"
             name_en = "Hand-Carved Wooden Jewelry Box" if any(k in t_lower for k in ["लकड़ी", "काष्ठ", "wood"]) else "Handcrafted Box"
-        elif any(k in t_lower for k in ["खिलौना", "toy", "ಆಟಿಕೆ", "aatike"]):
+        elif any(k in t_lower for k in ["खिलौना", "toy", "ಆಟಿಕೆ", "aatike", "பொம்மை", "బొమ్మ", "പാവ", "পুতুল", "ઢીંગલી"]):
             craft = "Channapatna Toys" if any(k in t_lower for k in ["चन्नपटना", "चन्नापटना", "channapatna", "ಚನ್ನಪಟ್ಟಣ"]) else "Woodcraft"
             name_hi = "चन्नापटना हस्तनिर्मित गैर-विषाक्त लकड़ी का खिलौना" if "चन्न" in t_lower or "ಚನ್ನ" in t_lower else "हस्तनिर्मित काष्ठ खिलौना"
             name_en = "Handcrafted Channapatna Non-Toxic Wooden Toy" if "चन्न" in t_lower or "ಚನ್ನ" in t_lower else "Handcrafted Wooden Toy"
+        elif any(k in t_lower for k in ["चूड़ी", "चूड़ियां", "कंगन", "कड़ा", "bangle", "bracelet", "চুড়ি", "வளையல்", "గాజులు", "ಬಳೆ", "બંગડી", "बांगडी"]):
+            craft = "Jewelry & Ornaments"
+            name_hi = "हस्तनिर्मित कांच की चूड़ियां" if any(k in t_lower for k in ["कांच", "काँच", "glass", "কাঁচ"]) else "हस्तनिर्मित पारंपरिक कंगन/चूड़ियां"
+            name_en = "Handcrafted Glass Bangles" if any(k in t_lower for k in ["कांच", "काँच", "glass", "কাঁচ"]) else "Handcrafted Traditional Bangles"
+        elif any(k in t_lower for k in ["पायल", "पाजेब", "घुंघरू", "anklet", "கொலுசு", "పట్టీలు", "ಕಾಲುಂಗುರ", "ઝાંઝર", "पैंजण", "নূপুর"]):
+            craft = "Jewelry & Ornaments"
+            name_hi = "हस्तनिर्मित पारंपरिक चांदी की पायल" if any(k in t_lower for k in ["चांदी", "silver"]) else "हस्तनिर्मित पारंपरिक पायल"
+            name_en = "Handcrafted Silver Anklet" if any(k in t_lower for k in ["चांदी", "silver"]) else "Handcrafted Traditional Anklet"
+        elif any(k in t_lower for k in ["टोकरी", "डलिया", "basket", "கூடை", "బుట్ట", "ಬುಟ್ಟಿ", "ટોપલી", "ঝুড়ি"]):
+            craft = "Cane & Bamboo Craft"
+            name_hi = "हस्तनिर्मित प्राकृतिक बांस की टोकरी" if any(k in t_lower for k in ["बांस", "bamboo", "cane"]) else "हस्तनिर्मित प्राकृतिक टोकरी"
+            name_en = "Handcrafted Bamboo Basket" if any(k in t_lower for k in ["बांस", "bamboo", "cane"]) else "Handcrafted Natural Basket"
+        elif any(k in t_lower for k in ["मूर्ति", "प्रतिमा", "idol", "statue", "sculpture", "சிலை", "విగ్రహం", "ಮೂರ್ತಿ", "মূর্তি"]):
+            craft = "Sculpture & Metal Craft" if any(k in t_lower for k in ["पीतल", "brass", "धातु", "metal", "कांसा", "bronze", "வெண்கல", "வெண்கலம்"]) else "Heritage Sculpture"
+            name_hi = "हस्तनिर्मित पारंपरिक पीतल/कांस्य मूर्ति" if any(k in t_lower for k in ["पीतल", "brass", "कांसा", "bronze", "வெண்கல", "வெண்கலம்"]) else "हस्तनिर्मित पारंपरिक मूर्ति"
+            name_en = "Handcrafted Bronze/Brass Idol" if any(k in t_lower for k in ["पीतल", "brass", "कांसा", "bronze", "வெண்கல", "வெண்கலம்"]) else "Handcrafted Heritage Sculpture"
         elif any(k in t_lower for k in ["दुपट्टा", "dupatta"]):
             craft = "Varanasi Silk" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "सिल्क"]) else "Handloom Weaving"
             name_hi = "हथकरघा बनारसी सिल्क दुपट्टा" if any(k in t_lower for k in ["वाराणसी", "बनारस", "बनारसी", "varanasi", "कतान", "सिल्क"]) else "हस्तनिर्मित हथकरघा दुपट्टा"
