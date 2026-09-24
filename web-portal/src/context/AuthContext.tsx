@@ -85,13 +85,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (!error && data) {
         const needsOnboarding = data.onboarding_completed !== true;
+        let finalRole: UserRole = resolvedRole;
+        if (!isPrimarySuperAdmin) {
+          if (['artisan', 'admin', 'super_admin'].includes(data.role as any)) {
+            finalRole = data.role as UserRole;
+          } else if (['customer', 'artisan', 'admin', 'super_admin'].includes(appMetadataRole)) {
+            finalRole = appMetadataRole as UserRole;
+          } else if (['artisan', 'admin'].includes(authUser.user_metadata?.role as any)) {
+            finalRole = authUser.user_metadata.role as UserRole;
+          }
+        }
 
         return {
-          role: resolvedRole,
+          role: finalRole,
           needsOnboarding,
           profile: {
             id: data.id,
-            role: resolvedRole,
+            role: finalRole,
             full_name: data.full_name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Hunardhara Member',
             avatar_url: data.avatar_url || authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
             phone: data.phone || authUser.user_metadata?.phone,
@@ -107,13 +117,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const needsOnboarding = authUser.user_metadata?.onboarding_completed !== true;
+    let fallbackRole: UserRole = resolvedRole;
+    if (!isPrimarySuperAdmin && ['artisan', 'admin'].includes(authUser.user_metadata?.role as any)) {
+      fallbackRole = authUser.user_metadata.role as UserRole;
+    }
 
     return {
-      role: resolvedRole,
+      role: fallbackRole,
       needsOnboarding,
       profile: {
         id: userId,
-        role: resolvedRole,
+        role: fallbackRole,
         full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Hunardhara Member',
         avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture,
         phone: authUser.user_metadata?.phone,
@@ -317,15 +331,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     extraMeta?: Record<string, any>
   ) => {
     setIsLoading(true);
-    // New registrations begin as customers. Artisan and administrator roles
-    // are granted only by server-side Supabase administration workflows.
-    const effectiveRole: UserRole = 'customer';
+    const effectiveRole: UserRole = roleToAssign === 'artisan' ? 'artisan' : 'customer';
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           full_name: fullName,
+          role: effectiveRole,
           onboarding_completed: true,
           ...(extraMeta || {}),
         },
@@ -376,6 +389,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           onboarding_completed: true,
           updated_at: new Date().toISOString(),
         });
+
+        if (effectiveRole === 'artisan') {
+          const craftCat = extraMeta?.craft_category || 'Traditional Handcraft';
+          const clusterId = craftCat.toLowerCase().includes('varanasi') ? 'cluster-varanasi-silk'
+            : craftCat.toLowerCase().includes('bastar') ? 'cluster-bastar-dhokra'
+            : craftCat.toLowerCase().includes('khurja') ? 'cluster-khurja-pottery'
+            : craftCat.toLowerCase().includes('madhubani') ? 'cluster-madhubani-painting'
+            : craftCat.toLowerCase().includes('channapatna') ? 'cluster-channapatna-toys'
+            : 'cluster-general-handicraft';
+
+          await supabase.from('artisans').upsert({
+            id: data.user.id,
+            full_name: fullName,
+            phone_number: extraMeta?.phone || null,
+            state: extraMeta?.state || 'India',
+            craft: craftCat,
+            primary_craft: craftCat,
+            cluster_id: clusterId,
+            preferred_language: extraMeta?.preferred_language || 'Hindi (हिंदी)',
+            is_active: true,
+            is_verified: true,
+            updated_at: new Date().toISOString(),
+          });
+        }
       } catch (upsertErr) {
         console.warn('Profile upsert note:', upsertErr);
       }
@@ -400,13 +437,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const appMetadataRole = user.app_metadata?.role;
-      const assignedRole: UserRole = ['customer', 'artisan', 'admin', 'super_admin'].includes(appMetadataRole)
-        ? appMetadataRole as UserRole
-        : 'customer';
+      let assignedRole: UserRole = details.role === 'artisan' ? 'artisan' : 'customer';
+      if (['admin', 'super_admin'].includes(appMetadataRole)) {
+        assignedRole = appMetadataRole as UserRole;
+      }
 
       // 1. Update user metadata in auth.users
       await supabase.auth.updateUser({
         data: {
+          role: assignedRole,
           full_name: details.fullName,
           phone: details.phone,
           state: details.state,
@@ -437,6 +476,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Error updating profile in Supabase:', profileErr);
         setIsLoading(false);
         return { error: new Error(profileErr.message || 'विवरण सहेजने में विफल (Failed to save profile).') };
+      }
+
+      // 3. If role is artisan, ensure artisan row in public.artisans table
+      if (assignedRole === 'artisan') {
+        const craftCat = details.craft_category || 'Traditional Handcraft';
+        const clusterId = craftCat.toLowerCase().includes('varanasi') ? 'cluster-varanasi-silk'
+          : craftCat.toLowerCase().includes('bastar') ? 'cluster-bastar-dhokra'
+          : craftCat.toLowerCase().includes('khurja') ? 'cluster-khurja-pottery'
+          : craftCat.toLowerCase().includes('madhubani') ? 'cluster-madhubani-painting'
+          : craftCat.toLowerCase().includes('channapatna') ? 'cluster-channapatna-toys'
+          : 'cluster-general-handicraft';
+
+        try {
+          await supabase.from('artisans').upsert({
+            id: user.id,
+            full_name: details.fullName,
+            phone_number: details.phone,
+            state: details.state || 'India',
+            craft: craftCat,
+            primary_craft: craftCat,
+            cluster_id: clusterId,
+            preferred_language: details.preferred_language || 'Hindi (हिंदी)',
+            is_active: true,
+            is_verified: true,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (artErr) {
+          console.warn('Artisan table sync note in completeOnboarding:', artErr);
+        }
       }
 
       setRole(assignedRole);
